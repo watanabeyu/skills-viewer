@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # lint / typecheck / test / build(開発ツールは最新 LTS で実行)
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version は package.json の packageManager から自動解決
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+      # smoke ジョブへビルド成果物を引き継ぐ
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+          path: |
+            build/
+            dist/
+
+  # engines >= 18 の裏付け: npx 利用者と同じ形(コンパイル済み JS)で各 Node で起動できるか
+  smoke:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle
+
+      - name: start server & hit API
+        run: |
+          node build/cli.js --no-open --port 4763 &
+          sleep 2
+          curl -sf http://127.0.0.1:4763/ > /dev/null
+          curl -sf http://127.0.0.1:4763/api/skills > /dev/null
+          echo "OK on Node ${{ matrix.node-version }}"
