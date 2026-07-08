@@ -47,6 +47,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
+          # smoke は install 不要(pnpm も無い)ので v5 の自動キャッシュを切る
+          package-manager-cache: false
 
       - uses: actions/download-artifact@v5
         with:
