@@ -15,8 +15,13 @@ Options:
 }
 
 const portIdx = args.indexOf('--port');
+const port = portIdx >= 0 ? Number(args[portIdx + 1]) : 4763;
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  console.error('--port には 0〜65535 の整数を指定してください');
+  process.exit(1);
+}
 start({
-  port: portIdx >= 0 ? Number(args[portIdx + 1]) : 4763,
+  port,
   open: !args.includes('--no-open'),
   cwd: process.cwd(),
 });

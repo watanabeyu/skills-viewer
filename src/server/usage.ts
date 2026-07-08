@@ -10,6 +10,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 interface Hit {
   name: string;
@@ -24,37 +25,60 @@ export interface UsageAgg {
 
 const usageCache = new Map<string, { mtimeMs: number; hits: Hit[] }>();
 
-export function extractHits(fp: string): Hit[] {
+function scanLine(line: string, hits: Hit[]): void {
+  const isCmd = line.includes('<command-name>');
+  const isSkill = line.includes('"name":"Skill"');
+  const isAgent = line.includes('"subagent_type"');
+  if (!isCmd && !isSkill && !isAgent) return;
+  const tm = line.match(/"timestamp":"([^"]+)"/);
+  const ts = tm ? Date.parse(tm[1]) || 0 : 0;
+  if (isCmd) {
+    for (const m of line.matchAll(/<command-name>\/?([^<]+)<\/command-name>/g)) {
+      hits.push({ name: m[1].trim(), ts, via: 'typed' });
+    }
+  }
+  if (isSkill) {
+    for (const m of line.matchAll(/"name":"Skill","input":\{"skill":"([^"]+)"/g)) {
+      hits.push({ name: m[1], ts, via: 'auto' });
+    }
+  }
+  if (isAgent) {
+    // Agent/Task ツールによるサブエージェント起動(agent 定義の使用実績として扱う)
+    for (const m of line.matchAll(/"subagent_type":"([^"]+)"/g)) {
+      hits.push({ name: m[1], ts, via: 'auto' });
+    }
+  }
+}
+
+/*
+ * トランスクリプトは合計 GB 級になり得るため全文を一括読みせず、チャンク単位で読んで
+ * 行ごとに処理する(メモリ使用はチャンク + 改行待ちの1行分に収まる)。
+ * chunkSize はテスト用に指定可能。StringDecoder が境界で割れたマルチバイト文字を繋ぐ。
+ */
+export function extractHits(fp: string, chunkSize = 1 << 20): Hit[] {
   const hits: Hit[] = [];
-  let raw: string;
+  let fd: number;
   try {
-    raw = fs.readFileSync(fp, 'utf8');
+    fd = fs.openSync(fp, 'r');
   } catch {
     return hits;
   }
-  for (const line of raw.split('\n')) {
-    const isCmd = line.includes('<command-name>');
-    const isSkill = line.includes('"name":"Skill"');
-    const isAgent = line.includes('"subagent_type"');
-    if (!isCmd && !isSkill && !isAgent) continue;
-    const tm = line.match(/"timestamp":"([^"]+)"/);
-    const ts = tm ? Date.parse(tm[1]) || 0 : 0;
-    if (isCmd) {
-      for (const m of line.matchAll(/<command-name>\/?([^<]+)<\/command-name>/g)) {
-        hits.push({ name: m[1].trim(), ts, via: 'typed' });
-      }
+  try {
+    const buf = Buffer.alloc(chunkSize);
+    const decoder = new StringDecoder('utf8');
+    let rest = '';
+    let bytes: number;
+    while ((bytes = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      const lines = (rest + decoder.write(buf.subarray(0, bytes))).split('\n');
+      rest = lines.pop() || '';
+      for (const line of lines) scanLine(line, hits);
     }
-    if (isSkill) {
-      for (const m of line.matchAll(/"name":"Skill","input":\{"skill":"([^"]+)"/g)) {
-        hits.push({ name: m[1], ts, via: 'auto' });
-      }
-    }
-    if (isAgent) {
-      // Agent/Task ツールによるサブエージェント起動(agent 定義の使用実績として扱う)
-      for (const m of line.matchAll(/"subagent_type":"([^"]+)"/g)) {
-        hits.push({ name: m[1], ts, via: 'auto' });
-      }
-    }
+    rest += decoder.end();
+    if (rest) scanLine(rest, hits);
+  } catch {
+    /* 途中で読めなくなったら部分結果を返す */
+  } finally {
+    fs.closeSync(fd);
   }
   return hits;
 }

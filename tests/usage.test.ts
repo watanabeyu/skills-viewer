@@ -46,6 +46,17 @@ describe('extractHits (トランスクリプトからの起動抽出)', () => {
     const fp = fixture(['{"type":"assistant","text":"hello"}', 'not json at all']);
     expect(extractHits(fp)).toEqual([]);
   });
+
+  it('チャンク境界をまたぐ行・マルチバイト文字も正しく処理する', () => {
+    const lines = [
+      '{"timestamp":"2026-07-08T00:00:00.000Z","message":"日本語のパディング テキスト","x":"<command-name>/alpha</command-name>"}',
+      '{"timestamp":"2026-07-08T01:00:00.000Z","input":{"subagent_type":"beta"}}',
+    ];
+    const fp = fixture(lines);
+    // chunkSize=7 で行・マルチバイト文字が必ず分断される状況を作る
+    expect(extractHits(fp, 7)).toEqual(extractHits(fp));
+    expect(extractHits(fp, 7).map((h) => h.name)).toEqual(['alpha', 'beta']);
+  });
 });
 
 describe('encodeProjectPath', () => {

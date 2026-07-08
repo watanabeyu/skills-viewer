@@ -17,7 +17,7 @@ import {
   type SortKey,
 } from './util';
 import { GridView } from './components/GridView';
-import { DetailView } from './components/DetailView';
+import { DetailView, clearMdCache } from './components/DetailView';
 import { SettingsModal } from './components/SettingsModal';
 
 const SORT_LABELS: [SortKey, string][] = [
@@ -60,6 +60,7 @@ export default function App() {
   };
 
   const reload = useCallback(async () => {
+    clearMdCache();
     setData(await fetchSkills());
   }, []);
 

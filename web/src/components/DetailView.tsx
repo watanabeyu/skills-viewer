@@ -465,6 +465,11 @@ function DiffBlock({ a, b }: { a: FlatItem; b: FlatItem }) {
 
 const mdCache = new Map<string, string>();
 
+/* 「エディタで開く」で編集 → 再スキャン後に古い SKILL.md が残らないよう reload 時に呼ぶ */
+export function clearMdCache(): void {
+  mdCache.clear();
+}
+
 function MdTab({ path }: { path: string }) {
   const [raw, setRaw] = useState<string | null>(mdCache.get(path) ?? null);
   const [error, setError] = useState('');

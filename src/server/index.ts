@@ -125,6 +125,12 @@ function collect(cwd: string): SkillsData {
   return { generatedAt: new Date().toISOString(), cwd, sections, targets, aiStale };
 }
 
+/* DNS rebinding 対策: same-origin GET には Origin が付かないため Host 側も検証する */
+function hostOk(req: http.IncomingMessage): boolean {
+  const host = (req.headers.host || '').replace(/:\d+$/, '');
+  return host === '127.0.0.1' || host === 'localhost';
+}
+
 /* 同一オリジン以外からの API アクセスを拒否(Origin が付く場合のみ検証) */
 function originOk(req: http.IncomingMessage): boolean {
   const origin = req.headers.origin;
@@ -142,7 +148,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
     res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(obj));
   };
-  if (!originOk(req)) return send(403, { error: 'bad origin' });
+  if (!hostOk(req) || !originOk(req)) return send(403, { error: 'bad origin' });
 
   const url = new URL(req.url || '/', 'http://localhost');
 

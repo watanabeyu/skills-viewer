@@ -89,7 +89,11 @@ export function summarizeOne(it: SummarizeTarget): Promise<SkillAnalysis> {
       it.name +
       '\n\n' +
       content;
-    const child = spawn('claude', ['-p', '--model', 'haiku'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    // --tools '' で全ツールを無効化: SKILL.md は clone したリポジトリ由来もあり得るため、
+    // 本文に指示が仕込まれていても純粋なテキスト生成の外に出られないようにする
+    const child = spawn('claude', ['-p', '--model', 'haiku', '--tools', ''], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     let out = '',
       errOut = '';
     const timer = setTimeout(() => {

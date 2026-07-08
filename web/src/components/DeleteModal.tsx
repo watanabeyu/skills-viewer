@@ -16,7 +16,7 @@ export function DeleteModal({
     >
       <div className="modal">
         <h3>{name} を削除しますか?</h3>
-        <p>SKILL.md と関連ファイルがこのリストから削除されます。この操作は元に戻せません。</p>
+        <p>SKILL.md と関連ファイルをゴミ箱に移動します(あとで復元できます)。</p>
         <div className="btns">
           <button className="pbtn" onClick={onCancel}>
             キャンセル

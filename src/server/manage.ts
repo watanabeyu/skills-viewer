@@ -152,12 +152,10 @@ export function openInEditor({ src }: { src: string }) {
     spawn(cmd, [real], { detached: true, stdio: 'ignore' }).unref();
     return { ok: true, editor: cmd };
   }
+  // Windows は cmd を経由しない(shell:true や cmd /c start はパス中の & 等が解釈され得る)。
+  // explorer.exe は引数をそのままファイルパスとして扱うためメタ文字が無害。
   const opener =
-    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-  spawn(opener, [real], {
-    detached: true,
-    stdio: 'ignore',
-    shell: process.platform === 'win32',
-  }).unref();
+    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  spawn(opener, [real], { detached: true, stdio: 'ignore' }).unref();
   return { ok: true, editor: opener };
 }

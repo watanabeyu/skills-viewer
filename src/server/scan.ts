@@ -85,7 +85,12 @@ function listFiles(dir: string, prefix = '', depth = 0, acc: string[] = []): str
 function readSkillDir(dir: string, nameHint: string): ScanItem | null {
   const skillMd = path.join(dir, 'SKILL.md');
   if (!fs.existsSync(skillMd)) return null;
-  const raw = fs.readFileSync(skillMd, 'utf8');
+  let raw: string;
+  try {
+    raw = fs.readFileSync(skillMd, 'utf8');
+  } catch {
+    return null; // 権限エラー等で読めない skill はスキップ(一覧全体を落とさない)
+  }
   const { meta, body } = parseFrontmatter(raw);
   return {
     name: meta.name || nameHint,
@@ -118,7 +123,12 @@ function scanMdRoot(root: string, kind: 'command' | 'agent'): ScanItem[] {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
     const fp = path.join(root, entry.name);
-    const raw = fs.readFileSync(fp, 'utf8');
+    let raw: string;
+    try {
+      raw = fs.readFileSync(fp, 'utf8');
+    } catch {
+      continue; // 読めないファイルはスキップ(一覧全体を落とさない)
+    }
     const { meta, body } = parseFrontmatter(raw);
     items.push({
       name: meta.name || entry.name.replace(/\.md$/, ''),
