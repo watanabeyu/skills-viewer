@@ -10,9 +10,9 @@ npx skills-viewer
 
 > Zero runtime dependencies. The published package ships a prebuilt UI; `npx` installs in seconds.
 
-<!-- 絶対 URL 参照: npm パッケージには docs/ が入らないため、npmjs.com 上でも表示できるようにする -->
+<!-- 相対パス参照: private リポジトリでも GitHub 上で表示でき、npmjs.com は repository フィールドを元に raw URL へ書き換えるため public 化後は npm でも表示される -->
 
-![Skills Viewer — grid view with per-scope grouping, usage stats and AI summaries](https://raw.githubusercontent.com/watanabeyu/skills-viewer/main/docs/screenshot.png)
+![Skills Viewer — grid view with per-scope grouping, usage stats and AI summaries](docs/screenshot.png)
 
 ## Features
 
