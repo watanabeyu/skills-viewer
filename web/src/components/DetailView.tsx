@@ -27,6 +27,7 @@ import {
 import { editorUrl, loadEditorSetting } from '../settings';
 import { diffLines, type DiffLine } from '../diff';
 import { mdRender, splitFrontmatter } from '../md';
+import { relTypeLabel, t } from '../i18n';
 import { InvocationBadge, KindBadge, SectionHeading } from './GridView';
 import { CopyMenu } from './CopyMenu';
 import { DeleteModal } from './DeleteModal';
@@ -63,9 +64,9 @@ export function DetailView({
 
   if (!it) return <Navigate to={{ pathname: '/', search: params.toString() }} replace />;
 
-  const setTab = (t: string) => {
+  const setTab = (tabName: string) => {
     const next = new URLSearchParams(params);
-    if (t === 'md') next.set('tab', 'md');
+    if (tabName === 'md') next.set('tab', 'md');
     else next.delete('tab');
     navigate({ pathname: '/skills/' + toId(it.key), search: next.toString() }, { replace: true });
   };
@@ -82,7 +83,7 @@ export function DetailView({
       await reload();
       onOpen(r.destMd + '#' + r.destName); // コピー先の詳細を表示(design 仕様)
     } catch (e) {
-      alert('コピーに失敗: ' + (e instanceof Error ? e.message : e));
+      alert(t('alert.copyFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   };
   const onDelete = async () => {
@@ -91,9 +92,9 @@ export function DetailView({
       setConfirmDelete(false);
       await reload();
       backToGrid();
-      alert('ゴミ箱に移動しました:\n' + r.trashedTo);
+      alert(t('alert.trashed', { path: r.trashedTo }));
     } catch (e) {
-      alert('削除に失敗: ' + (e instanceof Error ? e.message : e));
+      alert(t('alert.deleteFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   };
   const onOpenEditor = async () => {
@@ -106,7 +107,7 @@ export function DetailView({
     try {
       await openSkill(it.path);
     } catch (e) {
-      alert('エディタで開けませんでした: ' + (e instanceof Error ? e.message : e));
+      alert(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   };
   const onSummarize = async () => {
@@ -115,7 +116,7 @@ export function DetailView({
       await summarizeSkill(it.path, it.name);
       await reload();
     } catch (e) {
-      alert('要約に失敗: ' + (e instanceof Error ? e.message : e));
+      alert(t('alert.summarizeFailed', { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setSummarizing(false);
     }
@@ -134,7 +135,7 @@ export function DetailView({
       />
       <div className="pane">
         <button className="back" onClick={backToGrid}>
-          ← 一覧に戻る
+          {t('detail.back')}
         </button>
         <div className="meta-row">
           <span
@@ -145,17 +146,19 @@ export function DetailView({
           </span>
           <InvocationBadge it={it} />
           {it.version && <span className="m-ver">v{it.version}</span>}
-          <span className="m-upd">{it.updatedAt ? `最終更新 ${fmtDate(it.updatedAt)}` : ''}</span>
-          {it.path.startsWith('/') && (
+          <span className="m-upd">
+            {it.updatedAt ? t('detail.lastUpdated', { date: fmtDate(it.updatedAt) }) : ''}
+          </span>
+          {!!it.path && (
             <button className="pbtn" onClick={onOpenEditor}>
-              エディタで開く
+              {t('detail.openEditor')}
             </button>
           )}
           {it.manage && (
             <>
               <span style={{ position: 'relative' }}>
                 <button className="pbtn" onClick={() => setCopyOpen((v) => !v)}>
-                  コピー ▾
+                  {t('detail.copy')}
                 </button>
                 {copyOpen && (
                   <CopyMenu
@@ -166,10 +169,10 @@ export function DetailView({
                 )}
               </span>
               <button className="pbtn" disabled={summarizing} onClick={onSummarize}>
-                {summarizing ? '要約中…' : 'AI要約更新'}
+                {summarizing ? t('detail.summarizing') : t('detail.resummarize')}
               </button>
               <button className="pbtn danger" onClick={() => setConfirmDelete(true)}>
-                削除
+                {t('detail.delete')}
               </button>
             </>
           )}
@@ -183,7 +186,7 @@ export function DetailView({
             className={'tab' + (tab === 'overview' ? ' on' : '')}
             onClick={() => setTab('overview')}
           >
-            概要
+            {t('tab.overview')}
           </button>
           {it.hasMd && (
             <button className={'tab' + (tab === 'md' ? ' on' : '')} onClick={() => setTab('md')}>
@@ -270,7 +273,7 @@ function LeftColumn({
           ))}
         </div>
       ))}
-      {!groups.length && <div className="empty">条件に一致するスキルがありません</div>}
+      {!groups.length && <div className="empty">{t('list.empty')}</div>}
     </div>
   );
 }
@@ -287,7 +290,7 @@ function OverviewTab({
   // AI 分類(関係タイプ付き)があればそれを、無ければ静的解析の参照候補を表示
   const relations = it.aiRelations?.length
     ? it.aiRelations
-    : (it.refs || []).map((name) => ({ name, type: '参照' as const, note: '' }));
+    : (it.refs || []).map((name) => ({ name, type: 'references' as const, note: '' }));
   // 同一プロジェクト → user/plugin/built-in の順で解決(他プロジェクトの同名 skill は対象外)
   const resolve = (name: string) => {
     const hit = (pred: (x: FlatItem) => boolean) =>
@@ -299,34 +302,34 @@ function OverviewTab({
     <div>
       {it.aiSummary && (
         <>
-          <div className="sec-t">AI 要約</div>
+          <div className="sec-t">{t('detail.aiSummary')}</div>
           <p className="full-desc">
             <span className="ai-mark">✦ </span>
             {it.aiSummary}
           </p>
         </>
       )}
-      <div className="sec-t">説明</div>
+      <div className="sec-t">{t('detail.description')}</div>
       <p className="full-desc">{it.description}</p>
       {usageLine(it) && (
         <>
-          <div className="sec-t">使い方</div>
+          <div className="sec-t">{t('detail.usage')}</div>
           <div className="ex-block">{usageLine(it)}</div>
         </>
       )}
       <SameNameSection it={it} all={all} onOpen={onOpen} />
       {it.typedCount || it.autoCount ? (
         <>
-          <div className="sec-t">使用実績</div>
+          <div className="sec-t">{t('detail.usageStats')}</div>
           <p className="full-desc">
-            手動(人間がタイプ) {it.typedCount || 0}回 · 自動(エージェント呼び出し){' '}
-            {it.autoCount || 0}回{it.lastUsed ? ` · 最終 ${fmtDate(it.lastUsed)}` : ''}
+            {t('detail.usageDetail', { typed: it.typedCount || 0, auto: it.autoCount || 0 })}
+            {it.lastUsed ? t('detail.usageLast', { date: fmtDate(it.lastUsed) }) : ''}
           </p>
         </>
       ) : null}
       {relations.length > 0 && (
         <>
-          <div className="sec-t">関連スキル</div>
+          <div className="sec-t">{t('detail.relations')}</div>
           <div className="rel-chips">
             {relations.map((rel) => {
               const target = resolve(rel.name);
@@ -337,14 +340,14 @@ function OverviewTab({
                   title={rel.note}
                   onClick={() => onOpen(target.key)}
                 >
-                  <span className="rt">{rel.type}</span>
+                  <span className="rt">{relTypeLabel(rel.type)}</span>
                   <span className="rn">/{rel.name}</span>
                 </button>
               ) : (
                 <span key={rel.name} className="rel-chip missing" title={rel.note}>
-                  <span className="rt">{rel.type}</span>
+                  <span className="rt">{relTypeLabel(rel.type)}</span>
                   <span className="rn">/{rel.name}</span>
-                  <span className="rm">未インストール</span>
+                  <span className="rm">{t('detail.notInstalled')}</span>
                 </span>
               );
             })}
@@ -353,7 +356,7 @@ function OverviewTab({
       )}
       {it.files.length > 0 && (
         <>
-          <div className="sec-t">含まれるファイル</div>
+          <div className="sec-t">{t('detail.files')}</div>
           {it.files.map((f) => (
             <div className="f-row" key={f}>
               <span className="sq6" />
@@ -362,10 +365,10 @@ function OverviewTab({
           ))}
         </>
       )}
-      <div className="sec-t">{it.hasMd ? 'パス' : '場所'}</div>
+      <div className="sec-t">{it.hasMd ? t('detail.path') : t('detail.location')}</div>
       <div className="f-row">
         <span className="sq6" />
-        <span className="p">{it.path}</span>
+        <span className="p">{it.path || t('detail.builtinLocation')}</span>
       </div>
     </div>
   );
@@ -389,21 +392,21 @@ function SameNameSection({
   if (!others.length) return null;
   return (
     <>
-      <div className="sec-t">同名の定義 ({others.length})</div>
+      <div className="sec-t">{t('detail.sameName', { n: others.length })}</div>
       {others.map((o) => (
         <div className="f-row" key={o.key}>
           <span className="dot5" style={{ background: SRC_COLOR[o.source] }} />
           <span className="p">{o.scopeLabel}</span>
           <span className="same-actions">
             <button className="pbtn sm" onClick={() => onOpen(o.key)}>
-              開く
+              {t('detail.open')}
             </button>
             {it.hasMd && o.hasMd && (
               <button
                 className={'pbtn sm' + (diffWith?.key === o.key ? ' on' : '')}
                 onClick={() => setDiffWith(diffWith?.key === o.key ? null : o)}
               >
-                {diffWith?.key === o.key ? 'diff を閉じる' : 'diff'}
+                {diffWith?.key === o.key ? t('detail.diffClose') : t('detail.diff')}
               </button>
             )}
           </span>
@@ -434,22 +437,24 @@ function DiffBlock({ a, b }: { a: FlatItem; b: FlatItem }) {
     };
   }, [a.path, b.path]);
 
-  if (error) return <div className="empty">diff の取得に失敗しました: {error}</div>;
-  if (!lines) return <div className="empty">読み込み中…</div>;
+  if (error) return <div className="empty">{t('diff.failed', { msg: error })}</div>;
+  if (!lines) return <div className="empty">{t('common.loading')}</div>;
   const changed = lines.filter((l) => l.type === 'add' || l.type === 'del').length;
   return (
     <div className="diff-wrap">
       <div className="diff-legend">
-        <span className="d-del-mark">− {a.scopeLabel}(この定義)</span>
+        <span className="d-del-mark">{t('diff.thisDef', { label: a.scopeLabel })}</span>
         <span className="d-add-mark">+ {b.scopeLabel}</span>
-        <span className="d-count">{changed === 0 ? '内容は同一です' : `差分 ${changed} 行`}</span>
+        <span className="d-count">
+          {changed === 0 ? t('diff.identical') : t('diff.changed', { n: changed })}
+        </span>
       </div>
       {changed > 0 && (
         <div className="diff">
           {lines.map((l, i) =>
             l.type === 'skip' ? (
               <div className="d-skip" key={i}>
-                … {l.count} 行同一 …
+                {t('diff.skip', { n: l.count })}
               </div>
             ) : (
               <div className={'d-line d-' + l.type} key={i}>
@@ -495,8 +500,8 @@ function MdTab({ path }: { path: string }) {
     };
   }, [path]);
 
-  if (error) return <div className="empty">読み込みに失敗しました: {error}</div>;
-  if (raw === null) return <div className="empty">読み込み中…</div>;
+  if (error) return <div className="empty">{t('app.loadFailed', { msg: error })}</div>;
+  if (raw === null) return <div className="empty">{t('common.loading')}</div>;
   const { frontmatter, body } = splitFrontmatter(raw);
   return (
     <div>

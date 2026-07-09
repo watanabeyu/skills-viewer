@@ -3,7 +3,9 @@
 export type ItemKind = 'skill' | 'command' | 'agent' | 'hook';
 export type Source = 'built-in' | 'user' | 'project' | 'plugin';
 export type Invocation = 'human' | 'agent' | 'both';
-export type RelationType = '起動' | '委譲' | '呼ばれる側' | '参照';
+export type Lang = 'ja' | 'en';
+/* 言語非依存のキー。表示ラベルは web 側の辞書で解決する */
+export type RelationType = 'invokes' | 'delegates' | 'called-by' | 'references';
 
 export interface SkillRelation {
   name: string;
@@ -34,7 +36,10 @@ export interface SkillItem {
 export interface Section {
   id: string;
   source: Source;
-  heading: string;
+  /* source === 'project' のみ。見出し文字列はクライアント側で組み立てる */
+  projectName?: string;
+  isCurrent?: boolean;
+  /* セクションの実体パス(built-in は '') */
   note: string;
   manage?: boolean;
   items: SkillItem[];

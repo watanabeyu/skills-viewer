@@ -5,15 +5,30 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { listProjects } from './scan';
+import { ApiError } from './errors';
 
 const HOME = os.homedir();
 
 type ManagedKind = 'skill' | 'command' | 'agent';
 
+/* realpath 解決(存在しないパスは not-found に正規化) */
+function realpathOrThrow(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    throw new ApiError('not-found', p);
+  }
+}
+
 /* skills(ディレクトリ) / commands / agents(単一 .md) を管理対象とする */
 export function assertManagedPath(p: string): { real: string; kind: ManagedKind } {
-  const real = fs.realpathSync(p);
+  const real = realpathOrThrow(p);
   const sep = path.sep;
+  // plugin 配下(.claude/plugins/<name>/skills/… 等)は kind 判定より先に弾く。
+  // within() は「.claude 直下の skills/」を要求するため、後段では到達しない
+  if (real.includes(sep + '.claude' + sep + 'plugins' + sep)) {
+    throw new ApiError('plugin-managed');
+  }
   const within = (sub: string) => real.includes(sep + '.claude' + sep + sub + sep);
   const kind: ManagedKind | null = within('skills')
     ? 'skill'
@@ -22,33 +37,31 @@ export function assertManagedPath(p: string): { real: string; kind: ManagedKind 
       : within('agents')
         ? 'agent'
         : null;
-  if (!kind) throw new Error('管理対象外のパスです: ' + real);
-  if (real.includes(sep + '.claude' + sep + 'plugins' + sep)) {
-    throw new Error('plugin 配下は /plugin コマンドで管理してください');
-  }
+  if (!kind) throw new ApiError('not-managed-path', real);
   return { real, kind };
 }
 
 /* 読み取り専用は plugin 配下も許可(.claude 配下の .md のみ) */
 export function assertReadableMd(p: string): string {
-  const real = fs.realpathSync(p);
-  if (!real.endsWith('.md')) throw new Error('md ファイルではありません');
+  const real = realpathOrThrow(p);
+  if (!real.endsWith('.md')) throw new ApiError('not-md', real);
   if (!real.includes(path.sep + '.claude' + path.sep))
-    throw new Error('読み取り対象外のパスです: ' + real);
+    throw new ApiError('not-readable-path', real);
   return real;
 }
 
 /* エディタで開くのは .claude 配下ならなんでも良い(settings.json 等も含む) */
 function assertOpenablePath(p: string): string {
-  const real = fs.realpathSync(p);
-  if (!real.includes(path.sep + '.claude' + path.sep)) throw new Error('対象外のパスです: ' + real);
+  const real = realpathOrThrow(p);
+  if (!real.includes(path.sep + '.claude' + path.sep))
+    throw new ApiError('not-openable-path', real);
   return real;
 }
 
 function assertKnownTarget(target: string, cwd: string): string {
   const resolved = path.resolve(target);
   const known = new Set([HOME, ...listProjects(cwd)]);
-  if (!known.has(resolved)) throw new Error('未知のコピー先です: ' + resolved);
+  if (!known.has(resolved)) throw new ApiError('unknown-copy-target', resolved);
   return resolved;
 }
 
@@ -62,7 +75,7 @@ export function uniqueDest(to: string, isFile: boolean): string {
     const cand = path.join(dir, base + '-copy' + (i === 1 ? '' : i) + ext);
     if (!fs.existsSync(cand)) return cand;
   }
-  throw new Error('コピー先の空き名が見つかりません');
+  throw new ApiError('no-free-name');
 }
 
 const KIND_SUBDIR: Record<ManagedKind, string> = {
@@ -120,7 +133,7 @@ export function doDelete({ src }: { src: string }) {
   const { real, kind } = assertManagedPath(src);
   const target = kind === 'skill' ? path.dirname(real) : real;
   if (kind === 'skill' && path.basename(path.dirname(target)) !== 'skills') {
-    throw new Error('skill ディレクトリ構造が想定外です: ' + target);
+    throw new ApiError('unexpected-skill-dir', target);
   }
   const trashedTo = moveToTrash(target);
   return { ok: true, deleted: target, trashedTo };

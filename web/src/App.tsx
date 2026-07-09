@@ -19,21 +19,17 @@ import {
 import { GridView } from './components/GridView';
 import { DetailView, clearMdCache } from './components/DetailView';
 import { SettingsModal } from './components/SettingsModal';
+import { getLang, setLang, t, type Lang, type MsgKey } from './i18n';
 
-const SORT_LABELS: [SortKey, string][] = [
-  ['name', '名前順'],
-  ['uses', '使用回数順'],
-  ['recent', '最近使った順'],
-  ['updated', '更新日順'],
+/* ラベルは言語切替に追従させるため、キーだけ持ってレンダー時に t() で引く */
+const SORT_KEYS: [SortKey, MsgKey][] = [
+  ['name', 'sort.name'],
+  ['uses', 'sort.uses'],
+  ['recent', 'sort.recent'],
+  ['updated', 'sort.updated'],
 ];
 
-const KIND_FILTERS: [KindFilter, string][] = [
-  ['all', 'すべて'],
-  ['skill', 'skill'],
-  ['command', 'command'],
-  ['agent', 'agent'],
-  ['hook', 'hook'],
-];
+const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
 
 export default function App() {
   const [data, setData] = useState<SkillsData | null>(null);
@@ -51,6 +47,10 @@ export default function App() {
     setWidth(w);
     localStorage.setItem('csb-width', w);
   };
+  const [lang, setLangState] = useState<Lang>(getLang());
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
@@ -63,6 +63,14 @@ export default function App() {
     clearMdCache();
     setData(await fetchSkills());
   }, []);
+
+  /* 言語切替: 全体が再レンダーされ、builtin 説明・AI要約の言語も変わるので再取得する */
+  const changeLang = (l: Lang) => {
+    if (l === lang) return;
+    setLang(l);
+    setLangState(l);
+    reload().catch(() => {});
+  };
 
   useEffect(() => {
     (async () => {
@@ -95,13 +103,17 @@ export default function App() {
       const st = await fetchSummaryStatus();
       if (!st.finished) {
         setAiBusy(true);
-        setAiLabel(`要約中 ${st.done}/${st.total}`);
+        setAiLabel(t('ai.progress', { done: st.done, total: st.total }));
         pollTimer.current = window.setTimeout(poll, 1500);
         return;
       }
       if (st.total > 0) {
         if (st.errors.length) {
-          alert(`要約完了(エラー ${st.errors.length}件):\n` + st.errors.slice(0, 5).join('\n'));
+          alert(
+            t('ai.finishedErrors', { n: st.errors.length }) +
+              '\n' +
+              st.errors.slice(0, 5).join('\n'),
+          );
         }
         await reload();
       }
@@ -116,40 +128,34 @@ export default function App() {
     return () => window.clearTimeout(pollTimer.current);
   }, [poll]);
 
-  useEffect(() => {
-    if (!aiBusy && data) {
-      setAiLabel(data.aiStale > 0 ? `AI要約 (未生成 ${data.aiStale})` : 'AI要約 ✓');
-    }
-  }, [data, aiBusy]);
+  /* 非ポーリング時のラベルはレンダー時に計算する(言語切替にも追従) */
+  const idleAiLabel = !data
+    ? t('ai.button')
+    : data.aiStale > 0
+      ? t('ai.stale', { n: data.aiStale })
+      : t('ai.done');
 
   const onAiClick = async () => {
     if (!data || aiBusy) return;
     const force = data.aiStale === 0;
     if (force) {
-      const total = all.filter((x) => x.path.startsWith('/') && x.kind !== 'hook').length;
-      if (
-        !confirm(
-          `全 skill の要約は最新です。全 ${total} 件を強制再生成しますか?(claude CLI / haiku)`,
-        )
-      )
-        return;
-    } else if (
-      !confirm(`${data.aiStale} 件の SKILL.md を claude CLI (haiku) で要約します。よろしいですか?`)
-    ) {
+      const total = all.filter((x) => x.path && x.kind !== 'hook').length;
+      if (!confirm(t('ai.confirmForce', { n: total }))) return;
+    } else if (!confirm(t('ai.confirmRun', { n: data.aiStale }))) {
       return;
     }
     try {
       await summarizeAll(force);
       poll();
     } catch (e) {
-      alert('開始に失敗: ' + (e instanceof Error ? e.message : e));
+      alert(t('ai.startFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   };
 
   if (error)
     return (
       <div className="wrap">
-        <div className="empty">読み込みに失敗しました: {error}</div>
+        <div className="empty">{t('app.loadFailed', { msg: error })}</div>
       </div>
     );
 
@@ -160,12 +166,14 @@ export default function App() {
           <h1>
             <Link to={{ pathname: '/', search: params.toString() }}>Skills Viewer</Link>
           </h1>
-          <span className="sub">skills · commands · agents · hooks — このPCにインストール済み</span>
-          <span className="count">{data ? `${shownCount} / ${all.length} 件` : '…'}</span>
+          <span className="sub">{t('app.subtitle')}</span>
+          <span className="count">
+            {data ? t('app.count', { shown: shownCount, total: all.length }) : '…'}
+          </span>
         </div>
         <input
           className="q"
-          placeholder="スキル名や説明で検索…"
+          placeholder={t('app.searchPlaceholder')}
           value={params.get('q') || ''}
           onChange={(e) => setParam('q', e.target.value || null)}
         />
@@ -174,32 +182,27 @@ export default function App() {
             className="sel"
             value={sort}
             onChange={(e) => setParam('sort', e.target.value === 'name' ? null : e.target.value)}
-            title="並び順"
+            title={t('sort.title')}
           >
-            {SORT_LABELS.map(([key, label]) => (
+            {SORT_KEYS.map(([key, msgKey]) => (
               <option key={key} value={key}>
-                {label}
+                {t(msgKey)}
               </option>
             ))}
           </select>
           <span className="seg">
-            {KIND_FILTERS.map(([key, label]) => (
+            {KIND_FILTERS.map((key) => (
               <button
                 key={key}
                 className={kind === key ? 'on' : ''}
                 onClick={() => setParam('kind', key === 'all' ? null : key)}
               >
-                {label}
+                {key === 'all' ? t('kind.all') : key}
               </button>
             ))}
           </span>
-          <button
-            className="chip"
-            disabled={aiBusy}
-            onClick={onAiClick}
-            title="claude CLI (haiku) で各 SKILL.md を要約。内容が変わったものだけ再生成"
-          >
-            {aiLabel || 'AI要約'}
+          <button className="chip" disabled={aiBusy} onClick={onAiClick} title={t('ai.buttonTitle')}>
+            {aiBusy ? aiLabel || t('ai.button') : idleAiLabel}
           </button>
           <label className="grp-label">
             <input
@@ -207,10 +210,10 @@ export default function App() {
               checked={grouped}
               onChange={(e) => setParam('grouped', e.target.checked ? null : '0')}
             />
-            <span>グループ化</span>
+            <span>{t('app.grouped')}</span>
           </label>
           <button className="chip" onClick={() => setSettingsOpen(true)}>
-            設定
+            {t('app.settings')}
           </button>
         </div>
       </div>
@@ -218,6 +221,8 @@ export default function App() {
         <SettingsModal
           width={width}
           onChangeWidth={changeWidth}
+          lang={lang}
+          onChangeLang={changeLang}
           onClose={() => setSettingsOpen(false)}
         />
       )}

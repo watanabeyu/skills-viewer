@@ -1,5 +1,6 @@
 import type { Section, SkillItem, Source } from './api';
 import { itemKey } from './api';
+import { t } from './i18n';
 
 export const SRC_COLOR: Record<Source, string> = {
   'built-in': '#2a6fdb',
@@ -25,11 +26,16 @@ export interface FlatItem extends SkillItem {
   hasMd: boolean;
 }
 
-/* セクション見出しから短い所属ラベルを作る(project — monorepo (current) → monorepo) */
-export function scopeLabelOf(s: Section): string {
+/* セクション見出し(サーバーは構造化データのみ返し、表示文字列はここで組み立てる) */
+export function headingOf(s: Section): string {
   return s.source === 'project'
-    ? s.heading.replace(/^project — /, '').replace(/ \(current\)$/, '')
+    ? 'project — ' + (s.projectName || '') + (s.isCurrent ? ' (current)' : '')
     : s.source;
+}
+
+/* 短い所属ラベル(project は プロジェクト名のみ) */
+export function scopeLabelOf(s: Section): string {
+  return s.source === 'project' ? s.projectName || '' : s.source;
 }
 
 export function flatten(sections: Section[]): FlatItem[] {
@@ -104,20 +110,18 @@ export function invocationOf(it: SkillItem): { kind: Invocation; basis: 'measure
   return null;
 }
 
-export const INVOCATION_LABEL: Record<Invocation, string> = {
-  human: '人間起点',
-  agent: 'エージェント',
-  both: '両方',
-};
+/* 言語切替に追従するよう、定数マップでなく都度 t() を引く */
+export const invocationLabel = (kind: Invocation): string => t(`invocation.${kind}`);
 
 export function invocationTitle(it: SkillItem): string {
   const parts: string[] = [];
   if ((it.typedCount || 0) + (it.autoCount || 0) > 0) {
-    parts.push(`実測: 手動 ${it.typedCount || 0}回 / 自動 ${it.autoCount || 0}回`);
+    parts.push(t('invocation.measured', { typed: it.typedCount || 0, auto: it.autoCount || 0 }));
   }
   if (it.aiInvocation) {
     parts.push(
-      `AI判定: ${INVOCATION_LABEL[it.aiInvocation]}${it.aiInvocationReason ? `(${it.aiInvocationReason})` : ''}`,
+      t('invocation.ai', { label: invocationLabel(it.aiInvocation) }) +
+        (it.aiInvocationReason ? `(${it.aiInvocationReason})` : ''),
     );
   }
   return parts.join(' · ');

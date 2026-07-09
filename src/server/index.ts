@@ -10,7 +10,7 @@ import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 
-import type { Section, SkillsData } from '../shared/types';
+import type { Lang, Section, SkillsData } from '../shared/types';
 import { scanSections, listProjects, HOME } from './scan';
 import { scanUsageByDir, encodeProjectPath } from './usage';
 import {
@@ -23,6 +23,8 @@ import {
   summaryStatus,
 } from './summary';
 import { assertReadableMd, doCopy, doDelete, openInEditor } from './manage';
+import { ApiError, toErrorBody } from './errors';
+import { srvMsg } from './locale';
 
 const TOKEN = crypto.randomBytes(16).toString('hex');
 const DIST = path.join(__dirname, '..', '..', 'dist');
@@ -96,14 +98,20 @@ function attributeUsage(sections: Section[]): void {
   }
 }
 
-function collect(cwd: string): SkillsData {
-  const sections = scanSections(cwd);
+function collect(cwd: string, lang: Lang): SkillsData {
+  const sections = scanSections(cwd, lang);
   attributeUsage(sections);
   const summaries = loadSummaries();
   for (const sec of sections) {
     for (const it of sec.items) {
       const cached = summaries[it.path];
-      if (cached && fs.existsSync(it.path) && cached.hash === contentHash(it.path)) {
+      if (
+        cached &&
+        cached.lang === lang && // 表示言語と違う要約は出さない(aiStale 側にカウントされる)
+        it.path &&
+        fs.existsSync(it.path) &&
+        cached.hash === contentHash(it.path)
+      ) {
         it.aiSummary = cached.summary;
         if (cached.invocation) {
           it.aiInvocation = cached.invocation;
@@ -115,7 +123,7 @@ function collect(cwd: string): SkillsData {
       }
     }
   }
-  const aiStale = staleItems(sections).length;
+  const aiStale = staleItems(sections, lang).length;
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
     ...listProjects(cwd)
@@ -143,32 +151,38 @@ function originOk(req: http.IncomingMessage): boolean {
   }
 }
 
+/* クライアント指定の表示言語(不明値は 'en' に落とす) */
+function langOf(v: unknown): Lang {
+  return v === 'ja' ? 'ja' : 'en';
+}
+
 function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: string): void {
   const send = (code: number, obj: unknown) => {
     res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(obj));
   };
-  if (!hostOk(req) || !originOk(req)) return send(403, { error: 'bad origin' });
+  if (!hostOk(req) || !originOk(req)) return send(403, { error: 'bad-origin', detail: '' });
 
   const url = new URL(req.url || '/', 'http://localhost');
 
   if (req.method === 'GET') {
     try {
       if (url.pathname === '/api/token') return send(200, { token: TOKEN });
-      if (url.pathname === '/api/skills') return send(200, collect(cwd));
+      if (url.pathname === '/api/skills')
+        return send(200, collect(cwd, langOf(url.searchParams.get('lang'))));
       if (url.pathname === '/api/summary-status') return send(200, summaryStatus());
       if (url.pathname === '/api/file') {
         const real = assertReadableMd(url.searchParams.get('src') || '');
         return send(200, { content: fs.readFileSync(real, 'utf8') });
       }
-      return send(404, { error: 'unknown endpoint' });
+      throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
-      return send(400, { error: e instanceof Error ? e.message : String(e) });
+      return send(e instanceof ApiError && e.code === 'unknown-endpoint' ? 404 : 400, toErrorBody(e));
     }
   }
 
   // mutation 系はトークン必須
-  if (req.headers['x-csb-token'] !== TOKEN) return send(403, { error: 'bad token' });
+  if (req.headers['x-csb-token'] !== TOKEN) return send(403, { error: 'bad-token', detail: '' });
   let body = '';
   req.on('data', (c) => {
     body += c;
@@ -179,31 +193,32 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
     try {
       data = JSON.parse(body || '{}');
     } catch {
-      return send(400, { error: 'bad json' });
+      return send(400, { error: 'bad-json', detail: '' });
     }
+    const lang = langOf(data.lang);
     try {
       if (url.pathname === '/api/copy') return send(200, doCopy(data, cwd));
       if (url.pathname === '/api/delete') return send(200, doDelete(data));
       if (url.pathname === '/api/open') return send(200, openInEditor(data));
       if (url.pathname === '/api/summarize-all')
-        return send(200, startSummarizeAll(scanSections(cwd), !!data.force));
+        return send(200, startSummarizeAll(scanSections(cwd, lang), !!data.force, lang));
       if (url.pathname === '/api/summarize') {
         const real = assertReadableMd(data.src);
         // refs(関係候補)はスキャン結果から復元する
-        const sections = scanSections(cwd);
+        const sections = scanSections(cwd, lang);
         const item = sections.flatMap((s) => s.items).find((x) => x.path === real);
         const name = data.name || item?.name || path.basename(path.dirname(real));
-        summarizeOne({ path: real, name, refs: item?.refs || [] })
+        summarizeOne({ path: real, name, refs: item?.refs || [] }, lang)
           .then((analysis) => {
-            saveSummary(real, name, analysis);
+            saveSummary(real, name, analysis, lang);
             send(200, { ok: true, ...analysis });
           })
-          .catch((e) => send(400, { error: e instanceof Error ? e.message : String(e) }));
+          .catch((e) => send(400, toErrorBody(e)));
         return;
       }
-      return send(404, { error: 'unknown endpoint' });
+      throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
-      return send(400, { error: e instanceof Error ? e.message : String(e) });
+      return send(e instanceof ApiError && e.code === 'unknown-endpoint' ? 404 : 400, toErrorBody(e));
     }
   });
 }
@@ -220,7 +235,8 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
   }
   if (!fs.existsSync(fp)) {
     res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return void res.end('dist/ がありません。`pnpm build` を実行してください。');
+    // 開発者向けメッセージなので英語固定
+    return void res.end('dist/ not found. Run `pnpm build` first.');
   }
   res.writeHead(200, { 'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream' });
   res.end(fs.readFileSync(fp));
@@ -251,7 +267,12 @@ export function start(
   server.listen(port, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${port}`;
     console.log(`skills-viewer: ${url}  (cwd: ${cwd})`);
-    console.log('Ctrl+C で終了。ページ再読み込みで再スキャンされます。');
+    console.log(
+      srvMsg(
+        'Ctrl+C で終了。ページ再読み込みで再スキャンされます。',
+        'Press Ctrl+C to quit. Reloading the page rescans.',
+      ),
+    );
     if (open && process.platform === 'darwin') execFile('open', [url], () => {});
     if (open && process.platform === 'win32') execFile('cmd', ['/c', 'start', url], () => {});
     if (open && process.platform === 'linux') execFile('xdg-open', [url], () => {});

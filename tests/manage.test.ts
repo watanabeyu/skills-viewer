@@ -21,11 +21,15 @@ describe('assertManagedPath (コピー/削除のパス検証)', () => {
     expect(assertManagedPath(make('p/.claude/agents/baz.md')).kind).toBe('agent');
   });
 
-  it('.claude 外・plugin 配下は拒否する', () => {
-    expect(() => assertManagedPath(make('p/outside.md'))).toThrow('管理対象外');
+  it('.claude 外・plugin 配下はエラーコード付きで拒否する', () => {
+    expect(() => assertManagedPath(make('p/outside.md'))).toThrow('not-managed-path');
     expect(() => assertManagedPath(make('h/.claude/plugins/x/skills/s/SKILL.md'))).toThrow(
-      'plugin',
+      'plugin-managed',
     );
+  });
+
+  it('存在しないパスは not-found', () => {
+    expect(() => assertManagedPath(path.join(tmp, 'no-such-file.md'))).toThrow('not-found');
   });
 });
 
@@ -35,9 +39,9 @@ describe('assertReadableMd (md 読み取りの検証)', () => {
     expect(assertReadableMd(fp)).toContain('SKILL.md');
   });
 
-  it('.md 以外・.claude 外は拒否する', () => {
-    expect(() => assertReadableMd(make('p/.claude/settings.json', '{}'))).toThrow('md ファイル');
-    expect(() => assertReadableMd(make('p/free.md'))).toThrow('対象外');
+  it('.md 以外・.claude 外はエラーコード付きで拒否する', () => {
+    expect(() => assertReadableMd(make('p/.claude/settings.json', '{}'))).toThrow('not-md');
+    expect(() => assertReadableMd(make('p/free.md'))).toThrow('not-readable-path');
   });
 });
 

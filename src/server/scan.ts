@@ -3,7 +3,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { Section, SkillItem } from '../shared/types';
+import type { Lang, Section, SkillItem } from '../shared/types';
 
 export const HOME = os.homedir();
 
@@ -250,31 +250,76 @@ export function listProjects(cwd: string): string[] {
 }
 
 /* built-in skills live inside the Claude Code binary — not scannable, so a static list */
-const BUILTIN_DEFS: [string, string][] = [
-  ['review', 'GitHub PR のレビュー(作業中の差分は /code-review)'],
-  ['security-review', '現在ブランチの変更のセキュリティレビュー'],
-  ['code-review', 'ローカル差分/ブランチのコードレビュー(ultra で multi-agent クラウドレビュー)'],
-  ['simplify', '変更コードの再利用・簡素化・効率の観点でのクリーンアップ'],
-  ['verify', '変更が実際に意図通り動くかをアプリを動かして検証'],
-  ['run', 'プロジェクトのアプリを起動して変更を確認'],
-  ['init', 'CLAUDE.md の新規作成'],
-  ['loop', 'プロンプト/コマンドの定期実行(常駐)'],
-  ['schedule', 'cron スケジュールのクラウドエージェント(routine)管理'],
-  ['deep-research', 'Web 多源リサーチ + 検証 + 引用付きレポート'],
-  ['claude-api', 'Claude API / Anthropic SDK リファレンス'],
-  ['update-config', 'settings.json / permissions / hooks の設定変更'],
-  ['keybindings-help', 'キーボードショートカットのカスタマイズ'],
-  ['fewer-permission-prompts', '許可プロンプト削減のための allowlist 追加'],
+const BUILTIN_DEFS: [name: string, ja: string, en: string][] = [
+  [
+    'review',
+    'GitHub PR のレビュー(作業中の差分は /code-review)',
+    'Review a GitHub PR (use /code-review for your working diff)',
+  ],
+  [
+    'security-review',
+    '現在ブランチの変更のセキュリティレビュー',
+    'Security review of the changes on the current branch',
+  ],
+  [
+    'code-review',
+    'ローカル差分/ブランチのコードレビュー(ultra で multi-agent クラウドレビュー)',
+    'Code review of a local diff / branch (ultra runs a multi-agent cloud review)',
+  ],
+  [
+    'simplify',
+    '変更コードの再利用・簡素化・効率の観点でのクリーンアップ',
+    'Clean up changed code for reuse, simplification and efficiency',
+  ],
+  [
+    'verify',
+    '変更が実際に意図通り動くかをアプリを動かして検証',
+    'Verify a change actually works by exercising the app',
+  ],
+  [
+    'run',
+    'プロジェクトのアプリを起動して変更を確認',
+    "Launch the project's app to see a change working",
+  ],
+  ['init', 'CLAUDE.md の新規作成', 'Initialize a new CLAUDE.md'],
+  [
+    'loop',
+    'プロンプト/コマンドの定期実行(常駐)',
+    'Run a prompt or command on a recurring interval',
+  ],
+  [
+    'schedule',
+    'cron スケジュールのクラウドエージェント(routine)管理',
+    'Manage scheduled cloud agents (routines) on a cron schedule',
+  ],
+  [
+    'deep-research',
+    'Web 多源リサーチ + 検証 + 引用付きレポート',
+    'Multi-source web research with verification and a cited report',
+  ],
+  ['claude-api', 'Claude API / Anthropic SDK リファレンス', 'Claude API / Anthropic SDK reference'],
+  [
+    'update-config',
+    'settings.json / permissions / hooks の設定変更',
+    'Configure settings.json / permissions / hooks',
+  ],
+  ['keybindings-help', 'キーボードショートカットのカスタマイズ', 'Customize keyboard shortcuts'],
+  [
+    'fewer-permission-prompts',
+    '許可プロンプト削減のための allowlist 追加',
+    'Add an allowlist to reduce permission prompts',
+  ],
 ];
 
-function builtinItems(): ScanItem[] {
-  return BUILTIN_DEFS.map(([name, description]) => ({
+/* path='' は実ファイルなし(Claude Code 本体同梱)を表す。表示文言はクライアント側で解決 */
+function builtinItems(lang: Lang): ScanItem[] {
+  return BUILTIN_DEFS.map(([name, ja, en]) => ({
     name,
-    description,
+    description: lang === 'ja' ? ja : en,
     argumentHint: '',
     version: '',
     kind: 'skill' as const,
-    path: '(Claude Code 本体に同梱)',
+    path: '',
     files: [],
   }));
 }
@@ -318,7 +363,7 @@ function attachRefs(sections: Section[]): void {
 }
 
 /* 並び順: current プロジェクト → 他プロジェクト → user → plugin → built-in */
-export function scanSections(cwd: string): Section[] {
+export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
   const cwdResolved = path.resolve(cwd);
   const projects = listProjects(cwd)
     .map((p) => ({ path: p, items: scanClaudeDir(p), current: p === cwdResolved }))
@@ -333,7 +378,8 @@ export function scanSections(cwd: string): Section[] {
     ...projects.map((p, i) => ({
       id: 'proj-' + i,
       source: 'project' as const,
-      heading: 'project — ' + path.basename(p.path) + (p.current ? ' (current)' : ''),
+      projectName: path.basename(p.path),
+      isCurrent: p.current,
       note: p.path,
       manage: true,
       items: p.items,
@@ -341,7 +387,6 @@ export function scanSections(cwd: string): Section[] {
     {
       id: 'user',
       source: 'user',
-      heading: 'user',
       manage: true,
       note: path.join(HOME, '.claude'),
       items: scanClaudeDir(HOME),
@@ -349,16 +394,14 @@ export function scanSections(cwd: string): Section[] {
     {
       id: 'plugin',
       source: 'plugin',
-      heading: 'plugin',
       note: path.join(HOME, '.claude', 'plugins'),
       items: scanPlugins(),
     },
     {
       id: 'builtin',
       source: 'built-in',
-      heading: 'built-in',
-      note: 'Claude Code 本体同梱(静的リスト。正確な一覧は /skills)',
-      items: builtinItems(),
+      note: '',
+      items: builtinItems(lang),
     },
   ];
   attachRefs(sections);

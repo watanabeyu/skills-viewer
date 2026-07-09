@@ -1,3 +1,5 @@
+import { t } from '../i18n';
+
 export function DeleteModal({
   name,
   onCancel,
@@ -15,14 +17,14 @@ export function DeleteModal({
       }}
     >
       <div className="modal">
-        <h3>{name} を削除しますか?</h3>
-        <p>SKILL.md と関連ファイルをゴミ箱に移動します(あとで復元できます)。</p>
+        <h3>{t('delete.title', { name })}</h3>
+        <p>{t('delete.body')}</p>
         <div className="btns">
           <button className="pbtn" onClick={onCancel}>
-            キャンセル
+            {t('common.cancel')}
           </button>
           <button className="del" onClick={onDelete}>
-            削除する
+            {t('delete.confirm')}
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { CopyTarget } from '../api';
+import { t } from '../i18n';
 
 export function CopyMenu({
   targets,
@@ -26,7 +27,7 @@ export function CopyMenu({
 
   return (
     <div className="drop" ref={ref}>
-      <div className="dh">コピー先のリスト</div>
+      <div className="dh">{t('copy.header')}</div>
       {targets.map((t) => (
         <button className="di" key={t.path} onClick={() => onPick(t.path)}>
           <div className="l1">{t.label}</div>

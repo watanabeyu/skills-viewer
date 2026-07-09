@@ -5,21 +5,31 @@ import {
   saveEditorSetting,
   type EditorSetting,
 } from '../settings';
+import { t, type Lang } from '../i18n';
+
+const LANGS: [Lang, string][] = [
+  ['ja', '日本語'],
+  ['en', 'English'],
+];
 
 export function SettingsModal({
   width,
   onChangeWidth,
+  lang,
+  onChangeLang,
   onClose,
 }: {
   width: string;
   onChangeWidth: (w: string) => void;
+  lang: Lang;
+  onChangeLang: (l: Lang) => void;
   onClose: () => void;
 }) {
   const [setting, setSetting] = useState<EditorSetting>(loadEditorSetting);
 
   const save = () => {
     if (setting.mode === 'custom' && !(setting.template || '').includes('{path}')) {
-      alert('カスタムスキームには {path} を含めてください(例: myeditor://open?file={path})');
+      alert(t('settings.customNeedsPath'));
       return;
     }
     saveEditorSetting(setting);
@@ -34,9 +44,24 @@ export function SettingsModal({
       }}
     >
       <div className="modal">
-        <h3>設定</h3>
+        <h3>{t('settings.title')}</h3>
 
-        <div className="set-label">表示幅</div>
+        <div className="set-label">{t('settings.language')}</div>
+        <div className="set-options">
+          {LANGS.map(([id, label]) => (
+            <label key={id} className="set-option">
+              <input
+                type="radio"
+                name="lang"
+                checked={lang === id}
+                onChange={() => onChangeLang(id)}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="set-label">{t('settings.width')}</div>
         <div className="set-options">
           <label className="set-option">
             <input
@@ -45,8 +70,8 @@ export function SettingsModal({
               checked={width === 'full'}
               onChange={() => onChangeWidth('full')}
             />
-            <span>フル幅</span>
-            <span className="set-scheme">広い画面では 4〜5 カラム</span>
+            <span>{t('settings.widthFull')}</span>
+            <span className="set-scheme">{t('settings.widthFullNote')}</span>
           </label>
           <label className="set-option">
             <input
@@ -55,12 +80,12 @@ export function SettingsModal({
               checked={width === 'fixed'}
               onChange={() => onChangeWidth('fixed')}
             />
-            <span>固定幅 (1200px)</span>
-            <span className="set-scheme">中央寄せ・常に 3 カラム</span>
+            <span>{t('settings.widthFixed')}</span>
+            <span className="set-scheme">{t('settings.widthFixedNote')}</span>
           </label>
         </div>
 
-        <div className="set-label">「エディタで開く」で使うエディタ</div>
+        <div className="set-label">{t('settings.editor')}</div>
         <div className="set-options">
           {EDITOR_PRESETS.map((p) => (
             <label key={p.id} className="set-option">
@@ -81,7 +106,7 @@ export function SettingsModal({
               checked={setting.mode === 'custom'}
               onChange={() => setSetting({ mode: 'custom', template: setting.template || '' })}
             />
-            <span>カスタム URL スキーム</span>
+            <span>{t('settings.customScheme')}</span>
           </label>
           {setting.mode === 'custom' && (
             <input
@@ -98,17 +123,17 @@ export function SettingsModal({
               checked={setting.mode === 'system'}
               onChange={() => setSetting({ mode: 'system' })}
             />
-            <span>OS デフォルト</span>
-            <span className="set-scheme">サーバー側で開く(拡張子の既定アプリ)</span>
+            <span>{t('settings.osDefault')}</span>
+            <span className="set-scheme">{t('settings.osDefaultNote')}</span>
           </label>
         </div>
 
         <div className="btns">
           <button className="pbtn" onClick={onClose}>
-            キャンセル
+            {t('common.cancel')}
           </button>
           <button className="pbtn primary" onClick={save}>
-            保存
+            {t('settings.save')}
           </button>
         </div>
       </div>

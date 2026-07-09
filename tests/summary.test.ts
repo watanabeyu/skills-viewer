@@ -10,13 +10,13 @@ describe('parseAnalysis (haiku 出力のパース)', () => {
         summary: 'テスト要約。',
         invocation: 'human',
         invocationReason: '手で打つ起点',
-        relations: [{ name: 'weall-ship', type: '起動', note: 'ship を起動' }],
+        relations: [{ name: 'weall-ship', type: 'invokes', note: 'ship を起動' }],
       }),
       refs,
     );
     expect(out.summary).toBe('テスト要約。');
     expect(out.invocation).toBe('human');
-    expect(out.relations).toEqual([{ name: 'weall-ship', type: '起動', note: 'ship を起動' }]);
+    expect(out.relations).toEqual([{ name: 'weall-ship', type: 'invokes', note: 'ship を起動' }]);
   });
 
   it('コードフェンス付き JSON も剥がしてパースする', () => {
@@ -34,8 +34,8 @@ describe('parseAnalysis (haiku 出力のパース)', () => {
         summary: 'S',
         invocation: 'both',
         relations: [
-          { name: 'weall-ship', type: '委譲', note: '' },
-          { name: 'hallucinated-skill', type: '起動', note: '' },
+          { name: 'weall-ship', type: 'delegates', note: '' },
+          { name: 'hallucinated-skill', type: 'invokes', note: '' },
         ],
       }),
       refs,
@@ -43,7 +43,7 @@ describe('parseAnalysis (haiku 出力のパース)', () => {
     expect(out.relations.map((r) => r.name)).toEqual(['weall-ship']);
   });
 
-  it('不正な relation type は「参照」に正規化する', () => {
+  it('不正な relation type は references に正規化する', () => {
     const out = parseAnalysis(
       JSON.stringify({
         summary: 'S',
@@ -52,7 +52,22 @@ describe('parseAnalysis (haiku 出力のパース)', () => {
       }),
       refs,
     );
-    expect(out.relations[0].type).toBe('参照');
+    expect(out.relations[0].type).toBe('references');
+  });
+
+  it('多言語対応前の日本語 relation type は新キーへマップする', () => {
+    const out = parseAnalysis(
+      JSON.stringify({
+        summary: 'S',
+        invocation: 'human',
+        relations: [
+          { name: 'weall-ship', type: '起動' },
+          { name: 'loop', type: '呼ばれる側' },
+        ],
+      }),
+      refs,
+    );
+    expect(out.relations.map((r) => r.type)).toEqual(['invokes', 'called-by']);
   });
 
   it('不正な invocation は null にする', () => {

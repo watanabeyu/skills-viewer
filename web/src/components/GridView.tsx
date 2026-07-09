@@ -3,18 +3,20 @@ import { itemKey } from '../api';
 import {
   flatten,
   fmtDate,
+  headingOf,
+  invocationLabel,
   invocationOf,
   invocationTitle,
   kindMatches,
   matches,
   sortItems,
   usageLine,
-  INVOCATION_LABEL,
   KIND_LABEL,
   SRC_COLOR,
   type KindFilter,
   type SortKey,
 } from '../util';
+import { t } from '../i18n';
 import type { Section, SkillItem, Source } from '../api';
 
 export function KindBadge({ it }: { it: SkillItem }) {
@@ -30,7 +32,7 @@ export function InvocationBadge({ it }: { it: SkillItem }) {
       className={'inv-badge inv-' + inv.kind + (inv.basis === 'ai' ? ' inv-ai' : '')}
       title={invocationTitle(it)}
     >
-      {INVOCATION_LABEL[inv.kind]}
+      {invocationLabel(inv.kind)}
       {inv.basis === 'ai' ? ' ✦' : ''}
     </span>
   );
@@ -48,7 +50,7 @@ export function SectionHeading({
   return (
     <div className={'sec-h' + (small ? ' sm' : '')}>
       <span className="sq" style={{ background: SRC_COLOR[section.source] }} />
-      <span className="lbl">{section.heading}</span>
+      <span className="lbl">{headingOf(section)}</span>
       <span className="n">{count}</span>
       <span className="ln" />
     </div>
@@ -85,10 +87,12 @@ function SkillCard({
       {usageLine(it) && <div className="usage">{usageLine(it)}</div>}
       <div className="meta">
         <span>
-          {it.useCount ? `使用 ${it.useCount}回 · 最終 ${fmtDate(it.lastUsed)}` : '使用記録なし'}
+          {it.useCount
+            ? t('card.uses', { n: it.useCount, date: fmtDate(it.lastUsed) })
+            : t('card.noUses')}
         </span>
         <span className="meta-r">
-          {it.updatedAt ? <span>{fmtDate(it.updatedAt)} 更新</span> : null}
+          {it.updatedAt ? <span>{t('card.updated', { date: fmtDate(it.updatedAt) })}</span> : null}
         </span>
       </div>
     </button>
@@ -118,7 +122,7 @@ export function GridView({
     if (!sections.length)
       return (
         <div className="grid-pad">
-          <div className="empty">条件に一致するスキルがありません</div>
+          <div className="empty">{t('list.empty')}</div>
         </div>
       );
     return (
@@ -153,7 +157,7 @@ export function GridView({
           ))}
         </div>
       ) : (
-        <div className="empty">条件に一致するスキルがありません</div>
+        <div className="empty">{t('list.empty')}</div>
       )}
     </div>
   );
