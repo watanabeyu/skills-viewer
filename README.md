@@ -10,6 +10,10 @@ npx skills-viewer
 
 > Zero runtime dependencies. The published package ships a prebuilt UI; `npx` installs in seconds.
 
+<!-- 絶対 URL 参照: npm パッケージには docs/ が入らないため、npmjs.com 上でも表示できるようにする -->
+
+![Skills Viewer — grid view with per-scope grouping, usage stats and AI summaries](https://raw.githubusercontent.com/watanabeyu/skills-viewer/main/docs/screenshot.png)
+
 ## Features
 
 - **All scopes in one view** — user (`~/.claude/skills`), every project's `.claude/skills` / `.claude/commands`, installed plugins, and Claude Code built-ins, grouped by source
@@ -21,6 +25,7 @@ npx skills-viewer
 - **Manage** — copy a skill/command/agent to another project or to user scope (`-copy` suffix on name conflicts), or delete it — deletions go to the OS trash, not `rm`. Plugin and built-in entries are read-only
 - **Same-name diff** — when the same skill name exists in multiple scopes, the detail page lists the other definitions and shows a line diff between them
 - **Open in editor** — via URL scheme (VS Code / Cursor / Zed / Windsurf / custom, configurable in the ⚙ settings modal), or the OS default opener
+- **English / 日本語** — UI language auto-detected from the browser and switchable in settings; AI summaries are generated in the selected language (CLI messages follow `LANG`)
 - **URL routing** — `/skills/:id?tab=md`, search/sort/grouping in query params; links are shareable across reloads
 
 ## Usage
