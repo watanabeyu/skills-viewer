@@ -59,7 +59,14 @@ export const summarizeAll = (force = false) => mutate<SummaryJob>('/api/summariz
 
 /* ---- item key / URL id ---- */
 
-export const itemKey = (it: SkillItem) => it.path + '#' + it.name;
+/*
+ * React key・URL id・検索に使う一意キー。hook は同一ファイル・同一イベント名で複数
+ * 存在し得る(path#name が重複する)ため、コマンド文字列(description)まで含める。
+ * 重複キーのままだとソート変更・グループ化切替の並べ替えで React が DOM を正しく
+ * 再配置できず、表示順が壊れる。
+ */
+export const itemKey = (it: SkillItem) =>
+  it.kind === 'hook' ? it.path + '#' + it.name + '#' + it.description : it.path + '#' + it.name;
 
 export const toId = (key: string) =>
   btoa(String.fromCharCode(...new TextEncoder().encode(key)))

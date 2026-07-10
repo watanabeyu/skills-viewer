@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SkillItem } from '../src/shared/types';
+import { itemKey } from '../web/src/api';
 import { invocationOf, kindMatches, sameNameOthers, sortItems, usageLine } from '../web/src/util';
 
 const base = (over: Partial<SkillItem> = {}): SkillItem => ({
@@ -49,6 +50,29 @@ describe('sortItems', () => {
     expect(sortItems(items, 'uses').map((i) => i.name)).toEqual(['b', 'a', 'c']);
     expect(sortItems(items, 'recent').map((i) => i.name)).toEqual(['a', 'b', 'c']);
     expect(sortItems(items, 'updated').map((i) => i.name)).toEqual(['c', 'a', 'b']);
+  });
+});
+
+describe('itemKey', () => {
+  it('同一ファイル・同一イベント名の hook 同士でもキーが衝突しない', () => {
+    // 重複キーがあると React がソート変更・グループ化切替の並べ替えで DOM を壊す
+    const h1 = base({
+      kind: 'hook',
+      name: 'PostToolUse (Write|Edit)',
+      path: '/p/.claude/settings.json',
+      description: 'a.sh',
+    });
+    const h2 = base({
+      kind: 'hook',
+      name: 'PostToolUse (Write|Edit)',
+      path: '/p/.claude/settings.json',
+      description: 'b.sh',
+    });
+    expect(itemKey(h1)).not.toBe(itemKey(h2));
+  });
+
+  it('hook 以外は path#name(URL 互換を維持)', () => {
+    expect(itemKey(base())).toBe('/p/.claude/skills/foo/SKILL.md#foo');
   });
 });
 
