@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Lang, Section, SkillItem } from '../shared/types';
+import { estimateTokens, lintItem } from './lint';
 
 export const HOME = os.homedir();
 
@@ -92,8 +93,10 @@ function readSkillDir(dir: string, nameHint: string): ScanItem | null {
     return null; // 権限エラー等で読めない skill はスキップ(一覧全体を落とさない)
   }
   const { meta, body } = parseFrontmatter(raw);
+  const name = meta.name || nameHint;
+  const lint = lintItem(meta, name, 'skill');
   return {
-    name: meta.name || nameHint,
+    name,
     description: meta.description || firstBodyLine(body),
     argumentHint: meta['argument-hint'] || '',
     version: meta.version || '',
@@ -101,6 +104,7 @@ function readSkillDir(dir: string, nameHint: string): ScanItem | null {
     path: skillMd,
     updatedAt: fileMtime(skillMd),
     files: listFiles(dir).sort(),
+    ...(lint.length ? { lint } : {}),
     _body: body, // 参照抽出用(scanSections で refs 化して破棄)
   };
 }
@@ -130,8 +134,10 @@ function scanMdRoot(root: string, kind: 'command' | 'agent'): ScanItem[] {
       continue; // 読めないファイルはスキップ(一覧全体を落とさない)
     }
     const { meta, body } = parseFrontmatter(raw);
+    const name = meta.name || entry.name.replace(/\.md$/, '');
+    const lint = lintItem(meta, name, kind);
     items.push({
-      name: meta.name || entry.name.replace(/\.md$/, ''),
+      name,
       description: meta.description || firstBodyLine(body),
       argumentHint: kind === 'command' ? meta['argument-hint'] || '' : '',
       version: meta.version || '',
@@ -139,6 +145,7 @@ function scanMdRoot(root: string, kind: 'command' | 'agent'): ScanItem[] {
       path: fp,
       updatedAt: fileMtime(fp),
       files: [entry.name],
+      ...(lint.length ? { lint } : {}),
       _body: body,
     });
   }
@@ -405,5 +412,12 @@ export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
     },
   ];
   attachRefs(sections);
+  // name + description は毎セッション注入されるため、その分のトークンを概算しておく。
+  // hook は設定エントリ(description 注入なし)なので対象外
+  for (const s of sections) {
+    for (const it of s.items) {
+      if (it.kind !== 'hook') it.tokens = estimateTokens(it.name + ': ' + it.description);
+    }
+  }
   return sections;
 }

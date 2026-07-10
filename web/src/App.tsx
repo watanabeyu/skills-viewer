@@ -10,6 +10,7 @@ import {
 } from './api';
 import {
   flatten,
+  isUnused,
   kindMatches,
   matches,
   type FlatItem,
@@ -27,6 +28,7 @@ const SORT_KEYS: [SortKey, MsgKey][] = [
   ['uses', 'sort.uses'],
   ['recent', 'sort.recent'],
   ['updated', 'sort.updated'],
+  ['tokens', 'sort.tokens'],
 ];
 
 const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
@@ -41,6 +43,7 @@ export default function App() {
   const sort = (params.get('sort') || 'name') as SortKey;
   const grouped = params.get('grouped') !== '0';
   const kind = (params.get('kind') || 'all') as KindFilter;
+  const unused = params.get('unused') === '1';
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [width, setWidth] = useState(() => localStorage.getItem('csb-width') || 'full');
   const changeWidth = (w: string) => {
@@ -85,9 +88,24 @@ export default function App() {
 
   const all: FlatItem[] = useMemo(() => (data ? flatten(data.sections) : []), [data]);
   const shownCount = useMemo(
-    () => all.filter((it) => kindMatches(it, kind) && matches(it, q)).length,
-    [all, q, kind],
+    () =>
+      all.filter(
+        (it) =>
+          kindMatches(it, kind) &&
+          matches(it, q) &&
+          (!unused || isUnused(it, !!data?.usageAvailable)),
+      ).length,
+    [all, q, kind, unused, data],
   );
+
+  /* 現在プロジェクトでの1セッションに注入される分(built-in + plugin + user + current project) */
+  const sessionTokens = useMemo(() => {
+    if (!data) return 0;
+    return data.sections
+      .filter((s) => s.source !== 'project' || s.isCurrent)
+      .flatMap((s) => s.items)
+      .reduce((sum, it) => sum + (it.tokens || 0), 0);
+  }, [data]);
 
   const openSkill = (key: string) => {
     navigate({ pathname: '/skills/' + toId(key), search: params.toString() });
@@ -170,6 +188,11 @@ export default function App() {
           <span className="count">
             {data ? t('app.count', { shown: shownCount, total: all.length }) : '…'}
           </span>
+          {sessionTokens > 0 && (
+            <span className="count tok-total" title={t('app.tokensTitle')}>
+              {t('app.tokens', { n: sessionTokens.toLocaleString() })}
+            </span>
+          )}
         </div>
         <input
           className="q"
@@ -201,7 +224,21 @@ export default function App() {
               </button>
             ))}
           </span>
-          <button className="chip" disabled={aiBusy} onClick={onAiClick} title={t('ai.buttonTitle')}>
+          {data?.usageAvailable && (
+            <button
+              className={'chip' + (unused ? ' on' : '')}
+              title={t('filter.unusedTitle')}
+              onClick={() => setParam('unused', unused ? null : '1')}
+            >
+              {t('filter.unused')}
+            </button>
+          )}
+          <button
+            className="chip"
+            disabled={aiBusy}
+            onClick={onAiClick}
+            title={t('ai.buttonTitle')}
+          >
             {aiBusy ? aiLabel || t('ai.button') : idleAiLabel}
           </button>
           <label className="grp-label">
@@ -237,6 +274,7 @@ export default function App() {
                 sort={sort}
                 grouped={grouped}
                 kind={kind}
+                unused={unused}
                 onOpen={openSkill}
               />
             }
@@ -251,6 +289,7 @@ export default function App() {
                 sort={sort}
                 grouped={grouped}
                 kind={kind}
+                unused={unused}
                 onOpen={openSkill}
                 reload={reload}
               />

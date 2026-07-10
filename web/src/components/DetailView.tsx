@@ -13,6 +13,7 @@ import {
 import {
   flatten,
   fmtDate,
+  isUnused,
   kindMatches,
   matches,
   sameNameOthers,
@@ -27,8 +28,8 @@ import {
 import { editorUrl, loadEditorSetting } from '../settings';
 import { diffLines, type DiffLine } from '../diff';
 import { mdRender, splitFrontmatter } from '../md';
-import { relTypeLabel, t } from '../i18n';
-import { InvocationBadge, KindBadge, SectionHeading } from './GridView';
+import { lintLabel, relTypeLabel, t } from '../i18n';
+import { InvocationBadge, KindBadge, SectionHeading, UnusedBadge, WarnBadge } from './GridView';
 import { CopyMenu } from './CopyMenu';
 import { DeleteModal } from './DeleteModal';
 
@@ -39,6 +40,7 @@ export function DetailView({
   sort,
   grouped,
   kind,
+  unused,
   onOpen,
   reload,
 }: {
@@ -48,6 +50,7 @@ export function DetailView({
   sort: SortKey;
   grouped: boolean;
   kind: KindFilter;
+  unused: boolean;
   onOpen: (key: string) => void;
   reload: () => Promise<void>;
 }) {
@@ -130,6 +133,7 @@ export function DetailView({
         sort={sort}
         grouped={grouped}
         kind={kind}
+        unused={unused}
         selected={it.key}
         onOpen={onOpen}
       />
@@ -145,6 +149,8 @@ export function DetailView({
             {it.source}
           </span>
           <InvocationBadge it={it} />
+          <UnusedBadge show={isUnused(it, data.usageAvailable)} />
+          <WarnBadge it={it} />
           {it.version && <span className="m-ver">v{it.version}</span>}
           <span className="m-upd">
             {it.updatedAt ? t('detail.lastUpdated', { date: fmtDate(it.updatedAt) }) : ''}
@@ -213,6 +219,7 @@ function LeftColumn({
   sort,
   grouped,
   kind,
+  unused,
   selected,
   onOpen,
 }: {
@@ -221,11 +228,13 @@ function LeftColumn({
   sort: SortKey;
   grouped: boolean;
   kind: KindFilter;
+  unused: boolean;
   selected: string;
   onOpen: (key: string) => void;
 }) {
   const groups = useMemo(() => {
-    const pass = (it: FlatItem) => kindMatches(it, kind) && matches(it, q);
+    const pass = (it: FlatItem) =>
+      kindMatches(it, kind) && matches(it, q) && (!unused || isUnused(it, data.usageAvailable));
     if (grouped) {
       return data.sections
         .map((s) => ({ section: s, items: sortItems(flatten([s]).filter(pass), sort) }))
@@ -237,7 +246,7 @@ function LeftColumn({
         items: sortItems(flatten(data.sections).filter(pass), sort),
       },
     ];
-  }, [data, q, sort, grouped, kind]);
+  }, [data, q, sort, grouped, kind, unused]);
 
   return (
     <div className="left-col">
@@ -315,6 +324,20 @@ function OverviewTab({
         <>
           <div className="sec-t">{t('detail.usage')}</div>
           <div className="ex-block">{usageLine(it)}</div>
+        </>
+      )}
+      {(!!it.tokens || !!it.lint?.length) && (
+        <>
+          <div className="sec-t">{t('detail.diagnostics')}</div>
+          {!!it.tokens && (
+            <p className="full-desc">{t('detail.tokenCost', { n: it.tokens.toLocaleString() })}</p>
+          )}
+          {(it.lint || []).map((code) => (
+            <div className="lint-row" key={code}>
+              <span className="lint-mark">⚠</span>
+              <span>{lintLabel(code)}</span>
+            </div>
+          ))}
         </>
       )}
       <SameNameSection it={it} all={all} onOpen={onOpen} />

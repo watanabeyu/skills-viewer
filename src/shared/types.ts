@@ -6,6 +6,9 @@ export type Invocation = 'human' | 'agent' | 'both';
 export type Lang = 'ja' | 'en';
 /* 言語非依存のキー。表示ラベルは web 側の辞書で解決する */
 export type RelationType = 'invokes' | 'delegates' | 'called-by' | 'references';
+/* description の静的リント警告(言語非依存キー。表示ラベルは web 側の辞書で解決する) */
+export type LintCode =
+  'no-description' | 'short-description' | 'long-description' | 'no-trigger' | 'name-echo';
 
 export interface SkillRelation {
   name: string;
@@ -23,6 +26,10 @@ export interface SkillItem {
   updatedAt?: number;
   files: string[];
   refs?: string[];
+  /* 静的リント警告(無警告のときは省略) */
+  lint?: LintCode[];
+  /* name + description が毎セッション注入される分のトークン概算(hook は対象外) */
+  tokens?: number;
   useCount?: number;
   typedCount?: number;
   autoCount?: number;
@@ -57,6 +64,8 @@ export interface SkillsData {
   sections: Section[];
   targets: CopyTarget[];
   aiStale: number;
+  /* トランスクリプトが1件でもあるか。false なら「未使用」表示は無意味なので出さない */
+  usageAvailable: boolean;
 }
 
 export interface SummaryJob {

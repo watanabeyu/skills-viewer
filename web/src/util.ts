@@ -15,7 +15,7 @@ export const SRC_TINT: Record<Source, string> = {
   plugin: 'rgba(123,91,214,.10)',
 };
 
-export type SortKey = 'name' | 'uses' | 'recent' | 'updated';
+export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
 
 export interface FlatItem extends SkillItem {
   key: string;
@@ -68,6 +68,13 @@ export const KIND_LABEL: Partial<Record<SkillItem['kind'], string>> = {
 export type KindFilter = 'all' | SkillItem['kind'];
 
 export const kindMatches = (it: SkillItem, kind: KindFilter) => kind === 'all' || it.kind === kind;
+
+/*
+ * 未使用判定。トランスクリプトが1件も無い環境では全件未使用になり無意味なので
+ * usageAvailable が前提。hook は起動記録の対象外なので常に false。
+ */
+export const isUnused = (it: SkillItem, usageAvailable: boolean) =>
+  usageAvailable && it.kind !== 'hook' && !it.useCount;
 
 /* 同名の別定義(diff 比較の対象)。short name で突き合わせ、hook は対象外 */
 export function sameNameOthers<T extends SkillItem & { key: string }>(it: T, all: T[]): T[] {
@@ -135,6 +142,7 @@ export function sortItems<T extends SkillItem>(items: T[], sort: SortKey): T[] {
     arr.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || byName(a, b));
   else if (sort === 'updated')
     arr.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0) || byName(a, b));
+  else if (sort === 'tokens') arr.sort((a, b) => (b.tokens || 0) - (a.tokens || 0) || byName(a, b));
   else arr.sort(byName);
   return arr;
 }

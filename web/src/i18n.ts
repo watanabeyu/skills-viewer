@@ -4,7 +4,7 @@
  * テスト(Node 環境)からも import されるため、ブラウザ API へのアクセスは必ずガードする。
  */
 
-import type { Lang, RelationType } from '../../src/shared/types';
+import type { Lang, LintCode, RelationType } from '../../src/shared/types';
 
 export type { Lang };
 
@@ -21,7 +21,11 @@ const en = {
   'sort.uses': 'Most used',
   'sort.recent': 'Recently used',
   'sort.updated': 'Recently updated',
+  'sort.tokens': 'Token cost',
   'kind.all': 'All',
+  'filter.unused': 'Unused',
+  'filter.unusedTitle':
+    'Show only items with no recorded use in the transcript retention window (default 30 days)',
 
   'ai.button': 'AI summaries',
   'ai.progress': 'Summarizing {done}/{total}',
@@ -39,6 +43,15 @@ const en = {
   'card.uses': 'Used {n}× · last {date}',
   'card.noUses': 'No recorded use',
   'card.updated': 'Updated {date}',
+  'card.tokens': '~{n} tok',
+  'badge.unused': 'unused',
+  'badge.unusedTitle':
+    'No recorded use within the transcript retention window (default 30 days). Older use is not visible.',
+  'badge.warnTitle': 'Description issues:',
+  'sec.tokens': '≈{n} tok/session',
+  'app.tokens': '≈{n} tokens/session',
+  'app.tokensTitle':
+    'Approx. tokens injected into every session in the current project (name + description of built-ins, plugins, user scope and the current project)',
 
   'detail.back': '← Back to list',
   'detail.lastUpdated': 'Last updated {date}',
@@ -64,6 +77,17 @@ const en = {
   'detail.open': 'Open',
   'detail.diff': 'diff',
   'detail.diffClose': 'Close diff',
+  'detail.diagnostics': 'Diagnostics',
+  'detail.tokenCost':
+    'Session overhead: ~{n} tokens (name + description are injected into every session; approx.)',
+  'lint.no-description':
+    'No description in frontmatter — the model has no basis to decide when to use this',
+  'lint.short-description':
+    'Description is very short (under 30 chars) — likely too little for the model to pick it',
+  'lint.long-description': 'Description is very long (over 1024 chars) — it inflates every session',
+  'lint.no-trigger':
+    'No trigger condition (e.g. "Use when …") in the description — auto-invocation is unlikely',
+  'lint.name-echo': 'Description merely repeats the name — it adds no signal',
 
   'diff.thisDef': '− {label} (this one)',
   'diff.identical': 'Contents are identical',
@@ -142,14 +166,18 @@ const ja: Record<MsgKey, string> = {
   'sort.uses': '使用回数順',
   'sort.recent': '最近使った順',
   'sort.updated': '更新日順',
+  'sort.tokens': 'トークン量順',
   'kind.all': 'すべて',
+  'filter.unused': '未使用',
+  'filter.unusedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録がないものだけ表示',
 
   'ai.button': 'AI要約',
   'ai.progress': '要約中 {done}/{total}',
   'ai.stale': 'AI要約 (未生成 {n})',
   'ai.done': 'AI要約 ✓',
   'ai.buttonTitle': 'claude CLI (haiku) で各 SKILL.md を要約。内容が変わったものだけ再生成',
-  'ai.confirmForce': '全 skill の要約は最新です。全 {n} 件を強制再生成しますか?(claude CLI / haiku)',
+  'ai.confirmForce':
+    '全 skill の要約は最新です。全 {n} 件を強制再生成しますか?(claude CLI / haiku)',
   'ai.confirmRun': '{n} 件の SKILL.md を claude CLI (haiku) で要約します。よろしいですか?',
   'ai.finishedErrors': '要約完了(エラー {n}件):',
   'ai.startFailed': '開始に失敗: {msg}',
@@ -158,6 +186,15 @@ const ja: Record<MsgKey, string> = {
   'card.uses': '使用 {n}回 · 最終 {date}',
   'card.noUses': '使用記録なし',
   'card.updated': '{date} 更新',
+  'card.tokens': '約{n}tok',
+  'badge.unused': '未使用',
+  'badge.unusedTitle':
+    'トランスクリプト保持期間内(既定30日)に使用記録がありません。それ以前の使用は集計できません',
+  'badge.warnTitle': 'description の問題:',
+  'sec.tokens': '≈{n}tok/セッション',
+  'app.tokens': '≈{n}トークン/セッション',
+  'app.tokensTitle':
+    '現在のプロジェクトでのセッションごとに注入されるトークンの概算(built-in・plugin・user・現在プロジェクトの name + description)',
 
   'detail.back': '← 一覧に戻る',
   'detail.lastUpdated': '最終更新 {date}',
@@ -183,6 +220,17 @@ const ja: Record<MsgKey, string> = {
   'detail.open': '開く',
   'detail.diff': 'diff',
   'detail.diffClose': 'diff を閉じる',
+  'detail.diagnostics': '診断',
+  'detail.tokenCost':
+    'セッションあたりの負荷: 約{n}トークン(name + description は毎セッション注入されます。概算)',
+  'lint.no-description':
+    'frontmatter に description がありません — モデルが使いどきを判断する材料がありません',
+  'lint.short-description':
+    'description が短すぎます(30文字未満)— モデルが選ぶ手掛かりとして不足しがちです',
+  'lint.long-description': 'description が長すぎます(1024文字超)— 毎セッションの負荷になります',
+  'lint.no-trigger':
+    'description に発動条件(「〜のときに使用」等)がありません — 自動発動されにくくなります',
+  'lint.name-echo': 'description が名前の繰り返しになっています — 情報が増えていません',
 
   'diff.thisDef': '− {label}(この定義)',
   'diff.identical': '内容は同一です',
@@ -240,7 +288,8 @@ const ja: Record<MsgKey, string> = {
   'apiError.no-free-name': 'コピー先の空き名が見つかりません',
   'apiError.unexpected-skill-dir': 'skill ディレクトリ構造が想定外です: {detail}',
   'apiError.bad-origin': '不正なオリジンからのアクセスです',
-  'apiError.bad-token': 'トークンが不正です。ページを再読み込みしてください(サーバー再起動の可能性)',
+  'apiError.bad-token':
+    'トークンが不正です。ページを再読み込みしてください(サーバー再起動の可能性)',
   'apiError.bad-json': '不正なリクエストです',
   'apiError.unknown-endpoint': '不明な API です: {detail}',
   'apiError.internal': 'サーバーエラー: {detail}',
@@ -288,6 +337,8 @@ export function t(key: MsgKey, params?: Record<string, string | number>): string
 }
 
 export const relTypeLabel = (type: RelationType): string => t(`rel.${type}`);
+
+export const lintLabel = (code: LintCode): string => t(`lint.${code}`);
 
 /* API エラー {error: code, detail} を表示文言に変換。未知コードは code: detail をそのまま出す */
 export function apiErrorMessage(body: unknown, status: number): string {

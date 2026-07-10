@@ -44,8 +44,9 @@ const MIME: Record<string, string> = {
  * 呼び出し元プロジェクト(トランスクリプトのディレクトリ)を特定し、そのプロジェクトの
  * skill → user → plugin → built-in の解決優先順で1つの定義にだけ加算する。
  * 呼び出し元が未知(worktree・削除済みプロジェクト等)の場合は user 以降にフォールバック。
+ * 戻り値はトランスクリプトが1件でも存在したか(false なら「未使用」判定は無意味)。
  */
-function attributeUsage(sections: Section[]): void {
+function attributeUsage(sections: Section[]): boolean {
   const byDir = scanUsageByDir();
   const lookupBySec = new Map<string, Map<string, Section['items'][number]>>();
   for (const s of sections) {
@@ -96,11 +97,12 @@ function attributeUsage(sections: Section[]): void {
       target.lastUsed = Math.max(target.lastUsed || 0, u.last);
     }
   }
+  return Object.keys(byDir).length > 0;
 }
 
 function collect(cwd: string, lang: Lang): SkillsData {
   const sections = scanSections(cwd, lang);
-  attributeUsage(sections);
+  const usageAvailable = attributeUsage(sections);
   const summaries = loadSummaries();
   for (const sec of sections) {
     for (const it of sec.items) {
@@ -130,7 +132,7 @@ function collect(cwd: string, lang: Lang): SkillsData {
       .sort((a, b) => path.basename(a).localeCompare(path.basename(b)))
       .map((p) => ({ label: path.basename(p), sub: p, path: p })),
   ];
-  return { generatedAt: new Date().toISOString(), cwd, sections, targets, aiStale };
+  return { generatedAt: new Date().toISOString(), cwd, sections, targets, aiStale, usageAvailable };
 }
 
 /* DNS rebinding 対策: same-origin GET には Origin が付かないため Host 側も検証する */
@@ -177,7 +179,10 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       }
       throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
-      return send(e instanceof ApiError && e.code === 'unknown-endpoint' ? 404 : 400, toErrorBody(e));
+      return send(
+        e instanceof ApiError && e.code === 'unknown-endpoint' ? 404 : 400,
+        toErrorBody(e),
+      );
     }
   }
 
@@ -218,7 +223,10 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       }
       throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
-      return send(e instanceof ApiError && e.code === 'unknown-endpoint' ? 404 : 400, toErrorBody(e));
+      return send(
+        e instanceof ApiError && e.code === 'unknown-endpoint' ? 404 : 400,
+        toErrorBody(e),
+      );
     }
   });
 }
