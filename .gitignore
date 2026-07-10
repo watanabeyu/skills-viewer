@@ -3,3 +3,6 @@ dist/
 *.log
 .DS_Store
 build/
+
+# 非公開の企画・計画ドキュメント(public リポジトリに載せない)
+docs/plans/
