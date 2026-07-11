@@ -23,8 +23,9 @@ import {
   summaryStatus,
 } from './summary';
 import { assertReadableMd, doCopy, doDelete, openInEditor } from './manage';
+import { ackChanges, computeChanges } from './snapshot';
 import { ApiError, toErrorBody } from './errors';
-import { srvMsg } from './locale';
+import { serverLang, srvMsg } from './locale';
 
 const TOKEN = crypto.randomBytes(16).toString('hex');
 const DIST = path.join(__dirname, '..', '..', 'dist');
@@ -95,6 +96,10 @@ function attributeUsage(sections: Section[]): boolean {
       target.autoCount = (target.autoCount || 0) + u.auto;
       target.useCount = (target.useCount || 0) + u.typed + u.auto;
       target.lastUsed = Math.max(target.lastUsed || 0, u.last);
+      if (u.daily) {
+        const du = target.dailyUse || (target.dailyUse = {});
+        for (const [day, n] of Object.entries(u.daily)) du[day] = (du[day] || 0) + n;
+      }
     }
   }
   return Object.keys(byDir).length > 0;
@@ -132,7 +137,15 @@ function collect(cwd: string, lang: Lang): SkillsData {
       .sort((a, b) => path.basename(a).localeCompare(path.basename(b)))
       .map((p) => ({ label: path.basename(p), sub: p, path: p })),
   ];
-  return { generatedAt: new Date().toISOString(), cwd, sections, targets, aiStale, usageAvailable };
+  return {
+    generatedAt: new Date().toISOString(),
+    cwd,
+    sections,
+    targets,
+    aiStale,
+    usageAvailable,
+    changes: computeChanges(sections),
+  };
 }
 
 /* DNS rebinding 対策: same-origin GET には Origin が付かないため Host 側も検証する */
@@ -202,6 +215,10 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
     }
     const lang = langOf(data.lang);
     try {
+      if (url.pathname === '/api/changes-ack') {
+        ackChanges(scanSections(cwd, lang));
+        return send(200, { ok: true });
+      }
       if (url.pathname === '/api/copy') return send(200, doCopy(data, cwd));
       if (url.pathname === '/api/delete') return send(200, doDelete(data));
       if (url.pathname === '/api/open') return send(200, openInEditor(data));
@@ -250,6 +267,43 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
   res.end(fs.readFileSync(fp));
 }
 
+/*
+ * 起動時の1〜2行サマリー(--no-open 運用でも価値が出るように)。
+ * 前回からの差分 + セッション注入トークン概算 + 未使用件数。失敗しても起動は止めない。
+ */
+function printStartupSummary(cwd: string): void {
+  try {
+    const data = collect(cwd, serverLang);
+    const ch = data.changes;
+    if (ch) {
+      console.log(
+        srvMsg(
+          `前回から: 追加 ${ch.added.length} / 更新 ${ch.updated.length} / 削除 ${ch.removed.length}`,
+          `Since last run: ${ch.added.length} added / ${ch.updated.length} updated / ${ch.removed.length} removed`,
+        ),
+      );
+    }
+    const sessionTokens = data.sections
+      .filter((s) => s.source !== 'project' || s.isCurrent)
+      .flatMap((s) => s.items)
+      .reduce((sum, it) => sum + (it.tokens || 0), 0);
+    const unused = data.usageAvailable
+      ? data.sections.flatMap((s) => s.items).filter((it) => it.kind !== 'hook' && !it.useCount)
+          .length
+      : null;
+    console.log(
+      srvMsg(
+        `スキル定義のセッション注入 ≈${sessionTokens.toLocaleString()}tok` +
+          (unused !== null ? ` / 未使用 ${unused} 件` : ''),
+        `Skill definitions inject ≈${sessionTokens.toLocaleString()} tok/session` +
+          (unused !== null ? ` / ${unused} unused` : ''),
+      ),
+    );
+  } catch {
+    /* サマリーは補助情報。失敗しても起動を妨げない */
+  }
+}
+
 export interface StartOptions {
   port?: number;
   open?: boolean;
@@ -275,6 +329,7 @@ export function start(
   server.listen(port, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${port}`;
     console.log(`skills-viewer: ${url}  (cwd: ${cwd})`);
+    printStartupSummary(cwd);
     console.log(
       srvMsg(
         'Ctrl+C で終了。ページ再読み込みで再スキャンされます。',

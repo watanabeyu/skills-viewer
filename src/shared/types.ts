@@ -34,10 +34,26 @@ export interface SkillItem {
   typedCount?: number;
   autoCount?: number;
   lastUsed?: number;
+  /* 日別使用回数(YYYY-MM-DD → 回数、ローカルタイムゾーン)。未使用なら省略 */
+  dailyUse?: Record<string, number>;
   aiSummary?: string;
   aiInvocation?: Invocation;
   aiInvocationReason?: string;
   aiRelations?: SkillRelation[];
+}
+
+/* 前回起動(スナップショット)からの変化1件分 */
+export interface ChangeEntry {
+  name: string;
+  kind: ItemKind;
+  path: string;
+}
+
+/* 前回起動からの差分。hook(識別子が不安定)と built-in(実ファイル無し)は対象外 */
+export interface SnapshotChanges {
+  added: ChangeEntry[];
+  updated: ChangeEntry[];
+  removed: ChangeEntry[];
 }
 
 export interface Section {
@@ -66,6 +82,8 @@ export interface SkillsData {
   aiStale: number;
   /* トランスクリプトが1件でもあるか。false なら「未使用」表示は無意味なので出さない */
   usageAvailable: boolean;
+  /* 前回起動からの差分。初回起動・差分なし・既読済みは null */
+  changes: SnapshotChanges | null;
 }
 
 export interface SummaryJob {

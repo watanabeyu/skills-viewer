@@ -23,6 +23,9 @@ const en = {
   'sort.updated': 'Recently updated',
   'sort.tokens': 'Token cost',
   'kind.all': 'All',
+  'filter.used': 'Used',
+  'filter.usedTitle':
+    'Show only items with recorded use in the transcript retention window (default 30 days)',
   'filter.unused': 'Unused',
   'filter.unusedTitle':
     'Show only items with no recorded use in the transcript retention window (default 30 days)',
@@ -77,6 +80,16 @@ const en = {
   'detail.open': 'Open',
   'detail.diff': 'diff',
   'detail.diffClose': 'Close diff',
+  'changes.title': 'Since last launch:',
+  'changes.added': '{n} added',
+  'changes.updated': '{n} updated',
+  'changes.removed': '{n} removed',
+  'changes.more': '+{n} more',
+  'changes.ack': 'Dismiss',
+  'changes.ackTitle': 'Use the current state as the baseline for the next comparison',
+  'alert.ackFailed': 'Failed to dismiss: {msg}',
+
+  'detail.spark': 'Last 30 days',
   'detail.diagnostics': 'Diagnostics',
   'detail.tokenCost':
     'Session overhead: ~{n} tokens (name + description are injected into every session; approx.)',
@@ -168,6 +181,8 @@ const ja: Record<MsgKey, string> = {
   'sort.updated': '更新日順',
   'sort.tokens': 'トークン量順',
   'kind.all': 'すべて',
+  'filter.used': '使用あり',
+  'filter.usedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録があるものだけ表示',
   'filter.unused': '未使用',
   'filter.unusedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録がないものだけ表示',
 
@@ -220,6 +235,16 @@ const ja: Record<MsgKey, string> = {
   'detail.open': '開く',
   'detail.diff': 'diff',
   'detail.diffClose': 'diff を閉じる',
+  'changes.title': '前回の起動から:',
+  'changes.added': '追加 {n}',
+  'changes.updated': '更新 {n}',
+  'changes.removed': '削除 {n}',
+  'changes.more': '他 {n} 件',
+  'changes.ack': '既読にする',
+  'changes.ackTitle': '現在の状態を次回比較の基準として保存します',
+  'alert.ackFailed': '既読化に失敗: {msg}',
+
+  'detail.spark': '直近30日',
   'detail.diagnostics': '診断',
   'detail.tokenCost':
     'セッションあたりの負荷: 約{n}トークン(name + description は毎セッション注入されます。概算)',

@@ -18,8 +18,10 @@ npx skills-viewer
 
 - **All scopes in one view** — user (`~/.claude/skills`), every project's `.claude/skills` / `.claude/commands`, installed plugins, and Claude Code built-ins, grouped by source
 - **Search / sort** — incremental search over name + description + usage; sort by name, usage count, last used, updated date, or token cost
-- **Diagnostics** — an _unused_ badge (no recorded use within the transcript retention window) with an unused-only filter, plus static description lint: missing / too-short / too-long descriptions, missing trigger conditions ("use when …") that make auto-invocation unlikely, and name-echo descriptions
+- **Diagnostics** — an _unused_ badge (no recorded use within the transcript retention window) with an all / used / unused filter, plus static description lint: missing / too-short / too-long descriptions, missing trigger conditions ("use when …") that make auto-invocation unlikely, and name-echo descriptions
 - **Token cost** — since every name + description is injected into each session, the estimated token overhead is shown per item, per scope, and as a per-session total for the current project
+- **What's changed** — a banner shows items added / updated / removed since your last launch (baseline advances only when you dismiss it); the CLI prints a one-line summary at startup too
+- **Usage sparkline** — the detail pane charts the last 30 days of per-day usage
 - **Usage stats** — invocation counts and last-used dates aggregated from Claude Code session transcripts (`~/.claude/projects/`), covering both user-typed `/skill` calls and model-invoked Skill tool calls
 - **AI summaries** — one-click summarization of each SKILL.md via `claude -p --model haiku`, cached by content hash in `~/.cache/skills-viewer/` so unchanged skills are never re-summarized
 - **Detail pane** — master/detail layout with an Overview tab (description, usage, bundled files) and a rendered SKILL.md tab

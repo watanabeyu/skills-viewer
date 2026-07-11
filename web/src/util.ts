@@ -76,6 +76,15 @@ export const kindMatches = (it: SkillItem, kind: KindFilter) => kind === 'all' |
 export const isUnused = (it: SkillItem, usageAvailable: boolean) =>
   usageAvailable && it.kind !== 'hook' && !it.useCount;
 
+/* 使用実績フィルタ。used / unused とも起動記録の対象外である hook は含めない */
+export type UseFilter = 'all' | 'used' | 'unused';
+
+export const usageMatches = (it: SkillItem, f: UseFilter, usageAvailable: boolean) => {
+  if (f === 'used') return it.kind !== 'hook' && !!it.useCount;
+  if (f === 'unused') return isUnused(it, usageAvailable);
+  return true;
+};
+
 /* 同名の別定義(diff 比較の対象)。short name で突き合わせ、hook は対象外 */
 export function sameNameOthers<T extends SkillItem & { key: string }>(it: T, all: T[]): T[] {
   const short = it.name.split(':').pop();

@@ -3,11 +3,27 @@
 All notable changes to this project are documented here, in English followed by Japanese.
 このファイルには主要な変更を記録します(英語の後に日本語を併記)。
 
+## [0.4.0] - 2026-07-10
+
+### Added
+
+- **What's Changed banner** — items added / updated / removed since your last launch are shown in a banner (click a name to open it). The baseline advances only when you press _Dismiss_, so the diff survives reloads. First launch just records the baseline. Hooks and built-ins are not tracked.
+  **What's Changed バナー** — 前回起動からの追加・更新・削除をバナーで表示(名前クリックで詳細へ)。基準は「既読にする」を押したときだけ進むため、リロードしても差分は消えません。初回起動は基準の記録のみ。hook と built-in は対象外。
+- **CLI startup summary** — `npx skills-viewer` now prints a one-line digest at startup: changes since last run, session token injection, and unused count. Useful even with `--no-open`.
+  **CLI 起動サマリー** — 起動時に「前回からの差分 / セッション注入トークン / 未使用件数」を1〜2行で表示。`--no-open` 運用でも価値が出ます。
+- **Usage sparkline** — the detail pane charts the last 30 days of per-day usage (inline SVG, hover a bar for the date and count).
+  **使用スパークライン** — 詳細画面に直近30日の日別使用回数を棒グラフ表示(バーの hover で日付と回数)。
+
+### Changed
+
+- **Usage filter** — the unused-only toggle is now a three-state segment: all / used / unused (`?use=used|unused`; old `?unused=1` links still work).
+  **使用実績フィルタ** — 「未使用」トグルを「すべて / 使用あり / 未使用」の3状態セグメントに変更(`?use=used|unused`。旧 `?unused=1` の URL も引き続き解釈)。
+
 ## [0.3.0] - 2026-07-10
 
 ### Added
 
-- **Unused badge & filter** — items with no recorded use within the transcript retention window (`cleanupPeriodDays`, default 30 days) get an *unused* badge, with an unused-only toggle in the toolbar. Hidden entirely when no transcripts exist.
+- **Unused badge & filter** — items with no recorded use within the transcript retention window (`cleanupPeriodDays`, default 30 days) get an _unused_ badge, with an unused-only toggle in the toolbar. Hidden entirely when no transcripts exist.
   **未使用バッジ・フィルタ** — トランスクリプト保持期間(既定30日)内に使用記録がないものに「未使用」バッジを表示し、ツールバーで絞り込み可能に。トランスクリプトが1件も無い環境では非表示。
 - **Description lint** — static checks on frontmatter descriptions: missing / too short (< 30 chars) / too long (> 1024 chars) / no trigger condition ("Use when …", 日英対応; skills & agents only) / name-echo. Warnings appear as a ⚠ badge (top-right of the card) with a hover tooltip.
   **description リント** — frontmatter の description を静的チェック: 欠落 / 短すぎ(30字未満)/ 長すぎ(1024字超)/ 発動条件なし(skill・agent のみ)/ 名前の繰り返し。カード右上の ⚠ バッジと hover tooltip で表示。

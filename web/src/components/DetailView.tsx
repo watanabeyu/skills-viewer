@@ -19,11 +19,13 @@ import {
   sameNameOthers,
   sortItems,
   usageLine,
+  usageMatches,
   SRC_COLOR,
   SRC_TINT,
   type FlatItem,
   type KindFilter,
   type SortKey,
+  type UseFilter,
 } from '../util';
 import { editorUrl, loadEditorSetting } from '../settings';
 import { diffLines, type DiffLine } from '../diff';
@@ -40,7 +42,7 @@ export function DetailView({
   sort,
   grouped,
   kind,
-  unused,
+  use,
   onOpen,
   reload,
 }: {
@@ -50,7 +52,7 @@ export function DetailView({
   sort: SortKey;
   grouped: boolean;
   kind: KindFilter;
-  unused: boolean;
+  use: UseFilter;
   onOpen: (key: string) => void;
   reload: () => Promise<void>;
 }) {
@@ -133,7 +135,7 @@ export function DetailView({
         sort={sort}
         grouped={grouped}
         kind={kind}
-        unused={unused}
+        use={use}
         selected={it.key}
         onOpen={onOpen}
       />
@@ -219,7 +221,7 @@ function LeftColumn({
   sort,
   grouped,
   kind,
-  unused,
+  use,
   selected,
   onOpen,
 }: {
@@ -228,13 +230,13 @@ function LeftColumn({
   sort: SortKey;
   grouped: boolean;
   kind: KindFilter;
-  unused: boolean;
+  use: UseFilter;
   selected: string;
   onOpen: (key: string) => void;
 }) {
   const groups = useMemo(() => {
     const pass = (it: FlatItem) =>
-      kindMatches(it, kind) && matches(it, q) && (!unused || isUnused(it, data.usageAvailable));
+      kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, data.usageAvailable);
     if (grouped) {
       return data.sections
         .map((s) => ({ section: s, items: sortItems(flatten([s]).filter(pass), sort) }))
@@ -246,7 +248,7 @@ function LeftColumn({
         items: sortItems(flatten(data.sections).filter(pass), sort),
       },
     ];
-  }, [data, q, sort, grouped, kind, unused]);
+  }, [data, q, sort, grouped, kind, use]);
 
   return (
     <div className="left-col">
@@ -348,6 +350,7 @@ function OverviewTab({
             {t('detail.usageDetail', { typed: it.typedCount || 0, auto: it.autoCount || 0 })}
             {it.lastUsed ? t('detail.usageLast', { date: fmtDate(it.lastUsed) }) : ''}
           </p>
+          {it.dailyUse && <Sparkline daily={it.dailyUse} />}
         </>
       ) : null}
       {relations.length > 0 && (
@@ -393,6 +396,55 @@ function OverviewTab({
         <span className="sq6" />
         <span className="p">{it.path || t('detail.builtinLocation')}</span>
       </div>
+    </div>
+  );
+}
+
+/*
+ * 直近30日の日別使用回数を inline SVG の棒グラフで表示。
+ * 日付キーはサーバー(usage.ts の dayKey)と同じローカルタイムゾーンの YYYY-MM-DD。
+ */
+function Sparkline({ daily }: { daily: Record<string, number> }) {
+  const DAYS = 30;
+  const BAR = 7;
+  const GAP = 2;
+  const H = 32;
+  const now = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  const days: { key: string; n: number }[] = [];
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const key = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    days.push({ key, n: daily[key] || 0 });
+  }
+  const max = Math.max(...days.map((d) => d.n), 1);
+  return (
+    <div className="spark-wrap">
+      <svg
+        className="spark"
+        width={DAYS * (BAR + GAP)}
+        height={H}
+        role="img"
+        aria-label={t('detail.spark')}
+      >
+        {days.map((d, i) => {
+          const h = d.n ? Math.max(3, Math.round((d.n / max) * (H - 4))) : 2;
+          return (
+            <rect
+              key={d.key}
+              className={d.n ? 'on' : ''}
+              x={i * (BAR + GAP)}
+              y={H - h}
+              width={BAR}
+              height={h}
+              rx={1.5}
+            >
+              <title>{`${d.key}: ${d.n}`}</title>
+            </rect>
+          );
+        })}
+      </svg>
+      <span className="spark-label">{t('detail.spark')}</span>
     </div>
   );
 }

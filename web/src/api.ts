@@ -4,12 +4,14 @@ import type { SkillItem, SkillsData, SummaryJob } from '../../src/shared/types';
 import { apiErrorMessage, getLang } from './i18n';
 
 export type {
+  ChangeEntry,
   ItemKind,
   Invocation,
   Lang,
   RelationType,
   SkillRelation,
   SkillItem,
+  SnapshotChanges,
   Source,
   Section,
   CopyTarget,
@@ -56,6 +58,8 @@ export const openSkill = (src: string) =>
 export const summarizeSkill = (src: string, name: string) =>
   mutate<{ ok: true; summary: string }>('/api/summarize', { src, name });
 export const summarizeAll = (force = false) => mutate<SummaryJob>('/api/summarize-all', { force });
+/* What's Changed の「既読にする」: 現在の状態を次回比較の基準として保存 */
+export const ackChanges = () => mutate<{ ok: true }>('/api/changes-ack', {});
 
 /* ---- item key / URL id ---- */
 

@@ -10,15 +10,17 @@ import {
 } from './api';
 import {
   flatten,
-  isUnused,
   kindMatches,
   matches,
+  usageMatches,
   type FlatItem,
   type KindFilter,
   type SortKey,
+  type UseFilter,
 } from './util';
 import { GridView } from './components/GridView';
 import { DetailView, clearMdCache } from './components/DetailView';
+import { ChangesBanner } from './components/ChangesBanner';
 import { SettingsModal } from './components/SettingsModal';
 import { getLang, setLang, t, type Lang, type MsgKey } from './i18n';
 
@@ -43,7 +45,8 @@ export default function App() {
   const sort = (params.get('sort') || 'name') as SortKey;
   const grouped = params.get('grouped') !== '0';
   const kind = (params.get('kind') || 'all') as KindFilter;
-  const unused = params.get('unused') === '1';
+  // v0.3.0 の共有 URL(unused=1)も unused 扱いで解釈する
+  const use = (params.get('use') || (params.get('unused') === '1' ? 'unused' : 'all')) as UseFilter;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [width, setWidth] = useState(() => localStorage.getItem('csb-width') || 'full');
   const changeWidth = (w: string) => {
@@ -91,11 +94,9 @@ export default function App() {
     () =>
       all.filter(
         (it) =>
-          kindMatches(it, kind) &&
-          matches(it, q) &&
-          (!unused || isUnused(it, !!data?.usageAvailable)),
+          kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, !!data?.usageAvailable),
       ).length,
-    [all, q, kind, unused, data],
+    [all, q, kind, use, data],
   );
 
   /* 現在プロジェクトでの1セッションに注入される分(built-in + plugin + user + current project) */
@@ -225,13 +226,31 @@ export default function App() {
             ))}
           </span>
           {data?.usageAvailable && (
-            <button
-              className={'chip' + (unused ? ' on' : '')}
-              title={t('filter.unusedTitle')}
-              onClick={() => setParam('unused', unused ? null : '1')}
-            >
-              {t('filter.unused')}
-            </button>
+            <span className="seg">
+              {(
+                [
+                  ['all', t('kind.all'), ''],
+                  ['used', t('filter.used'), t('filter.usedTitle')],
+                  ['unused', t('filter.unused'), t('filter.unusedTitle')],
+                ] as [UseFilter, string, string][]
+              ).map(([key, label, title]) => (
+                <button
+                  key={key}
+                  className={use === key ? 'on' : ''}
+                  title={title}
+                  onClick={() => {
+                    // 旧パラメータ(unused=1)は新パラメータ設定時に掃除する
+                    const next = new URLSearchParams(params);
+                    next.delete('unused');
+                    if (key === 'all') next.delete('use');
+                    else next.set('use', key);
+                    setParams(next, { replace: true });
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </span>
           )}
           <button
             className="chip"
@@ -263,6 +282,7 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
         />
       )}
+      {data?.changes && <ChangesBanner changes={data.changes} onOpen={openSkill} reload={reload} />}
       {data && (
         <Routes>
           <Route
@@ -274,7 +294,7 @@ export default function App() {
                 sort={sort}
                 grouped={grouped}
                 kind={kind}
-                unused={unused}
+                use={use}
                 onOpen={openSkill}
               />
             }
@@ -289,7 +309,7 @@ export default function App() {
                 sort={sort}
                 grouped={grouped}
                 kind={kind}
-                unused={unused}
+                use={use}
                 onOpen={openSkill}
                 reload={reload}
               />

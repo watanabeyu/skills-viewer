@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { SkillItem } from '../src/shared/types';
 import { itemKey } from '../web/src/api';
-import { invocationOf, kindMatches, sameNameOthers, sortItems, usageLine } from '../web/src/util';
+import {
+  invocationOf,
+  kindMatches,
+  sameNameOthers,
+  sortItems,
+  usageLine,
+  usageMatches,
+} from '../web/src/util';
 
 const base = (over: Partial<SkillItem> = {}): SkillItem => ({
   name: 'foo',
@@ -50,6 +57,27 @@ describe('sortItems', () => {
     expect(sortItems(items, 'uses').map((i) => i.name)).toEqual(['b', 'a', 'c']);
     expect(sortItems(items, 'recent').map((i) => i.name)).toEqual(['a', 'b', 'c']);
     expect(sortItems(items, 'updated').map((i) => i.name)).toEqual(['c', 'a', 'b']);
+  });
+});
+
+describe('usageMatches (使用実績フィルタ)', () => {
+  const used = base({ useCount: 3 });
+  const unused = base();
+  const hook = base({ kind: 'hook' });
+  it('all は常に通す', () => {
+    expect(usageMatches(used, 'all', true)).toBe(true);
+    expect(usageMatches(hook, 'all', false)).toBe(true);
+  });
+  it('used / unused を出し分ける(hook はどちらにも含めない)', () => {
+    expect(usageMatches(used, 'used', true)).toBe(true);
+    expect(usageMatches(unused, 'used', true)).toBe(false);
+    expect(usageMatches(used, 'unused', true)).toBe(false);
+    expect(usageMatches(unused, 'unused', true)).toBe(true);
+    expect(usageMatches(hook, 'used', true)).toBe(false);
+    expect(usageMatches(hook, 'unused', true)).toBe(false);
+  });
+  it('トランスクリプトが無い環境では unused に何も出さない', () => {
+    expect(usageMatches(unused, 'unused', false)).toBe(false);
   });
 });
 

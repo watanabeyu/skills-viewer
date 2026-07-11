@@ -12,10 +12,12 @@ import {
   matches,
   sortItems,
   usageLine,
+  usageMatches,
   KIND_LABEL,
   SRC_COLOR,
   type KindFilter,
   type SortKey,
+  type UseFilter,
 } from '../util';
 import { lintLabel, t } from '../i18n';
 import type { Section, SkillItem, Source } from '../api';
@@ -155,7 +157,7 @@ export function GridView({
   sort,
   grouped,
   kind,
-  unused,
+  use,
   onOpen,
 }: {
   data: SkillsData;
@@ -163,11 +165,11 @@ export function GridView({
   sort: SortKey;
   grouped: boolean;
   kind: KindFilter;
-  unused: boolean;
+  use: UseFilter;
   onOpen: (key: string) => void;
 }) {
   const pass = (it: SkillItem) =>
-    kindMatches(it, kind) && matches(it, q) && (!unused || isUnused(it, data.usageAvailable));
+    kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, data.usageAvailable);
   if (grouped) {
     const sections = data.sections
       .map((s) => ({

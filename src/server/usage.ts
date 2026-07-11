@@ -21,6 +21,15 @@ export interface UsageAgg {
   typed: number;
   auto: number;
   last: number;
+  /* 日別回数(YYYY-MM-DD → 回数、ローカルタイムゾーン)。時系列スパークライン用 */
+  daily: Record<string, number>;
+}
+
+/* ローカルタイムゾーンの日付キー。web 側のスパークラインと同じ形式であること */
+export function dayKey(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 const usageCache = new Map<string, { mtimeMs: number; hits: Hit[] }>();
@@ -119,9 +128,13 @@ export function scanUsageByDir(): Record<string, Record<string, UsageAgg>> {
         usageCache.set(fp, entry);
       }
       for (const h of entry.hits) {
-        const a = agg[h.name] || (agg[h.name] = { typed: 0, auto: 0, last: 0 });
+        const a = agg[h.name] || (agg[h.name] = { typed: 0, auto: 0, last: 0, daily: {} });
         a[h.via === 'typed' ? 'typed' : 'auto']++;
         if (h.ts > a.last) a.last = h.ts;
+        if (h.ts > 0) {
+          const day = dayKey(h.ts);
+          a.daily[day] = (a.daily[day] || 0) + 1;
+        }
       }
     }
   }
