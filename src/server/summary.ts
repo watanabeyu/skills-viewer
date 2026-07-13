@@ -131,21 +131,12 @@ function buildPrompt(it: SummarizeTarget, refs: string[], content: string, lang:
 }
 
 /*
- * 1 skill を haiku で分析し {summary, invocation, invocationReason, relations} を返す。
- * relations の候補(refs)は静的解析で抽出済みの既知 skill 名のみに制限し、幻覚を防ぐ。
+ * claude CLI headless (haiku) にプロンプトを渡して生テキストを得る共通実行部。
+ * --tools '' で全ツールを無効化: SKILL.md は clone したリポジトリ由来もあり得るため、
+ * 本文に指示が仕込まれていても純粋なテキスト生成の外に出られないようにする
  */
-export function summarizeOne(it: SummarizeTarget, lang: Lang): Promise<SkillAnalysis> {
+export function runHaiku(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    let content: string;
-    try {
-      content = fs.readFileSync(it.path, 'utf8').slice(0, 12000);
-    } catch (e) {
-      return reject(e);
-    }
-    const refs = it.refs || [];
-    const prompt = buildPrompt(it, refs, content, lang);
-    // --tools '' で全ツールを無効化: SKILL.md は clone したリポジトリ由来もあり得るため、
-    // 本文に指示が仕込まれていても純粋なテキスト生成の外に出られないようにする
     const child = spawn('claude', ['-p', '--model', 'haiku', '--tools', ''], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -170,10 +161,21 @@ export function summarizeOne(it: SummarizeTarget, lang: Lang): Promise<SkillAnal
       const text = out.trim();
       if (code !== 0 || !text)
         return reject(new Error(errOut.trim().slice(0, 200) || 'claude exited ' + code));
-      resolve(parseAnalysis(text, refs));
+      resolve(text);
     });
     child.stdin.end(prompt);
   });
+}
+
+/*
+ * 1 skill を haiku で分析し {summary, invocation, invocationReason, relations} を返す。
+ * relations の候補(refs)は静的解析で抽出済みの既知 skill 名のみに制限し、幻覚を防ぐ。
+ */
+export async function summarizeOne(it: SummarizeTarget, lang: Lang): Promise<SkillAnalysis> {
+  const content = fs.readFileSync(it.path, 'utf8').slice(0, 12000);
+  const refs = it.refs || [];
+  const text = await runHaiku(buildPrompt(it, refs, content, lang));
+  return parseAnalysis(text, refs);
 }
 
 /* haiku の出力を検証つきでパース。壊れていたら全文を summary として扱う */

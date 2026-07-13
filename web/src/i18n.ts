@@ -91,6 +91,24 @@ const en = {
 
   'detail.spark': 'Last 30 days',
   'detail.diagnostics': 'Diagnostics',
+  'diag.run': 'AI trigger diagnosis',
+  'diag.rerun': 'Re-diagnose',
+  'diag.running': 'Diagnosing…',
+  'diag.runTitle':
+    'Analyze via claude CLI (haiku) whether the description is likely to trigger auto-invocation, and propose an improved version',
+  'diag.verdict.good': '✓ Trigger condition looks clear',
+  'diag.verdict.weak': '△ Auto-invocation unlikely as written',
+  'diag.improved': 'Suggested description',
+  'diag.apply': 'Apply this suggestion',
+  'diag.applying': 'Applying…',
+  'alert.diagnoseFailed': 'Diagnosis failed: {msg}',
+  'alert.applyFailed': 'Failed to apply: {msg}',
+
+  'edit.button': 'Edit',
+  'edit.save': 'Save',
+  'edit.saving': 'Saving…',
+  'edit.noFrontmatter': 'No frontmatter (--- block) found. Save anyway?',
+  'alert.saveFailed': 'Save failed: {msg}',
   'detail.tokenCost':
     'Session overhead: ~{n} tokens (name + description are injected into every session; approx.)',
   'lint.no-description':
@@ -157,6 +175,9 @@ const en = {
   'apiError.unknown-copy-target': 'Unknown copy target: {detail}',
   'apiError.no-free-name': 'No free name for the copy',
   'apiError.unexpected-skill-dir': 'Unexpected skill directory layout: {detail}',
+  'apiError.edit-conflict': 'The file was changed outside this app — reload the page and try again',
+  'apiError.empty-content': 'Content is empty',
+  'apiError.content-too-large': 'Content is too large to save',
   'apiError.bad-origin': 'Request rejected: bad origin',
   'apiError.bad-token': 'Bad token — reload the page (the server may have restarted)',
   'apiError.bad-json': 'Malformed request',
@@ -246,6 +267,24 @@ const ja: Record<MsgKey, string> = {
 
   'detail.spark': '直近30日',
   'detail.diagnostics': '診断',
+  'diag.run': 'AI 発動診断',
+  'diag.rerun': '再診断',
+  'diag.running': '診断中…',
+  'diag.runTitle':
+    'description が自動発動につながるかを claude CLI (haiku) で分析し、改善案を提案します',
+  'diag.verdict.good': '✓ 発動条件は明確です',
+  'diag.verdict.weak': '△ このままでは自動発動されにくい可能性',
+  'diag.improved': '改善案',
+  'diag.apply': 'この案を適用',
+  'diag.applying': '適用中…',
+  'alert.diagnoseFailed': '診断に失敗: {msg}',
+  'alert.applyFailed': '適用に失敗: {msg}',
+
+  'edit.button': '編集',
+  'edit.save': '保存',
+  'edit.saving': '保存中…',
+  'edit.noFrontmatter': 'frontmatter(--- ブロック)がありません。このまま保存しますか?',
+  'alert.saveFailed': '保存に失敗: {msg}',
   'detail.tokenCost':
     'セッションあたりの負荷: 約{n}トークン(name + description は毎セッション注入されます。概算)',
   'lint.no-description':
@@ -312,6 +351,10 @@ const ja: Record<MsgKey, string> = {
   'apiError.unknown-copy-target': '未知のコピー先です: {detail}',
   'apiError.no-free-name': 'コピー先の空き名が見つかりません',
   'apiError.unexpected-skill-dir': 'skill ディレクトリ構造が想定外です: {detail}',
+  'apiError.edit-conflict':
+    'ファイルが外部で変更されています。ページを再読み込みしてからやり直してください',
+  'apiError.empty-content': '内容が空です',
+  'apiError.content-too-large': '内容が大きすぎて保存できません',
   'apiError.bad-origin': '不正なオリジンからのアクセスです',
   'apiError.bad-token':
     'トークンが不正です。ページを再読み込みしてください(サーバー再起動の可能性)',

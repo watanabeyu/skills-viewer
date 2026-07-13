@@ -20,6 +20,8 @@ npx skills-viewer
 - **Search / sort** — incremental search over name + description + usage; sort by name, usage count, last used, updated date, or token cost
 - **Diagnostics** — an _unused_ badge (no recorded use within the transcript retention window) with an all / used / unused filter, plus static description lint: missing / too-short / too-long descriptions, missing trigger conditions ("use when …") that make auto-invocation unlikely, and name-echo descriptions
 - **Token cost** — since every name + description is injected into each session, the estimated token overhead is shown per item, per scope, and as a per-session total for the current project
+- **AI trigger diagnosis** — one click asks haiku whether the description is likely to trigger auto-invocation, lists concrete issues, and proposes an improved description you can apply with one click (cached by content hash)
+- **Edit in the browser** — inline editor for SKILL.md / commands / agents (project & user scopes) with mtime conflict detection and a one-generation backup in `~/.cache/skills-viewer/backups/`
 - **What's changed** — a banner shows items added / updated / removed since your last launch (baseline advances only when you dismiss it); the CLI prints a one-line summary at startup too
 - **Usage sparkline** — the detail pane charts the last 30 days of per-day usage
 - **Usage stats** — invocation counts and last-used dates aggregated from Claude Code session transcripts (`~/.claude/projects/`), covering both user-typed `/skill` calls and model-invoked Skill tool calls

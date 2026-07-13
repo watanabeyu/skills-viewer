@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
+  applyDescription,
   copySkill,
   deleteSkill,
+  diagnoseSkill,
   fetchFile,
+  fetchFileFull,
   fromId,
   openSkill,
+  saveFile,
   summarizeSkill,
   toId,
   type SkillsData,
@@ -203,9 +207,9 @@ export function DetailView({
           )}
         </div>
         {tab === 'overview' ? (
-          <OverviewTab it={it} all={all} onOpen={onOpen} />
+          <OverviewTab it={it} all={all} onOpen={onOpen} reload={reload} />
         ) : (
-          <MdTab path={it.path} />
+          <MdTab it={it} reload={reload} />
         )}
       </div>
       {confirmDelete && (
@@ -293,10 +297,12 @@ function OverviewTab({
   it,
   all,
   onOpen,
+  reload,
 }: {
   it: FlatItem;
   all: FlatItem[];
   onOpen: (key: string) => void;
+  reload: () => Promise<void>;
 }) {
   // AI 分類(関係タイプ付き)があればそれを、無ければ静的解析の参照候補を表示
   const relations = it.aiRelations?.length
@@ -328,7 +334,7 @@ function OverviewTab({
           <div className="ex-block">{usageLine(it)}</div>
         </>
       )}
-      {(!!it.tokens || !!it.lint?.length) && (
+      {(!!it.tokens || !!it.lint?.length || it.hasMd) && (
         <>
           <div className="sec-t">{t('detail.diagnostics')}</div>
           {!!it.tokens && (
@@ -340,6 +346,7 @@ function OverviewTab({
               <span>{lintLabel(code)}</span>
             </div>
           ))}
+          {it.hasMd && <DiagnosisBlock it={it} reload={reload} />}
         </>
       )}
       <SameNameSection it={it} all={all} onOpen={onOpen} />
@@ -396,6 +403,75 @@ function OverviewTab({
         <span className="sq6" />
         <span className="p">{it.path || t('detail.builtinLocation')}</span>
       </div>
+    </div>
+  );
+}
+
+/*
+ * AI 発動診断ブロック。キャッシュ済み診断があれば表示し、改善案は manage 可能な
+ * アイテムに限りワンクリック適用できる(適用すると内容が変わるため診断キャッシュは無効化される)。
+ */
+function DiagnosisBlock({ it, reload }: { it: FlatItem; reload: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const d = it.aiDiagnosis;
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      await diagnoseSkill(it.path, it.name);
+      await reload();
+    } catch (e) {
+      alert(t('alert.diagnoseFailed', { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const apply = async () => {
+    if (!d) return;
+    setApplying(true);
+    try {
+      await applyDescription(it.path, d.improved);
+      await reload();
+    } catch (e) {
+      alert(t('alert.applyFailed', { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="diag-block">
+      {d && (
+        <div className="diag-box">
+          <div className={'diag-verdict ' + d.verdict}>
+            {t(d.verdict === 'good' ? 'diag.verdict.good' : 'diag.verdict.weak')}
+          </div>
+          {d.issues.map((issue) => (
+            <div className="lint-row" key={issue}>
+              <span className="lint-mark">·</span>
+              <span>{issue}</span>
+            </div>
+          ))}
+          {d.improved && d.improved !== it.description && (
+            <>
+              <div className="diag-imp-t">{t('diag.improved')}</div>
+              <p className="diag-improved">
+                <span className="ai-mark">✦ </span>
+                {d.improved}
+              </p>
+              {it.manage && (
+                <button className="pbtn sm" disabled={applying} onClick={apply}>
+                  {applying ? t('diag.applying') : t('diag.apply')}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      <button className="pbtn sm" disabled={busy} onClick={run} title={t('diag.runTitle')}>
+        {busy ? t('diag.running') : d ? t('diag.rerun') : '✦ ' + t('diag.run')}
+      </button>
     </div>
   );
 }
@@ -550,12 +626,18 @@ export function clearMdCache(): void {
   mdCache.clear();
 }
 
-function MdTab({ path }: { path: string }) {
+function MdTab({ it, reload }: { it: FlatItem; reload: () => Promise<void> }) {
+  const path = it.path;
   const [raw, setRaw] = useState<string | null>(mdCache.get(path) ?? null);
   const [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [baseMtime, setBaseMtime] = useState(0);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    setEditing(false); // 別アイテムに移ったら編集は破棄
     if (mdCache.has(path)) {
       setRaw(mdCache.get(path)!);
       return;
@@ -575,11 +657,70 @@ function MdTab({ path }: { path: string }) {
     };
   }, [path]);
 
+  /* 編集開始時に mtime 付きで取り直す(表示キャッシュが古い可能性があるため) */
+  const startEdit = async () => {
+    try {
+      const { content, mtime } = await fetchFileFull(path);
+      mdCache.set(path, content);
+      setRaw(content);
+      setDraft(content);
+      setBaseMtime(mtime);
+      setEditing(true);
+    } catch (e) {
+      alert(t('app.loadFailed', { msg: e instanceof Error ? e.message : String(e) }));
+    }
+  };
+
+  const onSave = async () => {
+    if (!/^---\r?\n/.test(draft) && !confirm(t('edit.noFrontmatter'))) return;
+    setSaving(true);
+    try {
+      await saveFile(path, draft, baseMtime);
+      mdCache.set(path, draft);
+      setRaw(draft);
+      setEditing(false);
+      await reload(); // lint・トークン・description 表示を更新(mdCache は reload でクリアされる)
+    } catch (e) {
+      alert(t('alert.saveFailed', { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (error) return <div className="empty">{t('app.loadFailed', { msg: error })}</div>;
   if (raw === null) return <div className="empty">{t('common.loading')}</div>;
+
+  if (editing) {
+    return (
+      <div>
+        <div className="edit-bar">
+          <button className="pbtn sm primary" disabled={saving} onClick={onSave}>
+            {saving ? t('edit.saving') : t('edit.save')}
+          </button>
+          <button className="pbtn sm" disabled={saving} onClick={() => setEditing(false)}>
+            {t('common.cancel')}
+          </button>
+        </div>
+        <textarea
+          className="md-editor"
+          value={draft}
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+      </div>
+    );
+  }
+
   const { frontmatter, body } = splitFrontmatter(raw);
   return (
     <div>
+      {it.manage && (
+        <div className="edit-bar">
+          <button className="pbtn sm" onClick={startEdit}>
+            {t('edit.button')}
+          </button>
+        </div>
+      )}
       {frontmatter && <div className="fm-box">{frontmatter}</div>}
       {/* 自前レンダラ内で全テキストを HTML エスケープ済み */}
       <div className="md-body" dangerouslySetInnerHTML={{ __html: mdRender(body) }} />

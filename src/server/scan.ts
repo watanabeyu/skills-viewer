@@ -38,7 +38,16 @@ export function parseFrontmatter(raw: string): { meta: Record<string, string>; b
         }
         value = block.join('\n').trim();
       } else {
-        value = value.replace(/^["']|["']$/g, '');
+        if (/^".*"$/.test(value)) {
+          // double-quote は JSON 互換エスケープ(\" 等)を解釈する(edit.ts の書き込みと対)
+          try {
+            value = JSON.parse(value);
+          } catch {
+            value = value.slice(1, -1);
+          }
+        } else {
+          value = value.replace(/^'|'$/g, '');
+        }
         i++;
       }
       meta[key] = value;

@@ -16,6 +16,13 @@ export interface SkillRelation {
   note: string;
 }
 
+/* AI 発動診断の結果(claude CLI / haiku で生成、content hash + lang でキャッシュ) */
+export interface SkillDiagnosis {
+  verdict: 'good' | 'weak';
+  issues: string[];
+  improved: string;
+}
+
 export interface SkillItem {
   name: string;
   description: string;
@@ -37,6 +44,7 @@ export interface SkillItem {
   /* 日別使用回数(YYYY-MM-DD → 回数、ローカルタイムゾーン)。未使用なら省略 */
   dailyUse?: Record<string, number>;
   aiSummary?: string;
+  aiDiagnosis?: SkillDiagnosis;
   aiInvocation?: Invocation;
   aiInvocationReason?: string;
   aiRelations?: SkillRelation[];

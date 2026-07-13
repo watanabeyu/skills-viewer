@@ -1128,3 +1128,68 @@ button {
   color: #8a8579;
   white-space: nowrap;
 }
+
+/* ---- v0.5.0: インライン編集・AI 発動診断 ---- */
+/* 編集/保存/キャンセルはコンテンツに被らないよう右寄せ + 上マージン */
+.edit-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.md-editor {
+  width: 100%;
+  min-height: 480px;
+  padding: 14px 16px;
+  border: 1px solid #ddd8ce;
+  border-radius: 10px;
+  background: #fff;
+  color: #1b1a17;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+.md-editor:focus {
+  border-color: #1b1a17;
+}
+.diag-block {
+  margin: 8px 0 4px;
+}
+.diag-box {
+  border: 1px solid #e8e4dc;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.diag-verdict {
+  font-size: 12.5px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.diag-verdict.good {
+  color: #1f8a5b;
+}
+.diag-verdict.weak {
+  color: #b8862f;
+}
+.diag-imp-t {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8579;
+  margin: 10px 0 4px;
+}
+.diag-improved {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #57534a;
+  margin: 0 0 10px;
+  background: #faf7ef;
+  border-radius: 8px;
+  padding: 10px 12px;
+}

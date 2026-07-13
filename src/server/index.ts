@@ -23,6 +23,8 @@ import {
   summaryStatus,
 } from './summary';
 import { assertReadableMd, doCopy, doDelete, openInEditor } from './manage';
+import { doApplyDescription, doSave } from './edit';
+import { attachDiagnoses, diagnoseOne } from './diagnose';
 import { ackChanges, computeChanges } from './snapshot';
 import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
@@ -130,6 +132,7 @@ function collect(cwd: string, lang: Lang): SkillsData {
       }
     }
   }
+  attachDiagnoses(sections, lang);
   const aiStale = staleItems(sections, lang).length;
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
@@ -188,7 +191,11 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       if (url.pathname === '/api/summary-status') return send(200, summaryStatus());
       if (url.pathname === '/api/file') {
         const real = assertReadableMd(url.searchParams.get('src') || '');
-        return send(200, { content: fs.readFileSync(real, 'utf8') });
+        // mtime は編集画面の競合検出(/api/save の baseMtime)に使う
+        return send(200, {
+          content: fs.readFileSync(real, 'utf8'),
+          mtime: fs.statSync(real).mtimeMs,
+        });
       }
       throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
@@ -215,6 +222,16 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
     }
     const lang = langOf(data.lang);
     try {
+      if (url.pathname === '/api/save') return send(200, doSave(data));
+      if (url.pathname === '/api/apply-description') return send(200, doApplyDescription(data));
+      if (url.pathname === '/api/diagnose') {
+        const real = assertReadableMd(data.src);
+        const name = data.name || path.basename(path.dirname(real));
+        diagnoseOne(real, name, lang)
+          .then((d) => send(200, { ok: true, ...d }))
+          .catch((e) => send(400, toErrorBody(e)));
+        return;
+      }
       if (url.pathname === '/api/changes-ack') {
         ackChanges(scanSections(cwd, lang));
         return send(200, { ok: true });

@@ -3,6 +3,25 @@
 All notable changes to this project are documented here, in English followed by Japanese.
 このファイルには主要な変更を記録します(英語の後に日本語を併記)。
 
+## [0.5.0] - 2026-07-13
+
+The view → diagnose → **fix** loop now closes inside the tool.
+見る → 診断する → **直す** のループがツール内で完結するようになりました。
+
+### Added
+
+- **AI trigger diagnosis** — one click asks haiku whether the description is likely to trigger auto-invocation (the model only sees name + description when deciding), lists concrete issues, and proposes an improved description. Cached by content hash + language in `~/.cache/skills-viewer/diagnoses.json`.
+  **AI 発動診断** — description が自動発動につながるか(モデルは name + description しか見ない)を haiku で診断し、問題点と改善版 description を提示。content hash + 言語で `~/.cache/skills-viewer/diagnoses.json` にキャッシュ。
+- **One-click apply** — apply the suggested description directly; the frontmatter `description` (including block scalars) is rewritten safely and everything else is left untouched.
+  **改善案のワンクリック適用** — 提案された description をそのまま適用。frontmatter の `description`(block scalar 含む)だけを安全に書き換え、他は一切触らない。
+- **Edit in the browser** — the SKILL.md tab gets an inline editor for project / user scope items (plugins and built-ins stay read-only). Saves are guarded by mtime conflict detection (no overwriting external edits) and a one-generation backup in `~/.cache/skills-viewer/backups/`.
+  **ブラウザ内編集** — SKILL.md タブに編集モードを追加(project / user スコープのみ。plugin・built-in は従来どおり読み取り専用)。mtime による競合検出(外部編集を上書きしない)と `~/.cache/skills-viewer/backups/` への1世代バックアップ付き。
+
+### Security
+
+- The new write APIs (`/api/save`, `/api/apply-description`) go through the same path validation as copy/delete (`.claude/skills|commands|agents` only, plugin dirs rejected) plus the per-run token; AI diagnosis runs claude with all tools disabled, same as summaries.
+  新設の書き込み API(`/api/save`・`/api/apply-description`)はコピー/削除と同じパス検証(`.claude/skills|commands|agents` 限定・plugin 拒否)+ 起動ごとトークンを通過。AI 診断は要約と同様ツール全無効で claude を実行。
+
 ## [0.4.0] - 2026-07-10
 
 ### Added

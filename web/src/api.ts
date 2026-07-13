@@ -9,6 +9,7 @@ export type {
   Invocation,
   Lang,
   RelationType,
+  SkillDiagnosis,
   SkillRelation,
   SkillItem,
   SnapshotChanges,
@@ -35,6 +36,9 @@ export async function initToken(): Promise<void> {
 export const fetchSkills = () => req<SkillsData>('/api/skills?lang=' + getLang());
 export const fetchFile = (src: string) =>
   req<{ content: string }>('/api/file?src=' + encodeURIComponent(src)).then((r) => r.content);
+/* 編集用: mtime 付きで取得(保存時の競合検出に使う) */
+export const fetchFileFull = (src: string) =>
+  req<{ content: string; mtime: number }>('/api/file?src=' + encodeURIComponent(src));
 export const fetchSummaryStatus = () => req<SummaryJob>('/api/summary-status');
 
 /* mutation は表示言語も送る(AI 要約の生成言語・builtin 説明の解決に使われる) */
@@ -60,6 +64,15 @@ export const summarizeSkill = (src: string, name: string) =>
 export const summarizeAll = (force = false) => mutate<SummaryJob>('/api/summarize-all', { force });
 /* What's Changed の「既読にする」: 現在の状態を次回比較の基準として保存 */
 export const ackChanges = () => mutate<{ ok: true }>('/api/changes-ack', {});
+export const saveFile = (src: string, content: string, baseMtime: number) =>
+  mutate<{ ok: true; mtime: number }>('/api/save', { src, content, baseMtime });
+export const applyDescription = (src: string, description: string) =>
+  mutate<{ ok: true; mtime: number }>('/api/apply-description', { src, description });
+export const diagnoseSkill = (src: string, name: string) =>
+  mutate<{ ok: true } & import('../../src/shared/types').SkillDiagnosis>('/api/diagnose', {
+    src,
+    name,
+  });
 
 /* ---- item key / URL id ---- */
 
