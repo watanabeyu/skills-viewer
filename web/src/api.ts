@@ -2,6 +2,7 @@
 
 import type { SkillItem, SkillsData, SummaryJob } from '../../src/shared/types';
 import { apiErrorMessage, getLang } from './i18n';
+import { loadAiModel } from './settings';
 
 export type {
   ChangeEntry,
@@ -10,6 +11,9 @@ export type {
   Lang,
   RelationType,
   SkillDiagnosis,
+  SkillFlow,
+  SkillFlowStep,
+  SkillGroup,
   SkillRelation,
   SkillItem,
   SnapshotChanges,
@@ -41,12 +45,16 @@ export const fetchFileFull = (src: string) =>
   req<{ content: string; mtime: number }>('/api/file?src=' + encodeURIComponent(src));
 export const fetchSummaryStatus = () => req<SummaryJob>('/api/summary-status');
 
-/* mutation は表示言語も送る(AI 要約の生成言語・builtin 説明の解決に使われる) */
+/*
+ * mutation は表示言語と AI モデル設定も送る(言語は AI 生成・builtin 説明の解決、
+ * モデルは要約/診断/グルーピングの claude 呼び出しに使われる。AI を使わない
+ * エンドポイントではサーバー側で無視される)
+ */
 function mutate<T>(path: string, payload: Record<string, unknown>): Promise<T> {
   return req<T>(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-csb-token': token },
-    body: JSON.stringify({ ...payload, lang: getLang() }),
+    body: JSON.stringify({ ...payload, lang: getLang(), model: loadAiModel() }),
   });
 }
 
@@ -62,6 +70,8 @@ export const openSkill = (src: string) =>
 export const summarizeSkill = (src: string, name: string) =>
   mutate<{ ok: true; summary: string }>('/api/summarize', { src, name });
 export const summarizeAll = (force = false) => mutate<SummaryJob>('/api/summarize-all', { force });
+/* 用途グループの生成/再生成(環境全体で 1 回の haiku 呼び出し。完了までブロック) */
+export const generateGroups = () => mutate<{ ok: true }>('/api/group-generate', {});
 /* What's Changed の「既読にする」: 現在の状態を次回比較の基準として保存 */
 export const ackChanges = () => mutate<{ ok: true }>('/api/changes-ack', {});
 export const saveFile = (src: string, content: string, baseMtime: number) =>
@@ -73,6 +83,8 @@ export const diagnoseSkill = (src: string, name: string) =>
     src,
     name,
   });
+export const flowSkill = (src: string, name: string) =>
+  mutate<{ ok: true } & import('../../src/shared/types').SkillFlow>('/api/flow', { src, name });
 
 /* ---- item key / URL id ---- */
 

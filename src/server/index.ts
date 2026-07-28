@@ -16,6 +16,7 @@ import { scanUsageByDir, encodeProjectPath } from './usage';
 import {
   loadSummaries,
   contentHash,
+  modelOf,
   summarizeOne,
   saveSummary,
   staleItems,
@@ -25,6 +26,8 @@ import {
 import { assertReadableMd, doCopy, doDelete, openInEditor } from './manage';
 import { doApplyDescription, doSave } from './edit';
 import { attachDiagnoses, diagnoseOne } from './diagnose';
+import { attachFlows, flowOne } from './flow';
+import { attachGroups, generateGroups } from './groups';
 import { ackChanges, computeChanges } from './snapshot';
 import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
@@ -133,6 +136,8 @@ function collect(cwd: string, lang: Lang): SkillsData {
     }
   }
   attachDiagnoses(sections, lang);
+  attachFlows(sections, lang);
+  const grp = attachGroups(sections, lang);
   const aiStale = staleItems(sections, lang).length;
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
@@ -148,6 +153,8 @@ function collect(cwd: string, lang: Lang): SkillsData {
     aiStale,
     usageAvailable,
     changes: computeChanges(sections),
+    ...(grp.groups ? { groups: grp.groups } : {}),
+    ...(grp.stale ? { groupsStale: true } : {}),
   };
 }
 
@@ -221,14 +228,23 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       return send(400, { error: 'bad-json', detail: '' });
     }
     const lang = langOf(data.lang);
+    const model = modelOf(data.model);
     try {
       if (url.pathname === '/api/save') return send(200, doSave(data));
       if (url.pathname === '/api/apply-description') return send(200, doApplyDescription(data));
       if (url.pathname === '/api/diagnose') {
         const real = assertReadableMd(data.src);
         const name = data.name || path.basename(path.dirname(real));
-        diagnoseOne(real, name, lang)
+        diagnoseOne(real, name, lang, model)
           .then((d) => send(200, { ok: true, ...d }))
+          .catch((e) => send(400, toErrorBody(e)));
+        return;
+      }
+      if (url.pathname === '/api/flow') {
+        const real = assertReadableMd(data.src);
+        const name = data.name || path.basename(path.dirname(real));
+        flowOne(real, name, lang, model)
+          .then((f) => send(200, { ok: true, ...f }))
           .catch((e) => send(400, toErrorBody(e)));
         return;
       }
@@ -240,16 +256,23 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       if (url.pathname === '/api/delete') return send(200, doDelete(data));
       if (url.pathname === '/api/open') return send(200, openInEditor(data));
       if (url.pathname === '/api/summarize-all')
-        return send(200, startSummarizeAll(scanSections(cwd, lang), !!data.force, lang));
+        return send(200, startSummarizeAll(scanSections(cwd, lang), !!data.force, lang, model));
+      if (url.pathname === '/api/group-generate') {
+        // 環境全体で 1 回の claude 呼び出し。完了時にグループ集合を返す(割当は再取得で反映)
+        generateGroups(scanSections(cwd, lang), lang, model)
+          .then((r) => send(200, { ok: true, groups: r.groups }))
+          .catch((e) => send(400, toErrorBody(e)));
+        return;
+      }
       if (url.pathname === '/api/summarize') {
         const real = assertReadableMd(data.src);
         // refs(関係候補)はスキャン結果から復元する
         const sections = scanSections(cwd, lang);
         const item = sections.flatMap((s) => s.items).find((x) => x.path === real);
         const name = data.name || item?.name || path.basename(path.dirname(real));
-        summarizeOne({ path: real, name, refs: item?.refs || [] }, lang)
+        summarizeOne({ path: real, name, refs: item?.refs || [] }, lang, model)
           .then((analysis) => {
-            saveSummary(real, name, analysis, lang);
+            saveSummary(real, name, analysis, lang, model);
             send(200, { ok: true, ...analysis });
           })
           .catch((e) => send(400, toErrorBody(e)));

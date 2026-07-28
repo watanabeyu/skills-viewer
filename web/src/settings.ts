@@ -28,6 +28,31 @@ export function saveEditorSetting(s: EditorSetting): void {
   localStorage.setItem(KEY, JSON.stringify(s));
 }
 
+/* ---- AI 機能に使うモデル(claude CLI のエイリアス。実体は CLI 側の解決に従う) ---- */
+
+export type AiModel = 'haiku' | 'sonnet' | 'opus';
+export const AI_MODELS: AiModel[] = ['haiku', 'sonnet', 'opus'];
+
+const MODEL_KEY = 'csb-ai-model';
+
+export function loadAiModel(): AiModel {
+  try {
+    const v = localStorage.getItem(MODEL_KEY);
+    if (v === 'haiku' || v === 'sonnet' || v === 'opus') return v;
+  } catch {
+    /* ブラウザ外(テスト等)は既定 */
+  }
+  return 'haiku';
+}
+
+export function saveAiModel(m: AiModel): void {
+  try {
+    localStorage.setItem(MODEL_KEY, m);
+  } catch {
+    /* ブラウザ外では何もしない */
+  }
+}
+
 /* URL スキームを組み立てる。system(OS デフォルト)は null → サーバー側 /api/open に委譲 */
 export function editorUrl(s: EditorSetting, path: string): string | null {
   if (s.mode === 'system') return null;

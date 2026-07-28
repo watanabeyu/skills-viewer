@@ -1,4 +1,4 @@
-import type { Section, SkillItem, Source } from './api';
+import type { Section, SkillGroup, SkillItem, Source } from './api';
 import { itemKey } from './api';
 import { t } from './i18n';
 
@@ -16,6 +16,9 @@ export const SRC_TINT: Record<Source, string> = {
 };
 
 export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
+
+/* 一覧の表示軸: ソース別(置き場所)/ 用途別(AI グルーピング)/ フラット */
+export type ViewMode = 'source' | 'group' | 'flat';
 
 export interface FlatItem extends SkillItem {
   key: string;
@@ -84,6 +87,49 @@ export const usageMatches = (it: SkillItem, f: UseFilter, usageAvailable: boolea
   if (f === 'unused') return isUnused(it, usageAvailable);
   return true;
 };
+
+/* 用途別表示の1グループ(手動 category 由来 or AI 生成 or その他) */
+export interface PurposeGroup {
+  id: string;
+  label: string;
+  emoji?: string;
+  manual?: boolean;
+  items: FlatItem[];
+}
+
+/*
+ * 用途グループ別に集約する。表示順は 手動 category(名前順)→ AI グループ(サーバー順)→ その他。
+ * 割当が無い/未知グループを指す/hook のアイテムは「その他」に落とす(隠さない)。
+ * items の並び順は保持する(呼び出し側で sortItems 済みの前提)。
+ */
+export function groupByPurpose(
+  items: FlatItem[],
+  groups: SkillGroup[] | undefined,
+): PurposeGroup[] {
+  const manual = new Map<string, FlatItem[]>();
+  const ai = new Map<string, FlatItem[]>();
+  const other: FlatItem[] = [];
+  const known = new Set((groups || []).map((g) => g.id));
+  for (const it of items) {
+    if (it.category) {
+      if (!manual.has(it.category)) manual.set(it.category, []);
+      manual.get(it.category)!.push(it);
+    } else if (it.aiGroup && known.has(it.aiGroup)) {
+      if (!ai.has(it.aiGroup)) ai.set(it.aiGroup, []);
+      ai.get(it.aiGroup)!.push(it);
+    } else {
+      other.push(it);
+    }
+  }
+  const out: PurposeGroup[] = [...manual.keys()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((cat) => ({ id: 'cat:' + cat, label: cat, manual: true, items: manual.get(cat)! }));
+  for (const g of groups || []) {
+    if (ai.has(g.id)) out.push({ ...g, items: ai.get(g.id)! });
+  }
+  if (other.length) out.push({ id: '__other', label: t('group.other'), items: other });
+  return out;
+}
 
 /* 同名の別定義(diff 比較の対象)。short name で突き合わせ、hook は対象外 */
 export function sameNameOthers<T extends SkillItem & { key: string }>(it: T, all: T[]): T[] {

@@ -1,7 +1,9 @@
 /*
- * AI 要約 + 起動分類: claude CLI headless (haiku) で SKILL.md を分析し、
- * 内容ハッシュをキーに ~/.cache/skills-viewer/summaries.json へキャッシュ。
+ * AI 要約 + 起動分類: claude CLI headless(既定 haiku。設定でモデル変更可)で SKILL.md を
+ * 分析し、内容ハッシュをキーに ~/.cache/skills-viewer/summaries.json へキャッシュ。
  * ハッシュが一致する限り再生成しない(mtime でなくハッシュなので同期や clone に強い)。
+ * モデルはキャッシュキーに含めない: 切替だけで全件 stale になるのを避け、
+ * 置き換えたい場合は強制再生成を使う(生成時のモデルは記録する)。
  */
 
 import * as fs from 'node:fs';
@@ -10,6 +12,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import type {
+  AiModel,
   Invocation,
   Lang,
   RelationType,
@@ -40,6 +43,8 @@ interface CacheEntry extends Partial<SkillAnalysis> {
   summary: string;
   generatedAt: string;
   lang?: Lang;
+  /* 生成に使ったモデル(記録のみ。stale 判定には使わない) */
+  model?: AiModel;
 }
 
 type SummaryStore = Record<string, CacheEntry>;
@@ -130,22 +135,32 @@ function buildPrompt(it: SummarizeTarget, refs: string[], content: string, lang:
   );
 }
 
+/* クライアント指定のモデルを許可リストで検証(不明値は既定の haiku に落とす) */
+export function modelOf(v: unknown): AiModel {
+  return v === 'sonnet' || v === 'opus' ? v : 'haiku';
+}
+
 /*
- * claude CLI headless (haiku) にプロンプトを渡して生テキストを得る共通実行部。
+ * claude CLI headless にプロンプトを渡して生テキストを得る共通実行部。
+ * モデルはエイリアス指定(haiku / sonnet / opus)で、実体は CLI 側の解決に従う。
  * --tools '' で全ツールを無効化: SKILL.md は clone したリポジトリ由来もあり得るため、
  * 本文に指示が仕込まれていても純粋なテキスト生成の外に出られないようにする
  */
-export function runHaiku(prompt: string): Promise<string> {
+export function runClaude(
+  prompt: string,
+  model: AiModel = 'haiku',
+  timeoutMs = 120000,
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('claude', ['-p', '--model', 'haiku', '--tools', ''], {
+    const child = spawn('claude', ['-p', '--model', model, '--tools', ''], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let out = '',
       errOut = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error('timeout (120s)'));
-    }, 120000);
+      reject(new Error(`timeout (${Math.round(timeoutMs / 1000)}s)`));
+    }, timeoutMs);
     child.stdout.on('data', (d) => {
       out += d;
     });
@@ -168,13 +183,17 @@ export function runHaiku(prompt: string): Promise<string> {
 }
 
 /*
- * 1 skill を haiku で分析し {summary, invocation, invocationReason, relations} を返す。
+ * 1 skill を分析し {summary, invocation, invocationReason, relations} を返す。
  * relations の候補(refs)は静的解析で抽出済みの既知 skill 名のみに制限し、幻覚を防ぐ。
  */
-export async function summarizeOne(it: SummarizeTarget, lang: Lang): Promise<SkillAnalysis> {
+export async function summarizeOne(
+  it: SummarizeTarget,
+  lang: Lang,
+  model: AiModel = 'haiku',
+): Promise<SkillAnalysis> {
   const content = fs.readFileSync(it.path, 'utf8').slice(0, 12000);
   const refs = it.refs || [];
-  const text = await runHaiku(buildPrompt(it, refs, content, lang));
+  const text = await runClaude(buildPrompt(it, refs, content, lang), model);
   return parseAnalysis(text, refs);
 }
 
@@ -215,6 +234,7 @@ export function saveSummary(
   name: string,
   analysis: SkillAnalysis,
   lang: Lang,
+  model: AiModel = 'haiku',
 ): void {
   const summaries = loadSummaries();
   summaries[realPath] = {
@@ -226,6 +246,7 @@ export function saveSummary(
     relations: analysis.relations,
     generatedAt: new Date().toISOString(),
     lang,
+    model,
   };
   saveSummaries(summaries);
 }
@@ -259,7 +280,12 @@ export function staleItems(sections: Section[], lang: Lang): SummarizeTarget[] {
 
 let summaryJob: SummaryJob | null = null;
 
-export function startSummarizeAll(sections: Section[], force: boolean, lang: Lang): SummaryJob {
+export function startSummarizeAll(
+  sections: Section[],
+  force: boolean,
+  lang: Lang,
+  model: AiModel = 'haiku',
+): SummaryJob {
   if (summaryJob && !summaryJob.finished) return summaryJob;
   const items = force ? summarizableItems(sections) : staleItems(sections, lang);
   summaryJob = {
@@ -278,8 +304,8 @@ export function startSummarizeAll(sections: Section[], force: boolean, lang: Lan
         const it = items[idx++];
         job.current = it.name;
         try {
-          const analysis = await summarizeOne(it, lang);
-          saveSummary(it.path, it.name, analysis, lang);
+          const analysis = await summarizeOne(it, lang, model);
+          saveSummary(it.path, it.name, analysis, lang, model);
         } catch (e) {
           job.errors.push(it.name + ': ' + (e instanceof Error ? e.message : String(e)));
         }

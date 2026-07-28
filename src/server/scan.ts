@@ -113,6 +113,7 @@ function readSkillDir(dir: string, nameHint: string): ScanItem | null {
     path: skillMd,
     updatedAt: fileMtime(skillMd),
     files: listFiles(dir).sort(),
+    ...(meta.category ? { category: meta.category } : {}),
     ...(lint.length ? { lint } : {}),
     _body: body, // 参照抽出用(scanSections で refs 化して破棄)
   };
@@ -154,6 +155,7 @@ function scanMdRoot(root: string, kind: 'command' | 'agent'): ScanItem[] {
       path: fp,
       updatedAt: fileMtime(fp),
       files: [entry.name],
+      ...(meta.category ? { category: meta.category } : {}),
       ...(lint.length ? { lint } : {}),
       _body: body,
     });

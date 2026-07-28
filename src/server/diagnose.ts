@@ -7,8 +7,8 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { Lang, Section, SkillDiagnosis } from '../shared/types';
-import { contentHash, runHaiku } from './summary';
+import type { AiModel, Lang, Section, SkillDiagnosis } from '../shared/types';
+import { contentHash, runClaude } from './summary';
 
 const DIAG_FILE = path.join(os.homedir(), '.cache', 'skills-viewer', 'diagnoses.json');
 
@@ -16,6 +16,8 @@ interface DiagEntry extends SkillDiagnosis {
   hash: string | null;
   lang: Lang;
   generatedAt: string;
+  /* 生成に使ったモデル(記録のみ。stale 判定には使わない) */
+  model?: AiModel;
 }
 type DiagStore = Record<string, DiagEntry>;
 
@@ -85,6 +87,7 @@ export async function diagnoseOne(
   realPath: string,
   name: string,
   lang: Lang,
+  model: AiModel = 'haiku',
 ): Promise<SkillDiagnosis> {
   const hash = contentHash(realPath);
   const store = loadDiagnoses();
@@ -93,8 +96,8 @@ export async function diagnoseOne(
     return { verdict: cached.verdict, issues: cached.issues, improved: cached.improved };
   }
   const content = fs.readFileSync(realPath, 'utf8').slice(0, 12000);
-  const result = parseDiagnosis(await runHaiku(buildPrompt(name, content, lang)));
-  store[realPath] = { ...result, hash, lang, generatedAt: new Date().toISOString() };
+  const result = parseDiagnosis(await runClaude(buildPrompt(name, content, lang), model));
+  store[realPath] = { ...result, hash, lang, model, generatedAt: new Date().toISOString() };
   saveDiagnoses(store);
   return result;
 }

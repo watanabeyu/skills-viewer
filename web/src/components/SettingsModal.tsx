@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import {
+  AI_MODELS,
   EDITOR_PRESETS,
+  loadAiModel,
   loadEditorSetting,
+  saveAiModel,
   saveEditorSetting,
+  type AiModel,
   type EditorSetting,
 } from '../settings';
-import { t, type Lang } from '../i18n';
+import { t, type Lang, type MsgKey } from '../i18n';
 
 const LANGS: [Lang, string][] = [
   ['ja', '日本語'],
@@ -26,6 +30,7 @@ export function SettingsModal({
   onClose: () => void;
 }) {
   const [setting, setSetting] = useState<EditorSetting>(loadEditorSetting);
+  const [aiModel, setAiModel] = useState<AiModel>(loadAiModel);
 
   const save = () => {
     if (setting.mode === 'custom' && !(setting.template || '').includes('{path}')) {
@@ -33,6 +38,7 @@ export function SettingsModal({
       return;
     }
     saveEditorSetting(setting);
+    saveAiModel(aiModel);
     onClose();
   };
 
@@ -83,6 +89,23 @@ export function SettingsModal({
             <span>{t('settings.widthFixed')}</span>
             <span className="set-scheme">{t('settings.widthFixedNote')}</span>
           </label>
+        </div>
+
+        <div className="set-label">{t('settings.aiModel')}</div>
+        <div className="set-options">
+          {AI_MODELS.map((m) => (
+            <label key={m} className="set-option">
+              <input
+                type="radio"
+                name="ai-model"
+                checked={aiModel === m}
+                onChange={() => setAiModel(m)}
+              />
+              <span>{m}</span>
+              <span className="set-scheme">{t(`settings.aiModelNote.${m}` as MsgKey)}</span>
+            </label>
+          ))}
+          <div className="set-note">{t('settings.aiModelHint')}</div>
         </div>
 
         <div className="set-label">{t('settings.editor')}</div>

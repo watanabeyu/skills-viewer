@@ -12,7 +12,6 @@ const en = {
   'app.subtitle': 'skills · commands · agents · hooks — installed on this machine',
   'app.count': '{shown} / {total} items',
   'app.searchPlaceholder': 'Search by name or description…',
-  'app.grouped': 'Group by source',
   'app.settings': 'Settings',
   'app.loadFailed': 'Failed to load: {msg}',
 
@@ -35,12 +34,35 @@ const en = {
   'ai.stale': 'AI summaries ({n} pending)',
   'ai.done': 'AI summaries ✓',
   'ai.buttonTitle':
-    'Summarize each SKILL.md via claude CLI (haiku). Only changed ones are regenerated',
-  'ai.confirmForce':
-    'All summaries are up to date. Force-regenerate all {n} items? (claude CLI / haiku)',
-  'ai.confirmRun': 'Summarize {n} SKILL.md files via claude CLI (haiku)?',
+    'Summarize each SKILL.md via claude CLI (model configurable in Settings). Only changed ones are regenerated',
+  'ai.confirmForce': 'All summaries are up to date. Force-regenerate all {n} items? (claude CLI)',
+  'ai.confirmRun': 'Summarize {n} SKILL.md files via claude CLI?',
   'ai.finishedErrors': 'Summarization finished ({n} errors):',
   'ai.startFailed': 'Failed to start: {msg}',
+
+  'view.source': 'By source',
+  'view.group': 'By purpose',
+  'view.flat': 'Flat',
+  'view.title': 'View: where items live / when to use them / one flat list',
+  'filter.kindPrefix': 'Kind: {v}',
+  'filter.usePrefix': 'Use: {v}',
+  'ai.menu': '✦ AI',
+  'ai.menuTitle': 'AI actions: summaries and purpose grouping (claude CLI)',
+  'group.other': 'Other',
+  'group.manual': 'manual',
+  'group.manualTitle':
+    'Fixed via "category" in the frontmatter (takes precedence over AI grouping)',
+  'group.generate': '✦ Classify by purpose (AI)',
+  'group.generating': 'Classifying…',
+  'group.generateTitle':
+    'Group everything installed by when to use it, via one claude CLI call for the whole environment',
+  'group.empty':
+    'No purpose groups yet. One claude CLI call classifies everything installed by when to use it.',
+  'group.stale': 'Items changed since the last classification',
+  'group.staleAction': 'reclassify from the ✦ AI menu',
+  'group.menuGenerate': 'Generate purpose groups',
+  'group.menuRegen': 'Reclassify purpose groups',
+  'alert.groupFailed': 'Classification failed: {msg}',
 
   'list.empty': 'No skills match the filters',
   'card.uses': 'Used {n}× · last {date}',
@@ -95,7 +117,7 @@ const en = {
   'diag.rerun': 'Re-diagnose',
   'diag.running': 'Diagnosing…',
   'diag.runTitle':
-    'Analyze via claude CLI (haiku) whether the description is likely to trigger auto-invocation, and propose an improved version',
+    'Analyze via claude CLI whether the description is likely to trigger auto-invocation, and propose an improved version',
   'diag.verdict.good': '✓ Trigger condition looks clear',
   'diag.verdict.weak': '△ Auto-invocation unlikely as written',
   'diag.improved': 'Suggested description',
@@ -103,6 +125,17 @@ const en = {
   'diag.applying': 'Applying…',
   'alert.diagnoseFailed': 'Diagnosis failed: {msg}',
   'alert.applyFailed': 'Failed to apply: {msg}',
+
+  'detail.flow': 'Flow',
+  'flow.emptyHint':
+    'No diagram yet. Extract the processing flow (steps, branches, delegations, human gates) from the definition body via claude CLI.',
+  'flow.run': 'Diagram the flow (AI)',
+  'flow.rerun': 'Re-extract flow',
+  'flow.running': 'Extracting…',
+  'flow.runTitle':
+    'Extract the processing flow (steps, branches, delegations, human gates) from the definition body via claude CLI and render it as a diagram',
+  'flow.gateHuman': 'human gate',
+  'alert.flowFailed': 'Flow extraction failed: {msg}',
 
   'edit.button': 'Edit',
   'edit.save': 'Save',
@@ -142,6 +175,12 @@ const en = {
 
   'settings.title': 'Settings',
   'settings.language': 'Language',
+  'settings.aiModel': 'Model for AI features (summaries / diagnosis / grouping)',
+  'settings.aiModelNote.haiku': 'Fast and cheap (default)',
+  'settings.aiModelNote.sonnet': 'Higher quality; slower and costlier',
+  'settings.aiModelNote.opus': 'Highest quality; slowest and most expensive',
+  'settings.aiModelHint':
+    'Aliases resolved by your claude CLI. Applies to new generations only — cached results stay until regenerated (force-rerun from ✦ AI to replace them)',
   'settings.width': 'Layout width',
   'settings.widthFull': 'Full width',
   'settings.widthFullNote': '4–5 columns on wide screens',
@@ -191,7 +230,6 @@ const ja: Record<MsgKey, string> = {
   'app.subtitle': 'skills · commands · agents · hooks — このPCにインストール済み',
   'app.count': '{shown} / {total} 件',
   'app.searchPlaceholder': 'スキル名や説明で検索…',
-  'app.grouped': 'グループ化',
   'app.settings': '設定',
   'app.loadFailed': '読み込みに失敗しました: {msg}',
 
@@ -211,12 +249,35 @@ const ja: Record<MsgKey, string> = {
   'ai.progress': '要約中 {done}/{total}',
   'ai.stale': 'AI要約 (未生成 {n})',
   'ai.done': 'AI要約 ✓',
-  'ai.buttonTitle': 'claude CLI (haiku) で各 SKILL.md を要約。内容が変わったものだけ再生成',
-  'ai.confirmForce':
-    '全 skill の要約は最新です。全 {n} 件を強制再生成しますか?(claude CLI / haiku)',
-  'ai.confirmRun': '{n} 件の SKILL.md を claude CLI (haiku) で要約します。よろしいですか?',
+  'ai.buttonTitle':
+    'claude CLI で各 SKILL.md を要約(モデルは設定で変更可)。内容が変わったものだけ再生成',
+  'ai.confirmForce': '全 skill の要約は最新です。全 {n} 件を強制再生成しますか?(claude CLI)',
+  'ai.confirmRun': '{n} 件の SKILL.md を claude CLI で要約します。よろしいですか?',
   'ai.finishedErrors': '要約完了(エラー {n}件):',
   'ai.startFailed': '開始に失敗: {msg}',
+
+  'view.source': 'ソース別',
+  'view.group': '用途別',
+  'view.flat': 'フラット',
+  'view.title': '表示軸: 置き場所別 / 使いどき別 / 1つのリスト',
+  'filter.kindPrefix': '種類: {v}',
+  'filter.usePrefix': '使用: {v}',
+  'ai.menu': '✦ AI',
+  'ai.menuTitle': 'AI 操作: 要約と用途グルーピング(claude CLI)',
+  'group.other': 'その他',
+  'group.manual': '手動',
+  'group.manualTitle': 'frontmatter の category による手動指定(AI 分類より優先)',
+  'group.generate': '✦ 用途で分類 (AI)',
+  'group.generating': '分類中…',
+  'group.generateTitle':
+    'インストール済みの全アイテムを「いつ使うか」で分類します(環境全体で claude CLI を1回呼び出し)',
+  'group.empty':
+    'まだ用途グループがありません。claude CLI の1回の呼び出しで、インストール済みの全アイテムを「いつ使うか」で分類します。',
+  'group.stale': '前回の分類後にスキル構成が変わっています',
+  'group.staleAction': '「✦ AI」メニューから再分類できます',
+  'group.menuGenerate': '用途グループを生成',
+  'group.menuRegen': '用途グループを再分類',
+  'alert.groupFailed': '分類に失敗: {msg}',
 
   'list.empty': '条件に一致するスキルがありません',
   'card.uses': '使用 {n}回 · 最終 {date}',
@@ -270,8 +331,7 @@ const ja: Record<MsgKey, string> = {
   'diag.run': 'AI 発動診断',
   'diag.rerun': '再診断',
   'diag.running': '診断中…',
-  'diag.runTitle':
-    'description が自動発動につながるかを claude CLI (haiku) で分析し、改善案を提案します',
+  'diag.runTitle': 'description が自動発動につながるかを claude CLI で分析し、改善案を提案します',
   'diag.verdict.good': '✓ 発動条件は明確です',
   'diag.verdict.weak': '△ このままでは自動発動されにくい可能性',
   'diag.improved': '改善案',
@@ -279,6 +339,17 @@ const ja: Record<MsgKey, string> = {
   'diag.applying': '適用中…',
   'alert.diagnoseFailed': '診断に失敗: {msg}',
   'alert.applyFailed': '適用に失敗: {msg}',
+
+  'detail.flow': 'フロー',
+  'flow.emptyHint':
+    'まだ図解がありません。定義本文から処理フロー(ステップ・分岐・委譲・人間ゲート)を claude CLI で抽出します。',
+  'flow.run': 'フローを図解 (AI)',
+  'flow.rerun': 'フローを再抽出',
+  'flow.running': '抽出中…',
+  'flow.runTitle':
+    '定義本文から処理フロー(ステップ・分岐・委譲・人間ゲート)を claude CLI で抽出し、図として表示します',
+  'flow.gateHuman': '人間ゲート',
+  'alert.flowFailed': 'フロー抽出に失敗: {msg}',
 
   'edit.button': '編集',
   'edit.save': '保存',
@@ -318,6 +389,12 @@ const ja: Record<MsgKey, string> = {
 
   'settings.title': '設定',
   'settings.language': '言語',
+  'settings.aiModel': 'AI 機能のモデル(要約 / 診断 / グルーピング)',
+  'settings.aiModelNote.haiku': '速い・安価(既定)',
+  'settings.aiModelNote.sonnet': '高品質。やや遅く高コスト',
+  'settings.aiModelNote.opus': '最高品質。最も遅く高コスト',
+  'settings.aiModelHint':
+    'claude CLI のエイリアスとして解決されます。次回の生成から適用され、生成済みキャッシュはそのまま残ります(置き換えたい場合は ✦ AI から強制再生成)',
   'settings.width': '表示幅',
   'settings.widthFull': 'フル幅',
   'settings.widthFullNote': '広い画面では 4〜5 カラム',

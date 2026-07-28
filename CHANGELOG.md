@@ -3,6 +3,31 @@
 All notable changes to this project are documented here, in English followed by Japanese.
 このファイルには主要な変更を記録します(英語の後に日本語を併記)。
 
+## [0.6.0] - 2026-07-28
+
+Skills now group by _when you use them_, not just where they live.
+スキルを「どこにあるか」だけでなく「いつ使うか」でも眺められるようになりました。
+
+### Added
+
+- **Purpose grouping (AI)** — a single `claude -p` (haiku) call reads every installed item (name + description, deduplicated by name so same-name items across scopes land in the same group) and proposes 4–8 purpose groups generated for _your_ environment, assigning each item to one. The prompt only carries a role-agnostic workflow axis (planning / building / review / release / research / operations) as a granularity guide — group names themselves are not baked into the product, so non-engineering skill sets get fitting groups too. Cached per language in `~/.cache/skills-viewer/groups.json`; when items change afterwards, the view shows a _reclassify_ hint instead of silently re-running AI.
+  **用途グルーピング (AI)** — `claude -p`(haiku)の1回の呼び出しでインストール済み全アイテム(name + description。name で重複排除するので、スコープ違いの同名定義は同じグループに落ちる)を読み、その環境に合わせた 4〜8 個の用途グループを生成して各アイテムを割り当てます。プロンプトに渡すのは職種非依存の工程軸(企画・要件 / 制作・実装 / レビュー・検証 / リリース・共有 / 調査・分析 / 記録・運用)という粒度ガイドだけで、グループ名はプロダクトに焼き込みません — エンジニア以外のスキル群にもその分野のグループが生えます。言語ごとに `~/.cache/skills-viewer/groups.json` へキャッシュし、その後アイテム構成が変わったら AI を勝手に再実行せず「再分類」の導線を表示します。
+- **View axis** — the list switches between _By source_ / _By purpose_ / _Flat_ (`?view=group|flat`; old `?grouped=0` links are still interpreted as flat). The by-purpose view keeps the source sections (each repository / user / plugins / built-ins) and subdivides each of them by purpose, so you can see e.g. one repository's own planning / review / release breakdown. The detail pane's left column follows the same axis, and the item's group shows as a badge in the detail header.
+  **表示軸** — 一覧を「ソース別 / 用途別 / フラット」で切替(`?view=group|flat`。旧 `?grouped=0` の URL はフラットとして解釈)。用途別はソースセクション(各リポジトリ / user / plugin / built-in)の枠を保ったまま、その中を用途グループで小分けします — リポジトリごとの企画・要件 / レビュー / リリースの内訳がそのまま見えます。詳細画面の左カラムも同じ軸に追従し、所属グループは詳細ヘッダにバッジ表示されます。
+- **Manual `category`** — a `category:` field in the frontmatter pins the item to that group (shown with a _manual_ badge), takes precedence over AI grouping, and is excluded from AI classification. The value is not normalized: the same string means the same group, so teams can standardize via convention.
+  **手動 `category`** — frontmatter の `category:` でグループを固定(「手動」バッジ付き)。AI 分類より優先され、AI 分類の対象からも外れます。値は正規化しません(同じ文字列 = 同じグループ)。チームで揃えたい場合は文字列の運用で統一してください。
+- **AI flow diagram** — a new _Flow_ tab in the detail pane (Overview | Flow | SKILL.md; marked ✦ once generated, and the selected tab sticks while browsing items). For orchestration-style skills (e.g. a kickoff command that checks readiness, creates a worktree, delegates to another skill and waits for approval), one click extracts the processing flow from the definition body and renders it as a vertical step diagram: steps, abort/fallback branches, delegated skills as clickable chips, and highlighted _human gates_. On-demand per item, cached by content hash + language. Rendered with plain CSS — no diagram library, zero runtime dependencies kept.
+  **AI フロー図解** — 詳細画面に「フロー」タブを新設(概要 | フロー | SKILL.md。生成済みは ✦ 付き、選択タブはアイテムを切り替えても維持)。オーケストレーション型の skill(ready 判定 → worktree 作成 → 他 skill へ委譲 → 承認待ち、のような kickoff 系)について、定義本文から処理フローをワンクリックで抽出し縦型ステップ図として表示します: ステップ・中断/フォールバック分岐・委譲先スキル(クリックで遷移)・**人間ゲート**の強調表示。アイテムごとのオンデマンド実行で content hash + 言語でキャッシュ。描画は CSS のみで図ライブラリ不使用(zero runtime dependency を維持)。
+- **AI model selection** — Settings now offers the model used by all AI features (summaries / trigger diagnosis / purpose grouping): `haiku` (default), `sonnet`, or `opus`, passed to the claude CLI as an alias and resolved by your installed CLI. Switching applies to new generations only; caches are kept (force-regenerate to replace) and record which model produced them.
+  **AI モデル選択** — AI 機能(要約 / 発動診断 / 用途グルーピング)に使うモデルを設定で選べるようになりました: `haiku`(既定)/ `sonnet` / `opus`。claude CLI にエイリアスとして渡され、実体は手元の CLI が解決します。切替は次回の生成から適用され、生成済みキャッシュは維持されます(置き換えは強制再生成。どのモデルで生成したかはキャッシュに記録)。
+
+### Changed
+
+- The _Group by source_ checkbox is replaced by the three-way view segment above.
+  「グループ化」チェックボックスは上記の3状態セグメントに置き換えました。
+- **Header cleanup** — the kind and usage filters turned from button segments into compact selects (highlighted while a filter is active), and the AI actions (summaries + purpose grouping) are consolidated into a single _✦ AI_ menu on the right. The view segment stays as the primary control.
+  **ヘッダー整理** — 種類・使用実績フィルタをボタン群からコンパクトな select に変更(絞り込み中は強調表示)。AI 操作(要約 + 用途グルーピング)は右端の「✦ AI」メニューに集約しました。表示軸セグメントは主要操作としてそのまま残しています。
+
 ## [0.5.0] - 2026-07-13
 
 The view → diagnose → **fix** loop now closes inside the tool.

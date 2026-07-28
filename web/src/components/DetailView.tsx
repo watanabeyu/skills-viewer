@@ -12,11 +12,13 @@ import {
   saveFile,
   summarizeSkill,
   toId,
+  type Section,
   type SkillsData,
 } from '../api';
 import {
   flatten,
   fmtDate,
+  groupByPurpose,
   isUnused,
   kindMatches,
   matches,
@@ -28,23 +30,33 @@ import {
   SRC_TINT,
   type FlatItem,
   type KindFilter,
+  type PurposeGroup,
   type SortKey,
   type UseFilter,
+  type ViewMode,
 } from '../util';
 import { editorUrl, loadEditorSetting } from '../settings';
 import { diffLines, type DiffLine } from '../diff';
 import { mdRender, splitFrontmatter } from '../md';
 import { lintLabel, relTypeLabel, t } from '../i18n';
-import { InvocationBadge, KindBadge, SectionHeading, UnusedBadge, WarnBadge } from './GridView';
+import {
+  GroupHeading,
+  InvocationBadge,
+  KindBadge,
+  SectionHeading,
+  UnusedBadge,
+  WarnBadge,
+} from './GridView';
 import { CopyMenu } from './CopyMenu';
 import { DeleteModal } from './DeleteModal';
+import { FlowSection } from './FlowDiagram';
 
 export function DetailView({
   data,
   all,
   q,
   sort,
-  grouped,
+  view,
   kind,
   use,
   onOpen,
@@ -54,7 +66,7 @@ export function DetailView({
   all: FlatItem[];
   q: string;
   sort: SortKey;
-  grouped: boolean;
+  view: ViewMode;
   kind: KindFilter;
   use: UseFilter;
   onOpen: (key: string) => void;
@@ -66,16 +78,20 @@ export function DetailView({
   const key = fromId(id || '');
   const it = all.find((x) => x.key === key);
 
-  const tab = params.get('tab') === 'md' && it?.hasMd ? 'md' : 'overview';
+  const tabParam = params.get('tab');
+  const tab = (tabParam === 'md' || tabParam === 'flow') && it?.hasMd ? tabParam : 'overview';
   const [copyOpen, setCopyOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
 
   if (!it) return <Navigate to={{ pathname: '/', search: params.toString() }} replace />;
 
+  // 所属する用途グループ(手動 category が最優先、無ければ AI 割当を解決)
+  const aiGroupDef = it.aiGroup ? data.groups?.find((g) => g.id === it.aiGroup) : undefined;
+
   const setTab = (tabName: string) => {
     const next = new URLSearchParams(params);
-    if (tabName === 'md') next.set('tab', 'md');
+    if (tabName === 'md' || tabName === 'flow') next.set('tab', tabName);
     else next.delete('tab');
     navigate({ pathname: '/skills/' + toId(it.key), search: next.toString() }, { replace: true });
   };
@@ -137,7 +153,7 @@ export function DetailView({
         data={data}
         q={q}
         sort={sort}
-        grouped={grouped}
+        view={view}
         kind={kind}
         use={use}
         selected={it.key}
@@ -155,6 +171,16 @@ export function DetailView({
             {it.source}
           </span>
           <InvocationBadge it={it} />
+          {(it.category || aiGroupDef) && (
+            <span
+              className="badge grp-badge"
+              title={it.category ? t('group.manualTitle') : t('view.group')}
+            >
+              {it.category
+                ? `📌 ${it.category} · ${t('group.manual')}`
+                : `${aiGroupDef!.emoji || '📁'} ${aiGroupDef!.label}`}
+            </span>
+          )}
           <UnusedBadge show={isUnused(it, data.usageAvailable)} />
           <WarnBadge it={it} />
           {it.version && <span className="m-ver">v{it.version}</span>}
@@ -201,6 +227,15 @@ export function DetailView({
             {t('tab.overview')}
           </button>
           {it.hasMd && (
+            <button
+              className={'tab' + (tab === 'flow' ? ' on' : '')}
+              onClick={() => setTab('flow')}
+            >
+              {/* 生成済みなら ✦ で「図がある」ことを示す */}
+              {(it.aiFlow ? '✦ ' : '') + t('detail.flow')}
+            </button>
+          )}
+          {it.hasMd && (
             <button className={'tab' + (tab === 'md' ? ' on' : '')} onClick={() => setTab('md')}>
               SKILL.md
             </button>
@@ -208,6 +243,8 @@ export function DetailView({
         </div>
         {tab === 'overview' ? (
           <OverviewTab it={it} all={all} onOpen={onOpen} reload={reload} />
+        ) : tab === 'flow' ? (
+          <FlowTab it={it} all={all} onOpen={onOpen} reload={reload} />
         ) : (
           <MdTab it={it} reload={reload} />
         )}
@@ -223,7 +260,7 @@ function LeftColumn({
   data,
   q,
   sort,
-  grouped,
+  view,
   kind,
   use,
   selected,
@@ -232,36 +269,75 @@ function LeftColumn({
   data: SkillsData;
   q: string;
   sort: SortKey;
-  grouped: boolean;
+  view: ViewMode;
   kind: KindFilter;
   use: UseFilter;
   selected: string;
   onOpen: (key: string) => void;
 }) {
-  const groups = useMemo(() => {
+  interface ColGroup {
+    key: string;
+    /* この塊の先頭に出すソース見出し(用途別ではセクションの最初の塊のみ) */
+    section: Section | null;
+    /* section 見出しに出す件数(用途別ではセクション全体の件数) */
+    sectionCount?: number;
+    purpose: PurposeGroup | null;
+    /* true ならカードに source ドット、false なら所属ラベル(フラット時) */
+    dotted: boolean;
+    items: FlatItem[];
+  }
+
+  const groups = useMemo<ColGroup[]>(() => {
     const pass = (it: FlatItem) =>
       kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, data.usageAvailable);
-    if (grouped) {
+    if (view === 'source') {
       return data.sections
-        .map((s) => ({ section: s, items: sortItems(flatten([s]).filter(pass), sort) }))
+        .map((s) => ({
+          key: s.id,
+          section: s,
+          purpose: null,
+          dotted: true,
+          items: sortItems(flatten([s]).filter(pass), sort),
+        }))
         .filter((g) => g.items.length > 0);
+    }
+    // 用途別: リポジトリ(セクション)→ 用途グループの入れ子(グループ未生成ならフラットに縮退)
+    if (view === 'group' && data.groups?.length) {
+      return data.sections.flatMap((s) => {
+        const pgs = groupByPurpose(sortItems(flatten([s]).filter(pass), sort), data.groups);
+        const total = pgs.reduce((n, g) => n + g.items.length, 0);
+        return pgs.map((g, i) => ({
+          key: s.id + ':' + g.id,
+          section: i === 0 ? s : null,
+          sectionCount: total,
+          purpose: g,
+          dotted: true,
+          items: g.items,
+        }));
+      });
     }
     return [
       {
+        key: 'flat',
         section: null,
+        purpose: null,
+        dotted: false,
         items: sortItems(flatten(data.sections).filter(pass), sort),
       },
     ];
-  }, [data, q, sort, grouped, kind, use]);
+  }, [data, q, sort, view, kind, use]);
 
   return (
     <div className="left-col">
-      {groups.map((g, gi) => (
-        <div key={g.section?.id ?? gi}>
-          {g.section ? (
-            <SectionHeading section={g.section} count={g.items.length} small />
+      {groups.map((g) => (
+        <div key={g.key}>
+          {g.section && (
+            <SectionHeading section={g.section} count={g.sectionCount ?? g.items.length} small />
+          )}
+          {g.purpose ? (
+            <GroupHeading g={g.purpose} count={g.items.length} small sub />
           ) : (
-            <div style={{ height: 18 }} />
+            !g.section && <div style={{ height: 18 }} />
           )}
           {g.items.map((it) => (
             <button
@@ -269,17 +345,15 @@ function LeftColumn({
               className={'ccard' + (it.key === selected ? ' sel' : '')}
               onClick={() => onOpen(it.key)}
             >
-              {/* グループ化オフのときは所属ラベルを出す(グリッドのカードと同じ体裁) */}
-              {!g.section && (
+              {/* フラット時は所属が見えないので所属ラベルを出す(グリッドのカードと同じ体裁) */}
+              {!g.dotted && (
                 <span className="scope-mini">
                   <span className="dot5" style={{ background: SRC_COLOR[it.source] }} />
                   {it.scopeLabel}
                 </span>
               )}
               <div className="r1">
-                {g.section && (
-                  <span className="dot7" style={{ background: SRC_COLOR[it.source] }} />
-                )}
+                {g.dotted && <span className="dot7" style={{ background: SRC_COLOR[it.source] }} />}
                 <span className="nm">{it.name}</span>
                 {it.version && <span className="ver">v{it.version}</span>}
               </div>
@@ -291,6 +365,30 @@ function LeftColumn({
       {!groups.length && <div className="empty">{t('list.empty')}</div>}
     </div>
   );
+}
+
+/* skill 名を既知アイテムに解決: 同一プロジェクト → user/plugin/built-in の順(他プロジェクトの同名は対象外) */
+function makeResolve(it: FlatItem, all: FlatItem[]): (name: string) => FlatItem | undefined {
+  return (name: string) => {
+    const hit = (pred: (x: FlatItem) => boolean) =>
+      all.find((x) => pred(x) && (x.name === name || x.name.split(':').pop() === name));
+    return hit((x) => x.secId === it.secId) || hit((x) => x.source !== 'project');
+  };
+}
+
+/* フロータブ: AI 抽出した処理フローの図解(生成ボタン込み。FlowSection に委譲) */
+function FlowTab({
+  it,
+  all,
+  onOpen,
+  reload,
+}: {
+  it: FlatItem;
+  all: FlatItem[];
+  onOpen: (key: string) => void;
+  reload: () => Promise<void>;
+}) {
+  return <FlowSection it={it} resolve={makeResolve(it, all)} onOpen={onOpen} reload={reload} />;
 }
 
 function OverviewTab({
@@ -308,12 +406,7 @@ function OverviewTab({
   const relations = it.aiRelations?.length
     ? it.aiRelations
     : (it.refs || []).map((name) => ({ name, type: 'references' as const, note: '' }));
-  // 同一プロジェクト → user/plugin/built-in の順で解決(他プロジェクトの同名 skill は対象外)
-  const resolve = (name: string) => {
-    const hit = (pred: (x: FlatItem) => boolean) =>
-      all.find((x) => pred(x) && (x.name === name || x.name.split(':').pop() === name));
-    return hit((x) => x.secId === it.secId) || hit((x) => x.source !== 'project');
-  };
+  const resolve = makeResolve(it, all);
 
   return (
     <div>

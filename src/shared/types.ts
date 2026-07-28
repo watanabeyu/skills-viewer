@@ -4,6 +4,8 @@ export type ItemKind = 'skill' | 'command' | 'agent' | 'hook';
 export type Source = 'built-in' | 'user' | 'project' | 'plugin';
 export type Invocation = 'human' | 'agent' | 'both';
 export type Lang = 'ja' | 'en';
+/* AI 機能(要約/診断/グルーピング)に使う claude CLI のモデルエイリアス */
+export type AiModel = 'haiku' | 'sonnet' | 'opus';
 /* 言語非依存のキー。表示ラベルは web 側の辞書で解決する */
 export type RelationType = 'invokes' | 'delegates' | 'called-by' | 'references';
 /* description の静的リント警告(言語非依存キー。表示ラベルは web 側の辞書で解決する) */
@@ -23,6 +25,31 @@ export interface SkillDiagnosis {
   improved: string;
 }
 
+/* AI グルーピングの1グループ。id は言語非依存スラッグ、label は表示言語で生成 */
+export interface SkillGroup {
+  id: string;
+  label: string;
+  emoji?: string;
+}
+
+/* AI フロー図解: SKILL.md から抽出した処理フロー(直列 + 分岐注記に制約) */
+export interface SkillFlowBranch {
+  when: string;
+  then: string;
+}
+export interface SkillFlowStep {
+  title: string;
+  detail: string;
+  /* このステップで起動/委譲する他 skill・外部ツール名 */
+  calls: string[];
+  /* human = 人間の確認/承認を待つステップ(UI で強調) */
+  gate: 'human' | 'auto' | null;
+  branches: SkillFlowBranch[];
+}
+export interface SkillFlow {
+  steps: SkillFlowStep[];
+}
+
 export interface SkillItem {
   name: string;
   description: string;
@@ -35,6 +62,10 @@ export interface SkillItem {
   refs?: string[];
   /* 静的リント警告(無警告のときは省略) */
   lint?: LintCode[];
+  /* frontmatter の category(手動グループ指定。AI 分類より優先され、AI 分類の対象外) */
+  category?: string;
+  /* AI 分類による所属グループ(SkillsData.groups の id)。name 単位の割当 */
+  aiGroup?: string;
   /* name + description が毎セッション注入される分のトークン概算(hook は対象外) */
   tokens?: number;
   useCount?: number;
@@ -45,6 +76,8 @@ export interface SkillItem {
   dailyUse?: Record<string, number>;
   aiSummary?: string;
   aiDiagnosis?: SkillDiagnosis;
+  /* キャッシュ済みの AI フロー図解(未生成なら省略。生成はオンデマンド) */
+  aiFlow?: SkillFlow;
   aiInvocation?: Invocation;
   aiInvocationReason?: string;
   aiRelations?: SkillRelation[];
@@ -92,6 +125,10 @@ export interface SkillsData {
   usageAvailable: boolean;
   /* 前回起動からの差分。初回起動・差分なし・既読済みは null */
   changes: SnapshotChanges | null;
+  /* AI グルーピングの結果(表示順)。未生成なら省略 */
+  groups?: SkillGroup[];
+  /* グループ生成後にアイテム構成(name + description)が変わったか(再分類を促す) */
+  groupsStale?: boolean;
 }
 
 export interface SummaryJob {

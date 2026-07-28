@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import type { SkillsData } from '../api';
-import { itemKey } from '../api';
+import { generateGroups, itemKey } from '../api';
 import {
   flatten,
   fmtDate,
+  groupByPurpose,
   headingOf,
   invocationLabel,
   invocationOf,
@@ -16,8 +18,10 @@ import {
   KIND_LABEL,
   SRC_COLOR,
   type KindFilter,
+  type PurposeGroup,
   type SortKey,
   type UseFilter,
+  type ViewMode,
 } from '../util';
 import { lintLabel, t } from '../i18n';
 import type { Section, SkillItem, Source } from '../api';
@@ -95,6 +99,65 @@ export function SectionHeading({
   );
 }
 
+export function GroupHeading({
+  g,
+  count,
+  small,
+  sub,
+}: {
+  g: PurposeGroup;
+  count: number;
+  small?: boolean;
+  /* セクション見出しの配下に出す小見出し(sticky 無し・インデント付き) */
+  sub?: boolean;
+}) {
+  return (
+    <div className={'sec-h' + (small ? ' sm' : '') + (sub ? ' sub' : '')}>
+      <span className="g-emoji">{g.emoji || (g.manual ? '📌' : '📁')}</span>
+      <span className="lbl">{g.label}</span>
+      {g.manual && (
+        <span className="g-manual" title={t('group.manualTitle')}>
+          {t('group.manual')}
+        </span>
+      )}
+      <span className="n">{count}</span>
+      <span className="ln" />
+    </div>
+  );
+}
+
+/*
+ * 用途グループの生成/再生成ボタン。環境全体で 1 回の haiku 呼び出しなので
+ * job ポーリングは持たず、完了までボタンを busy 表示にして reload で反映する。
+ */
+function GroupGenButton({
+  label,
+  title,
+  reload,
+}: {
+  label: string;
+  title: string;
+  reload: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      await generateGroups();
+      await reload();
+    } catch (e) {
+      alert(t('alert.groupFailed', { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button className="chip" disabled={busy} onClick={run} title={title}>
+      {busy ? t('group.generating') : label}
+    </button>
+  );
+}
+
 function SkillCard({
   it,
   onOpen,
@@ -155,22 +218,86 @@ export function GridView({
   data,
   q,
   sort,
-  grouped,
+  view,
   kind,
   use,
   onOpen,
+  reload,
 }: {
   data: SkillsData;
   q: string;
   sort: SortKey;
-  grouped: boolean;
+  view: ViewMode;
   kind: KindFilter;
   use: UseFilter;
   onOpen: (key: string) => void;
+  reload: () => Promise<void>;
 }) {
   const pass = (it: SkillItem) =>
     kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, data.usageAvailable);
-  if (grouped) {
+  if (view === 'group') {
+    // 未生成なら生成導線だけを出す(claude CLI が無い環境ではボタンがエラーを表示する)
+    if (!data.groups?.length) {
+      return (
+        <div className="grid-pad">
+          <div className="grp-panel">
+            <p>{t('group.empty')}</p>
+            <GroupGenButton
+              label={t('group.generate')}
+              title={t('group.generateTitle')}
+              reload={reload}
+            />
+          </div>
+        </div>
+      );
+    }
+    // リポジトリ(ソースセクション)ごとに、その中を用途グループで小分けする
+    const sections = data.sections
+      .map((s) => ({
+        section: s,
+        groups: groupByPurpose(sortItems(flatten([s]).filter(pass), sort), data.groups),
+      }))
+      .filter((s) => s.groups.length > 0);
+    return (
+      <div className="grid-pad">
+        {data.groupsStale && (
+          <div className="grp-bar">
+            <span className="stale-note">
+              ⚠ {t('group.stale')} — {t('group.staleAction')}
+            </span>
+          </div>
+        )}
+        {sections.length ? (
+          sections.map(({ section, groups }) => (
+            <div key={section.id}>
+              <SectionHeading
+                section={section}
+                count={groups.reduce((n, g) => n + g.items.length, 0)}
+              />
+              {groups.map((g) => (
+                <div key={g.id} className="sub-grp">
+                  <GroupHeading g={g} count={g.items.length} small sub />
+                  <div className="grid">
+                    {g.items.map((it) => (
+                      <SkillCard
+                        key={it.key}
+                        it={it}
+                        onOpen={onOpen}
+                        usageAvailable={data.usageAvailable}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))
+        ) : (
+          <div className="empty">{t('list.empty')}</div>
+        )}
+      </div>
+    );
+  }
+  if (view === 'source') {
     const sections = data.sections
       .map((s) => ({
         section: s,

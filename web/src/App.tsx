@@ -3,6 +3,7 @@ import { Link, Route, Routes, useNavigate, useSearchParams } from 'react-router-
 import {
   fetchSkills,
   fetchSummaryStatus,
+  generateGroups,
   initToken,
   summarizeAll,
   toId,
@@ -17,11 +18,13 @@ import {
   type KindFilter,
   type SortKey,
   type UseFilter,
+  type ViewMode,
 } from './util';
 import { GridView } from './components/GridView';
 import { DetailView, clearMdCache } from './components/DetailView';
 import { ChangesBanner } from './components/ChangesBanner';
 import { SettingsModal } from './components/SettingsModal';
+import { AiMenu } from './components/AiMenu';
 import { getLang, setLang, t, type Lang, type MsgKey } from './i18n';
 
 /* ラベルは言語切替に追従させるため、キーだけ持ってレンダー時に t() で引く */
@@ -35,6 +38,12 @@ const SORT_KEYS: [SortKey, MsgKey][] = [
 
 const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
 
+const VIEW_MODES: [ViewMode, MsgKey][] = [
+  ['source', 'view.source'],
+  ['group', 'view.group'],
+  ['flat', 'view.flat'],
+];
+
 export default function App() {
   const [data, setData] = useState<SkillsData | null>(null);
   const [error, setError] = useState('');
@@ -43,7 +52,9 @@ export default function App() {
 
   const q = (params.get('q') || '').toLowerCase();
   const sort = (params.get('sort') || 'name') as SortKey;
-  const grouped = params.get('grouped') !== '0';
+  // v0.5.0 までの共有 URL(grouped=0)はフラット表示として解釈する
+  const view = (params.get('view') ||
+    (params.get('grouped') === '0' ? 'flat' : 'source')) as ViewMode;
   const kind = (params.get('kind') || 'all') as KindFilter;
   // v0.3.0 の共有 URL(unused=1)も unused 扱いで解釈する
   const use = (params.get('use') || (params.get('unused') === '1' ? 'unused' : 'all')) as UseFilter;
@@ -171,6 +182,22 @@ export default function App() {
     }
   };
 
+  /* ---- AI menu(要約 + 用途グルーピングの集約) ---- */
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
+  const [groupBusy, setGroupBusy] = useState(false);
+  const onGroupGen = async () => {
+    if (groupBusy) return;
+    setGroupBusy(true);
+    try {
+      await generateGroups();
+      await reload();
+    } catch (e) {
+      alert(t('alert.groupFailed', { msg: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
   if (error)
     return (
       <div className="wrap">
@@ -202,6 +229,24 @@ export default function App() {
           onChange={(e) => setParam('q', e.target.value || null)}
         />
         <div className="controls">
+          <span className="seg" title={t('view.title')}>
+            {VIEW_MODES.map(([key, msgKey]) => (
+              <button
+                key={key}
+                className={view === key ? 'on' : ''}
+                onClick={() => {
+                  // 旧パラメータ(grouped=0)は新パラメータ設定時に掃除する
+                  const next = new URLSearchParams(params);
+                  next.delete('grouped');
+                  if (key === 'source') next.delete('view');
+                  else next.set('view', key);
+                  setParams(next, { replace: true });
+                }}
+              >
+                {t(msgKey)}
+              </button>
+            ))}
+          </span>
           <select
             className="sel"
             value={sort}
@@ -214,63 +259,77 @@ export default function App() {
               </option>
             ))}
           </select>
-          <span className="seg">
+          {/* kind / 使用実績はボタン群だと場所を取るので、並び順と同じ select に統一 */}
+          <select
+            className={'sel' + (kind !== 'all' ? ' on' : '')}
+            value={kind}
+            onChange={(e) => setParam('kind', e.target.value === 'all' ? null : e.target.value)}
+          >
             {KIND_FILTERS.map((key) => (
-              <button
-                key={key}
-                className={kind === key ? 'on' : ''}
-                onClick={() => setParam('kind', key === 'all' ? null : key)}
-              >
-                {key === 'all' ? t('kind.all') : key}
-              </button>
+              <option key={key} value={key}>
+                {t('filter.kindPrefix', { v: key === 'all' ? t('kind.all') : key })}
+              </option>
             ))}
-          </span>
+          </select>
           {data?.usageAvailable && (
-            <span className="seg">
+            <select
+              className={'sel' + (use !== 'all' ? ' on' : '')}
+              value={use}
+              title={t('filter.unusedTitle')}
+              onChange={(e) => {
+                // 旧パラメータ(unused=1)は新パラメータ設定時に掃除する
+                const next = new URLSearchParams(params);
+                next.delete('unused');
+                if (e.target.value === 'all') next.delete('use');
+                else next.set('use', e.target.value);
+                setParams(next, { replace: true });
+              }}
+            >
               {(
                 [
-                  ['all', t('kind.all'), ''],
-                  ['used', t('filter.used'), t('filter.usedTitle')],
-                  ['unused', t('filter.unused'), t('filter.unusedTitle')],
-                ] as [UseFilter, string, string][]
-              ).map(([key, label, title]) => (
-                <button
-                  key={key}
-                  className={use === key ? 'on' : ''}
-                  title={title}
-                  onClick={() => {
-                    // 旧パラメータ(unused=1)は新パラメータ設定時に掃除する
-                    const next = new URLSearchParams(params);
-                    next.delete('unused');
-                    if (key === 'all') next.delete('use');
-                    else next.set('use', key);
-                    setParams(next, { replace: true });
-                  }}
-                >
-                  {label}
-                </button>
+                  ['all', t('kind.all')],
+                  ['used', t('filter.used')],
+                  ['unused', t('filter.unused')],
+                ] as [UseFilter, string][]
+              ).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {t('filter.usePrefix', { v: label })}
+                </option>
               ))}
-            </span>
+            </select>
           )}
-          <button
-            className="chip"
-            disabled={aiBusy}
-            onClick={onAiClick}
-            title={t('ai.buttonTitle')}
-          >
-            {aiBusy ? aiLabel || t('ai.button') : idleAiLabel}
-          </button>
-          <label className="grp-label">
-            <input
-              type="checkbox"
-              checked={grouped}
-              onChange={(e) => setParam('grouped', e.target.checked ? null : '0')}
-            />
-            <span>{t('app.grouped')}</span>
-          </label>
-          <button className="chip" onClick={() => setSettingsOpen(true)}>
-            {t('app.settings')}
-          </button>
+          <span className="controls-r">
+            <span style={{ position: 'relative' }}>
+              <button
+                className="chip"
+                onClick={() => setAiMenuOpen((v) => !v)}
+                title={t('ai.menuTitle')}
+              >
+                {t('ai.menu')}
+                {aiBusy || groupBusy
+                  ? ' …'
+                  : data && data.aiStale > 0
+                    ? ` (${data.aiStale})`
+                    : ''}{' '}
+                ▾
+              </button>
+              {aiMenuOpen && (
+                <AiMenu
+                  summaryLabel={aiBusy ? aiLabel || t('ai.button') : idleAiLabel}
+                  summaryBusy={aiBusy}
+                  onSummarize={onAiClick}
+                  groupLabel={data?.groups?.length ? t('group.menuRegen') : t('group.menuGenerate')}
+                  groupBusy={groupBusy}
+                  groupStale={!!data?.groupsStale}
+                  onGroups={onGroupGen}
+                  onClose={() => setAiMenuOpen(false)}
+                />
+              )}
+            </span>
+            <button className="chip" onClick={() => setSettingsOpen(true)}>
+              {t('app.settings')}
+            </button>
+          </span>
         </div>
       </div>
       {settingsOpen && (
@@ -292,10 +351,11 @@ export default function App() {
                 data={data}
                 q={q}
                 sort={sort}
-                grouped={grouped}
+                view={view}
                 kind={kind}
                 use={use}
                 onOpen={openSkill}
+                reload={reload}
               />
             }
           />
@@ -307,7 +367,7 @@ export default function App() {
                 all={all}
                 q={q}
                 sort={sort}
-                grouped={grouped}
+                view={view}
                 kind={kind}
                 use={use}
                 onOpen={openSkill}
