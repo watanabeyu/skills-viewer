@@ -159,33 +159,80 @@ button {
   color: #57534a;
 }
 
-/* AI フロー図解: 縦型ステッパー(zero-dep、CSS のみ) */
+/* AI フロー図解: フローチャート(zero-dep。ノードは CSS、配線は実測 SVG) */
 .flow-tab {
   padding-top: 14px;
 }
-.flow {
-  margin: 4px 0 12px;
-  max-width: 560px;
+.fc-scroll {
+  overflow-x: auto;
+  padding: 4px 0 8px;
 }
-.flow-box {
-  border: 1px solid #ddd8ce;
+/* 3レーン: 左=ループ矢印 / 中央=本線 / 右=中断カプセル */
+.fc {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px minmax(300px, 1fr) auto;
+  row-gap: 26px;
+  min-width: 440px;
+  max-width: 640px;
+  margin: 4px 0 12px;
+}
+.fc-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.fc-wires text {
+  font-family: inherit;
+}
+.fc-l {
+  min-height: 1px;
+}
+.fc-m {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.fc-r {
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+}
+.fc-start {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #1b1a17;
+  position: relative;
+  z-index: 1;
+}
+.fc-proc {
+  border: 1.5px solid #cfc7b6;
   border-radius: 10px;
   background: #fff;
-  padding: 10px 14px;
+  padding: 8px 16px 9px;
+  min-width: 210px;
+  max-width: 320px;
+  box-shadow: 0 1px 3px rgba(27, 26, 23, 0.05);
+  position: relative;
+  z-index: 1;
 }
-.flow-box.human {
+.fc-proc.human {
   border-color: #c9a227;
   background: #fdf9ee;
 }
-.flow-t {
+.fc-head {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.flow-num {
+.fc-num {
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
   border-radius: 50%;
   background: #1b1a17;
   color: #fff;
@@ -195,55 +242,88 @@ button {
   align-items: center;
   justify-content: center;
 }
-.flow-box.human .flow-num {
+.fc-proc.human .fc-num {
   background: #c9a227;
 }
-.flow-title {
+.fc-title {
   font-size: 13px;
   font-weight: 700;
   color: #1b1a17;
 }
-.flow-gate {
+.fc-gate {
   margin-left: auto;
+  padding-left: 8px;
   font-size: 10.5px;
   font-weight: 700;
   color: #a8720f;
   white-space: nowrap;
 }
-.flow-d {
-  font-size: 12px;
-  color: #6b6558;
-  margin: 4px 0 0 26px;
-  line-height: 1.55;
-}
-.flow-calls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 6px 0 0 26px;
-}
-.flow-branch {
+.fc-detail {
   font-size: 11.5px;
-  color: #8a8579;
-  margin: 5px 0 0 26px;
+  color: #6b6558;
+  margin: 3px 0 0 27px;
   line-height: 1.5;
 }
-/* ステップ間のコネクタ(縦線 + 矢頭) */
-.flow-conn {
-  width: 0;
-  height: 18px;
-  border-left: 2px solid #ddd8ce;
-  margin-left: 22px;
-  position: relative;
+.fc-calls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0 0 27px;
 }
-.flow-conn::after {
+/* 判断ノード(ひし形)。clip-path 2枚重ねで枠線を出す */
+.fc-dec {
+  position: relative;
+  width: 224px;
+  height: 62px;
+  z-index: 1;
+}
+.fc-dec .fc-shape {
+  position: absolute;
+  inset: 0;
+  background: #b9ab8c;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+.fc-dec .fc-shape::after {
   content: '';
   position: absolute;
-  bottom: -1px;
-  left: -5px;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 5px solid #ddd8ce;
+  inset: 1.5px;
+  background: #fdfcf9;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+.fc-dec .fc-q {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 42px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.3;
+  color: #1b1a17;
+  overflow: hidden;
+}
+/* 終端カプセル(右レーン=中断 / 本線末尾=完了) */
+.fc-term {
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  border-radius: 999px;
+  padding: 4px 13px;
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+}
+.fc-term.abort {
+  background: #f3e2de;
+  color: #a8443a;
+  border: 1px solid #e0c3bd;
+}
+.fc-term.done {
+  background: #e6eee3;
+  color: #47663f;
+  border: 1px solid #c8d8c1;
 }
 .ctrl-sep {
   width: 1px;

@@ -135,6 +135,9 @@ const en = {
   'flow.runTitle':
     'Extract the processing flow (steps, branches, delegations, human gates) from the definition body via claude CLI and render it as a diagram',
   'flow.gateHuman': 'human gate',
+  'flow.yes': 'yes',
+  'flow.no': 'no',
+  'flow.done': 'done',
   'alert.flowFailed': 'Flow extraction failed: {msg}',
 
   'edit.button': 'Edit',
@@ -349,6 +352,9 @@ const ja: Record<MsgKey, string> = {
   'flow.runTitle':
     '定義本文から処理フロー(ステップ・分岐・委譲・人間ゲート)を claude CLI で抽出し、図として表示します',
   'flow.gateHuman': '人間ゲート',
+  'flow.yes': 'はい',
+  'flow.no': 'いいえ',
+  'flow.done': '完了',
   'alert.flowFailed': 'フロー抽出に失敗: {msg}',
 
   'edit.button': '編集',

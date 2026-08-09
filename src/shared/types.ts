@@ -36,6 +36,8 @@ export interface SkillGroup {
 export interface SkillFlowBranch {
   when: string;
   then: string;
+  /* 分岐の行き先ステップ番号(1 始まり)。後方=ループ/リトライ、前方=スキップ。中断・終了は省略 */
+  to?: number;
 }
 export interface SkillFlowStep {
   title: string;
