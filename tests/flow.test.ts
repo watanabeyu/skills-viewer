@@ -59,4 +59,38 @@ describe('parseFlow (フロー抽出出力のパース)', () => {
     expect(() => parseFlow(JSON.stringify({ steps: [] }))).toThrow();
     expect(() => parseFlow('ただの文章')).toThrow();
   });
+
+  it('branches.to(ループ/スキップ先)を保持する', () => {
+    const out = parseFlow(
+      JSON.stringify({
+        steps: [
+          { title: 'S1' },
+          { title: 'S2' },
+          { title: 'S3', branches: [{ when: 'テスト失敗', then: '修正して再実行', to: 2 }] },
+        ],
+      }),
+    );
+    expect(out.steps[2].branches[0].to).toBe(2);
+  });
+
+  it('範囲外・非整数の to は捨て、分岐テキストは残す', () => {
+    const out = parseFlow(
+      JSON.stringify({
+        steps: [
+          { title: 'S1', branches: [{ when: 'a', then: 'b', to: 5 }] },
+          {
+            title: 'S2',
+            branches: [
+              { when: 'c', then: 'd', to: 0 },
+              { when: 'e', then: 'f', to: 1.5 },
+              { when: 'g', then: 'h', to: '2' },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(out.steps[0].branches[0]).toEqual({ when: 'a', then: 'b' });
+    expect(out.steps[1].branches.map((b) => b.to)).toEqual([undefined, undefined, undefined]);
+    expect(out.steps[1].branches).toHaveLength(3);
+  });
 });
