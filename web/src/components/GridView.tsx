@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { SkillsData } from '../api';
+import type { MemorySection, SkillsData } from '../api';
 import { generateGroups, itemKey } from '../api';
 import {
   flatten,
@@ -12,6 +12,7 @@ import {
   isUnused,
   kindMatches,
   matches,
+  relDaysLabel,
   sortItems,
   usageLine,
   usageMatches,
@@ -23,12 +24,18 @@ import {
   type UseFilter,
   type ViewMode,
 } from '../util';
-import { lintLabel, t } from '../i18n';
+import { lintLabel, memoryTypeLabel, t } from '../i18n';
 import type { Section, SkillItem, Source } from '../api';
 
 export function KindBadge({ it }: { it: SkillItem }) {
   const label = KIND_LABEL[it.kind];
   return label ? <span className="kbadge">{label}</span> : null;
+}
+
+/* memory の frontmatter type。スコープと誤読されないよう内容分類として意訳したラベルを出す */
+export function MemoryTypeBadge({ it }: { it: SkillItem }) {
+  if (!it.memoryType) return null;
+  return <span className={'mtype mtype-' + it.memoryType}>{memoryTypeLabel(it.memoryType)}</span>;
 }
 
 export function UnusedBadge({ show }: { show: boolean }) {
@@ -214,7 +221,8 @@ function SkillCard({
   );
 }
 
-export function GridView({
+/* skill / command / agent / hook の一覧本体(表示軸・フィルタの対象) */
+function SkillGrid({
   data,
   q,
   sort,
@@ -353,5 +361,118 @@ export function GridView({
         <div className="empty">{t('list.empty')}</div>
       )}
     </div>
+  );
+}
+
+/*
+ * SectionHeading は Section 型(source 必須。headingOf / SRC_COLOR が依存)を前提にしているので、
+ * MemorySection を Section 互換オブジェクトに変換して見出しだけ流用する。
+ */
+function memoryAsSection(sec: MemorySection): Section {
+  return {
+    id: 'mem-' + sec.id,
+    source: 'project',
+    projectName: sec.projectName,
+    ...(sec.isCurrent ? { isCurrent: true } : {}),
+    note: sec.note,
+    items: sec.items,
+  };
+}
+
+function MemoryRow({ it, onOpen }: { it: SkillItem; onOpen: (path: string) => void }) {
+  return (
+    <button className="mem-row" onClick={() => onOpen(it.path)}>
+      <span className="r1">
+        <span className="nm">{it.name}</span>
+        <MemoryTypeBadge it={it} />
+        <span className="age">{relDaysLabel(it.updatedAt)}</span>
+      </span>
+      <span className="d1">{it.description}</span>
+    </button>
+  );
+}
+
+/*
+ * 自動メモリの一覧。memory は「呼び出す」ものではないので、表示軸・種類フィルタ・
+ * 使用実績フィルタの影響を受けず、常に skill セクション群の下にまとめて出す(検索だけ効く)。
+ */
+export function MemoryList({
+  sections,
+  q,
+  onOpen,
+}: {
+  sections: MemorySection[];
+  q: string;
+  onOpen: (path: string) => void;
+}) {
+  const shown = sections
+    .map((sec) => ({ sec, items: sec.items.filter((it) => matches(it, q)) }))
+    .filter((s) => s.items.length > 0);
+  if (!shown.length) return null;
+  const total = shown.reduce((n, s) => n + s.items.length, 0);
+  return (
+    <div className="mem-pad">
+      <div className="sec-h mem-top" title={t('memory.headingTitle')}>
+        <span className="lbl">{t('memory.heading')}</span>
+        <span className="n">{total}</span>
+        <span className="ln" />
+      </div>
+      {shown.map(({ sec, items }) => (
+        <div key={sec.id}>
+          <div className="mem-sec-h">
+            <SectionHeading section={memoryAsSection(sec)} count={items.length} small />
+            {sec.orphan && (
+              <span className="orphan-badge" title={t('memory.orphanTitle')}>
+                {t('memory.orphan')}
+              </span>
+            )}
+          </div>
+          <div className="mem-list">
+            {items.map((it) => (
+              <MemoryRow key={it.path} it={it} onOpen={onOpen} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* 一覧ページ全体。skill セクション群の下に、独立した Memory セクションを並べる */
+export function GridView({
+  data,
+  q,
+  sort,
+  view,
+  kind,
+  use,
+  onOpen,
+  onOpenMemory,
+  reload,
+}: {
+  data: SkillsData;
+  q: string;
+  sort: SortKey;
+  view: ViewMode;
+  kind: KindFilter;
+  use: UseFilter;
+  onOpen: (key: string) => void;
+  onOpenMemory: (path: string) => void;
+  reload: () => Promise<void>;
+}) {
+  return (
+    <>
+      <SkillGrid
+        data={data}
+        q={q}
+        sort={sort}
+        view={view}
+        kind={kind}
+        use={use}
+        onOpen={onOpen}
+        reload={reload}
+      />
+      {!!data.memory?.length && <MemoryList sections={data.memory} q={q} onOpen={onOpenMemory} />}
+    </>
   );
 }

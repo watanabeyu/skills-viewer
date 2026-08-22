@@ -22,6 +22,7 @@ import {
 } from './util';
 import { GridView } from './components/GridView';
 import { DetailView, clearMdCache } from './components/DetailView';
+import { MemoryDetail } from './components/MemoryDetail';
 import { ChangesBanner } from './components/ChangesBanner';
 import { SettingsModal } from './components/SettingsModal';
 import { AiMenu } from './components/AiMenu';
@@ -121,6 +122,10 @@ export default function App() {
 
   const openSkill = (key: string) => {
     navigate({ pathname: '/skills/' + toId(key), search: params.toString() });
+  };
+  /* memory は同名の別定義が無いので、識別子はファイルパスだけで足りる */
+  const openMemory = (path: string) => {
+    navigate({ pathname: '/memory/' + toId(path), search: params.toString() });
   };
 
   /* ---- AI summarize-all ---- */
@@ -355,6 +360,7 @@ export default function App() {
                 kind={kind}
                 use={use}
                 onOpen={openSkill}
+                onOpenMemory={openMemory}
                 reload={reload}
               />
             }
@@ -375,6 +381,7 @@ export default function App() {
               />
             }
           />
+          <Route path="/memory/:id" element={<MemoryDetail data={data} />} />
         </Routes>
       )}
     </div>

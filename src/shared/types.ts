@@ -1,7 +1,12 @@
 /* server / web 共通の型定義(単一ソース) */
 
-export type ItemKind = 'skill' | 'command' | 'agent' | 'hook';
+export type ItemKind = 'skill' | 'command' | 'agent' | 'hook' | 'memory';
 export type Source = 'built-in' | 'user' | 'project' | 'plugin';
+/*
+ * 自動メモリ(~/.claude/projects/<encoded>/memory/*.md)の frontmatter type。
+ * user はスコープではなく「人物像」という内容分類なので、表示ラベルは web 側で意訳する。
+ */
+export type MemoryType = 'user' | 'feedback' | 'project' | 'reference';
 export type Invocation = 'human' | 'agent' | 'both';
 export type Lang = 'ja' | 'en';
 /* AI 機能(要約/診断/グルーピング)に使う claude CLI のモデルエイリアス */
@@ -83,6 +88,38 @@ export interface SkillItem {
   aiInvocation?: Invocation;
   aiInvocationReason?: string;
   aiRelations?: SkillRelation[];
+  /* ---- kind === 'memory' のみ ---- */
+  /* frontmatter の type(トップレベル / metadata: 配下のどちらでも受ける)。未指定なら省略 */
+  memoryType?: MemoryType;
+  /* MEMORY.md の索引行の概算トークン(毎セッション注入される分)。索引に無ければ 0 */
+  indexTokens?: number;
+  /* 本文全体の概算トークン(Read されたときだけかかる分) */
+  bodyTokens?: number;
+  /* 本文中の [[x]] 参照(重複排除。解決は web 側で行う) */
+  links?: string[];
+  /* このメモリを書いたセッションの id(frontmatter 由来) */
+  originSessionId?: string;
+}
+
+/*
+ * 1 プロジェクト分の自動メモリ。skill の Section とは別配列で配送する
+ * (memory は「呼び出す」ものではなく、Section.source に置き場が無いため)。
+ */
+export interface MemorySection {
+  /* ~/.claude/projects 配下のエンコード済みディレクトリ名 */
+  id: string;
+  /* 逆引きできたプロジェクトの実パス。孤児(逆引き不可)は null */
+  projectPath: string | null;
+  /* 表示名。孤児はエンコード名そのまま(エンコードは不可逆で復元できない) */
+  projectName: string;
+  /* memory ディレクトリの実パス */
+  note: string;
+  isCurrent?: boolean;
+  orphan?: boolean;
+  usageAvailable: boolean;
+  /* items の indexTokens 合計(= このプロジェクトで毎セッション注入される索引の量) */
+  indexTokens: number;
+  items: SkillItem[];
 }
 
 /* 前回起動(スナップショット)からの変化1件分 */
@@ -131,6 +168,8 @@ export interface SkillsData {
   groups?: SkillGroup[];
   /* グループ生成後にアイテム構成(name + description)が変わったか(再分類を促す) */
   groupsStale?: boolean;
+  /* 自動メモリ(読み取り専用)。1 件も無ければ省略 */
+  memory?: MemorySection[];
 }
 
 export interface SummaryJob {

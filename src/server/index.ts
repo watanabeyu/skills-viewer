@@ -13,6 +13,7 @@ import { execFile } from 'node:child_process';
 import type { Lang, Section, SkillsData } from '../shared/types';
 import { scanSections, listProjects, HOME } from './scan';
 import { scanUsageByDir, encodeProjectPath } from './usage';
+import { scanMemory } from './memory';
 import {
   loadSummaries,
   contentHash,
@@ -139,6 +140,8 @@ function collect(cwd: string, lang: Lang): SkillsData {
   attachFlows(sections, lang);
   const grp = attachGroups(sections, lang);
   const aiStale = staleItems(sections, lang).length;
+  // memory は「呼び出す」ものではないので sections には混ぜず、別配列で同乗させる
+  const memory = scanMemory(cwd);
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
     ...listProjects(cwd)
@@ -155,6 +158,7 @@ function collect(cwd: string, lang: Lang): SkillsData {
     changes: computeChanges(sections),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
+    ...(memory.length ? { memory } : {}),
   };
 }
 

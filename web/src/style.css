@@ -1423,3 +1423,129 @@ button {
   border-radius: 8px;
   padding: 10px 12px;
 }
+
+/* memory — 一覧下部の独立セクション(表示軸・フィルタの影響を受けない) */
+.mem-pad {
+  padding: 0 32px 32px;
+}
+.sec-h.mem-top .lbl {
+  color: #1b1a17;
+  font-size: 12px;
+}
+.mem-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mem-sec-h .sec-h {
+  flex: 1;
+  min-width: 0;
+}
+.orphan-badge {
+  font-size: 10px;
+  color: #8a6d3b;
+  background: #f7efdf;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.mem-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mem-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e8e4dc;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  text-align: left;
+}
+.mem-row:hover {
+  border-color: #b9b2a3;
+}
+.mem-row .r1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mem-row .nm {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1b1a17;
+  word-break: break-all;
+}
+.mem-row .age {
+  margin-left: auto;
+  font-size: 11px;
+  color: #a39d90;
+  white-space: nowrap;
+}
+.mem-row .d1 {
+  font-size: 11.5px;
+  color: #8a8579;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mtype {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  color: #57534a;
+  background: #efece5;
+}
+.mtype-feedback {
+  color: #1f8a5b;
+  background: rgba(31, 138, 91, 0.1);
+}
+.mtype-project {
+  color: #c07a1f;
+  background: rgba(192, 122, 31, 0.13);
+}
+.mtype-reference {
+  color: #2a6fdb;
+  background: rgba(42, 111, 219, 0.1);
+}
+.mtype-user {
+  color: #7b5bd6;
+  background: rgba(123, 91, 214, 0.1);
+}
+.mem-pane .meta-row {
+  margin-top: 16px;
+}
+.mem-proj {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #6b6558;
+}
+.mem-origin {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #a39d90;
+  font-family: ui-monospace, Menlo, monospace;
+}
+/* 本文中の [[link]] — 解決済みは遷移リンク、未解決はリンク切れとして装飾 */
+.mem-link {
+  color: #2a6fdb;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(42, 111, 219, 0.35);
+  cursor: pointer;
+}
+.mem-link:hover {
+  border-bottom-color: #2a6fdb;
+}
+.mem-link.broken {
+  color: #b0392e;
+  border-bottom: 1px dashed rgba(176, 57, 46, 0.5);
+  cursor: help;
+}

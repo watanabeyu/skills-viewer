@@ -4,7 +4,7 @@
  * テスト(Node 環境)からも import されるため、ブラウザ API へのアクセスは必ずガードする。
  */
 
-import type { Lang, LintCode, RelationType } from '../../src/shared/types';
+import type { Lang, LintCode, MemoryType, RelationType } from '../../src/shared/types';
 
 export type { Lang };
 
@@ -77,6 +77,23 @@ const en = {
   'app.tokens': '≈{n} tokens/session',
   'app.tokensTitle':
     'Approx. tokens injected into every session in the current project (name + description of built-ins, plugins, user scope and the current project)',
+
+  'memory.heading': 'Memory',
+  'memory.headingTitle':
+    'Auto memory recorded by Claude Code (read-only here). The MEMORY.md index is injected into every session; the bodies are only read on demand.',
+  'memory.orphan': 'unknown project',
+  'memory.orphanTitle':
+    'No matching project — it may have been deleted, moved or renamed (the encoded directory name cannot be decoded back into a path)',
+  'memory.type.user': 'About you',
+  'memory.type.feedback': 'Guidance',
+  'memory.type.project': 'Project',
+  'memory.type.reference': 'Reference',
+  'memory.today': 'today',
+  'memory.daysAgo': '{n}d ago',
+  'memory.links': 'Links',
+  'memory.linkBroken': 'unresolved',
+  'memory.linkBrokenTitle': 'No memory with this name in this project',
+  'memory.originSession': 'Session {id}',
 
   'detail.back': '← Back to list',
   'detail.lastUpdated': 'Last updated {date}',
@@ -296,6 +313,23 @@ const ja: Record<MsgKey, string> = {
   'app.tokensTitle':
     '現在のプロジェクトでのセッションごとに注入されるトークンの概算(built-in・plugin・user・現在プロジェクトの name + description)',
 
+  'memory.heading': 'Memory',
+  'memory.headingTitle':
+    'Claude Code が自動記録するメモリ(ここでは読み取り専用)。MEMORY.md の索引は毎セッション注入され、本文は読まれたときだけ参照されます',
+  'memory.orphan': 'プロジェクト不明',
+  'memory.orphanTitle':
+    '対応するプロジェクトが見つかりません(削除・移動・リネームの可能性。エンコードされたディレクトリ名から元のパスは復元できません)',
+  'memory.type.user': '人物像',
+  'memory.type.feedback': '指示・方針',
+  'memory.type.project': '進行状況',
+  'memory.type.reference': '参照先',
+  'memory.today': '今日',
+  'memory.daysAgo': '{n}日前',
+  'memory.links': 'リンク',
+  'memory.linkBroken': 'リンク切れ',
+  'memory.linkBrokenTitle': 'このプロジェクトに同名のメモリがありません',
+  'memory.originSession': 'セッション {id}',
+
   'detail.back': '← 一覧に戻る',
   'detail.lastUpdated': '最終更新 {date}',
   'detail.openEditor': 'エディタで開く',
@@ -490,6 +524,9 @@ export function t(key: MsgKey, params?: Record<string, string | number>): string
 export const relTypeLabel = (type: RelationType): string => t(`rel.${type}`);
 
 export const lintLabel = (code: LintCode): string => t(`lint.${code}`);
+
+/* memory の type は「スコープ」と誤読されやすいので、内容分類として意訳したラベルを引く */
+export const memoryTypeLabel = (type: MemoryType): string => t(`memory.type.${type}`);
 
 /* API エラー {error: code, detail} を表示文言に変換。未知コードは code: detail をそのまま出す */
 export function apiErrorMessage(body: unknown, status: number): string {

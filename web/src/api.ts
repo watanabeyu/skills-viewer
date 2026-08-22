@@ -9,6 +9,8 @@ export type {
   ItemKind,
   Invocation,
   Lang,
+  MemorySection,
+  MemoryType,
   RelationType,
   SkillDiagnosis,
   SkillFlow,

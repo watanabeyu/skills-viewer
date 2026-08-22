@@ -1,6 +1,6 @@
 /* SKILL.md 用の最小 markdown レンダラ(依存ゼロ・HTML エスケープ込み) */
 
-const esc = (s: string) =>
+export const esc = (s: string) =>
   s.replace(
     /[&<>"]/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string,

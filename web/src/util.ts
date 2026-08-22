@@ -55,9 +55,9 @@ export function flatten(sections: Section[]): FlatItem[] {
   );
 }
 
-/* 呼び出し例。agent は @メンション、hook は起動形が無いので空 */
+/* 呼び出し例。agent は @メンション、hook / memory は起動形が無いので空 */
 export const usageLine = (it: SkillItem) => {
-  if (it.kind === 'hook') return '';
+  if (it.kind === 'hook' || it.kind === 'memory') return '';
   if (it.kind === 'agent') return '@' + it.name;
   return '/' + it.name + (it.argumentHint ? ' ' + it.argumentHint : '');
 };
@@ -149,6 +149,15 @@ export const fmtDate = (ms?: number) => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+
+/*
+ * 経過日ラベル(memory の「いつ書かれたか」用)。日付そのものより鮮度が重要なので相対表記。
+ */
+export function relDaysLabel(ms?: number): string {
+  if (!ms) return '';
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  return days <= 0 ? t('memory.today') : t('memory.daysAgo', { n: days });
+}
 
 export const matches = (it: SkillItem, q: string) =>
   !q ||
