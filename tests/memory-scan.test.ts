@@ -51,7 +51,8 @@ write(
     '  node_type: memory',
     '---',
     '',
-    '本文。関連: [[handoff]] [[wiki-mcp-curl]] [[missing-one]] [[handoff]]',
+    // 末尾の [[a[[handoff]] は文字クラス([^\][]+)の回帰ガード: 'a[[handoff' を拾ってはいけない
+    '本文。関連: [[handoff]] [[wiki-mcp-curl]] [[missing-one]] [[handoff]] [[a[[handoff]]',
   ].join('\n'),
 );
 // トップレベル type:(少数派)+ 索引行あり
@@ -170,6 +171,9 @@ describe('scanMemory (自動メモリの走査)', () => {
   it('本文の [[x]] を重複排除して links に入れる(解決はしない)', () => {
     const it = secA.items.find((x) => x.name === 'wiki-mcp-curl')!;
     expect(it.links).toEqual(['handoff', 'wiki-mcp-curl', 'missing-one']);
+    // [[a[[handoff]] は内側だけを拾う(文字クラスを [^\]]+ に緩めると 'a[[handoff' が入る)
+    expect(it.links).toContain('handoff');
+    expect(it.links).not.toContain('a[[handoff');
   });
 
   it('usageAvailable は Phase A では常に false', () => {

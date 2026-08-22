@@ -8,14 +8,14 @@ export const esc = (s: string) =>
 
 /*
  * URL の文字クラスから \uE000 を除く。renderMemoryBody が [[x]] をこの私用領域文字に退避して
- * レンダリング後に HTML へ差し戻すため、URL に取り込まれると href 属性値の中に <a> が入って壊れる。
+ * レンダリング後に HTML へ差し戻すため、取り込まれると href 属性値の中や <a> の中に <a> が入って壊れる。
  */
 function mdInlines(s: string): string {
   return esc(s)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(
-      /\[([^\]]+)\]\((https?:[^)\uE000]+)\)/g,
+      /\[([^\]\uE000]+)\]\((https?:[^)\uE000]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener">$1</a>',
     )
     .replace(

@@ -53,6 +53,23 @@ describe('renderMemoryBody ([[link]] の解決)', () => {
     expect(at).toBeGreaterThan(-1);
     // 直前までの引用符がすべて閉じている = 属性値の中にいない
     expect(html.slice(0, at).split('"').length % 2).toBe(1);
+    // [t](url) 形式でも同じ(URL 側の文字クラスがプレースホルダを飲み込まない)
+    const md = renderMemoryBody('[wiki](https://x.com/[[handoff]]) end', resolve);
+    expect(md).not.toContain('href="https://x.com/<a');
+  });
+
+  it('リンクテキストの中に [[x]] があっても <a> が入れ子にならない', () => {
+    const html = renderMemoryBody('[see [[handoff]]](https://x.com) end', resolve);
+    const close = html.indexOf('</a>');
+    expect(close).toBeGreaterThan(-1);
+    // 最初の </a> までに開始タグが 2 つあれば <a> の中に <a> が入っている
+    expect(html.slice(0, close).split('<a ').length - 1).toBe(1);
+  });
+
+  it('[[a[[b]] は内側だけをリンクにする(文字クラスは server 側と同一)', () => {
+    const html = renderMemoryBody('x [[a[[handoff]] y', resolve);
+    expect(html).toContain('>handoff</a>');
+    expect(html).not.toContain('a[[handoff</a>');
   });
 
   it('本文の HTML はエスケープされたまま(置換で穴が開かない)', () => {

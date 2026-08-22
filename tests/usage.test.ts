@@ -179,17 +179,17 @@ describe('scanMemoryUsage (全ディレクトリ横断・file_path キーの集�
   });
 });
 
+/* 入力は Set だけなので他 describe の fixture に依存させない(-t 指定の単独実行でも通す) */
 describe('hasTranscripts (usageAvailable の前方一致)', () => {
-  const root = path.join(tmp, '.claude', 'projects');
-  const dirs = () => scanMemoryUsage(root).dirsWithTranscripts;
+  const dirs = new Set(['-Users-x-repo', '-Users-x-repo-feat-a']);
 
-  it('完全一致・worktree だけの一致で true、境界のない前方一致・jsonl なしは false', () => {
-    expect(hasTranscripts(dirs(), '-Users-x-repo')).toBe(true);
+  it('完全一致・worktree だけの一致で true、境界のない前方一致・Set に無い名前は false', () => {
+    expect(hasTranscripts(dirs, '-Users-x-repo')).toBe(true);
     // 親のディレクトリを外しても、worktree 側の transcript だけで計測可能とみなす
     expect(hasTranscripts(new Set(['-Users-x-repo-feat-a']), '-Users-x-repo')).toBe(true);
     // -Users-x-rep2 が -Users-x-rep に一致しないよう、区切り '-' を必須にする
-    expect(hasTranscripts(dirs(), '-Users-x-rep')).toBe(false);
-    // ディレクトリはあるが jsonl が無い = dirsWithTranscripts に入らない
-    expect(hasTranscripts(dirs(), '-Users-x-empty')).toBe(false);
+    expect(hasTranscripts(dirs, '-Users-x-rep')).toBe(false);
+    // dirsWithTranscripts に入らなかったプロジェクト(jsonl なし)は false
+    expect(hasTranscripts(dirs, '-Users-x-empty')).toBe(false);
   });
 });

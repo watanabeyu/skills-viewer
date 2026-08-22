@@ -334,15 +334,13 @@ export async function triageProject(
  * スキャン結果にキャッシュ済み診断を付与(内容が変わっていれば付けない)。
  * store は selectStale と同じくテストから差し替えられるよう引数にする。
  */
-export function attachMemoryTriage(
-  memory: MemorySection[],
-  lang: Lang,
-  store: TriageStore = loadTriage(),
-): void {
+export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: TriageStore): void {
   if (!memory.length) return;
+  // memory が 0 件のときはキャッシュ読み込みごと省く(デフォルト引数だとガードより先に走る)
+  const s = store ?? loadTriage();
   for (const sec of memory) {
     for (const it of sec.items) {
-      const cached = store[it.path];
+      const cached = s[it.path];
       if (
         cached &&
         cached.lang === lang &&

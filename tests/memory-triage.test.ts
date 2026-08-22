@@ -211,17 +211,22 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
   it('索引の全文と対象全件のファイル名をプロンプトに載せる', () => {
     const prompt = buildPrompt(targets, ctx, 'ja');
     expect(prompt).toContain(index);
-    for (const it of targets) expect(prompt).toContain(path.basename(it.path));
+    // ファイル名は各ブロックの見出し(## file:)にも出るため、制約行の列挙そのものを見る
+    expect(prompt).toContain(targets.map((x) => path.basename(x.path)).join(', '));
     expect(prompt).toContain('引き継ぎの本文'); // 本文も渡す
   });
 
-  it('ja / en とも MEMORY.md の索引行に触れ、verdict の 6 値を提示する', () => {
+  it('ja / en とも索引行の削除に触れ、verdict の 6 値を出力スキーマで縛る', () => {
+    const schema = '"keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project"';
     for (const lang of ['ja', 'en'] as const) {
       const prompt = buildPrompt(targets, ctx, lang);
-      expect(prompt).toContain('MEMORY.md');
-      for (const v of ['keep', 'shrink', 'to-claude-md', 'to-docs', 'delete', 'wrong-project']) {
-        expect(prompt).toContain(v);
-      }
+      // 見出しの MEMORY.md ではなく「索引行を消せ」という指示そのものが要る
+      expect(prompt).toContain(
+        lang === 'ja' ? 'MEMORY.md の索引行の削除' : 'removing the line from MEMORY.md',
+      );
+      // 判定指針テーブルの (to-docs) 等ではなく、出力スキーマ行の 6 値を見る
+      expect(prompt).toContain(schema);
+      expect(prompt).toContain('|---|---|'); // 判定指針テーブルが崩れていない
     }
   });
 
@@ -285,5 +290,14 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     fs.rmSync(it.path);
     attachMemoryTriage([section([it])], 'ja', store);
     expect(it.aiTriage).toBeUndefined();
+  });
+
+  /* hash: null は contentHash('') と一致し得ないが、existsSync の判定が先に効くことを固定する */
+  it('hash が null のキャッシュはファイルが消えていれば付けない', () => {
+    const it2 = memItem('at-e.md', 'eee');
+    const store: TriageStore = { [it2.path]: entry({ hash: null }) };
+    fs.rmSync(it2.path);
+    attachMemoryTriage([section([it2])], 'ja', store);
+    expect(it2.aiTriage).toBeUndefined();
   });
 });
