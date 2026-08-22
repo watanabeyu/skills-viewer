@@ -1575,3 +1575,205 @@ button {
   border-bottom: 1px dashed rgba(176, 57, 46, 0.5);
   cursor: help;
 }
+
+/* memory 棚卸し診断 — 機械層の事実 + AI の行き先仮説 + 貼る指示文(操作はコピーのみ) */
+.triage-link {
+  font-size: 11px;
+  color: #6b6558;
+  background: #fff;
+  border: 1px solid #e8e4dc;
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.triage-link:hover {
+  border-color: #b9b2a3;
+  color: #1b1a17;
+}
+.triage-pane .meta-row {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.triage-lead {
+  margin: 4px 0 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #8a8579;
+}
+.triage-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.triage-note {
+  font-size: 11.5px;
+  color: #a39d90;
+}
+.triage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.triage-row {
+  background: #fff;
+  border: 1px solid #e8e4dc;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.triage-row .r1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.triage-row .nm {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1b1a17;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  word-break: break-all;
+}
+.triage-row .nm:hover {
+  text-decoration: underline;
+}
+/* 索引 tok / 本文 tok / 経過日 / Read / W-E / リンク切れ。桁を揃えたいので等幅 */
+.triage-facts {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: #a39d90;
+  font-family: ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+}
+.triage-broken {
+  color: #b0392e;
+}
+.triage-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.triage-verdict {
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+  color: #6b6558;
+  background: #efece5;
+}
+.triage-verdict.v-shrink {
+  color: #b8862f;
+  background: rgba(184, 134, 47, 0.12);
+}
+.triage-verdict.v-to-docs {
+  color: #2a6fdb;
+  background: rgba(42, 111, 219, 0.1);
+}
+.triage-verdict.v-to-claude-md {
+  color: #7b5bd6;
+  background: rgba(123, 91, 214, 0.1);
+}
+.triage-verdict.v-delete {
+  color: #b0392e;
+  background: rgba(176, 57, 46, 0.1);
+}
+.triage-verdict.v-wrong-project {
+  color: #c07a1f;
+  background: rgba(192, 122, 31, 0.13);
+}
+.triage-est {
+  font-size: 11px;
+  color: #6b6558;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.triage-reason {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #57534a;
+}
+.triage-issues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.triage-issue {
+  font-size: 11px;
+  color: #8a8579;
+  background: #faf7ef;
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.triage-instr {
+  margin-top: 10px;
+}
+.triage-instr-t {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8579;
+  margin-bottom: 4px;
+}
+/* 指示文は折りたたまず全文を出す(貼るかどうかの判断がここで完結するように) */
+.triage-instr-body {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  background: #faf7ef;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #57534a;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+.triage-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e8e4dc;
+  flex-wrap: wrap;
+}
+.triage-total {
+  font-size: 11.5px;
+  color: #6b6558;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.triage-block {
+  margin: 8px 0 4px;
+}
+.triage-box {
+  border: 1px solid #e8e4dc;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.triage-box .triage-head {
+  margin-top: 0;
+}
+.triage-whole {
+  font-size: 11.5px;
+  color: #2a6fdb;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.triage-whole:hover {
+  text-decoration: underline;
+}

@@ -29,6 +29,7 @@ import { doApplyDescription, doSave } from './edit';
 import { attachDiagnoses, diagnoseOne } from './diagnose';
 import { attachFlows, flowOne } from './flow';
 import { attachGroups, generateGroups } from './groups';
+import { attachMemoryTriage, triageProject } from './memory-triage';
 import { ackChanges, computeChanges } from './snapshot';
 import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
@@ -136,6 +137,16 @@ function attributeMemoryUsage(memory: MemorySection[]): void {
   }
 }
 
+/*
+ * 実績付きの memory セクション一覧。/api/skills だけでなく /api/memory-triage からも
+ * 同じ事実(Read / W-E / usageAvailable)をプロンプトに載せる必要があるので共通化する。
+ */
+function memorySections(cwd: string): MemorySection[] {
+  const memory = scanMemory(cwd);
+  attributeMemoryUsage(memory);
+  return memory;
+}
+
 function collect(cwd: string, lang: Lang): SkillsData {
   const sections = scanSections(cwd, lang);
   const usageAvailable = attributeUsage(sections);
@@ -166,8 +177,8 @@ function collect(cwd: string, lang: Lang): SkillsData {
   const grp = attachGroups(sections, lang);
   const aiStale = staleItems(sections, lang).length;
   // memory は「呼び出す」ものではないので sections には混ぜず、別配列で同乗させる
-  const memory = scanMemory(cwd);
-  attributeMemoryUsage(memory);
+  const memory = memorySections(cwd);
+  attachMemoryTriage(memory, lang);
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
     ...listProjects(cwd)
@@ -291,6 +302,19 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         // 環境全体で 1 回の claude 呼び出し。完了時にグループ集合を返す(割当は再取得で反映)
         generateGroups(scanSections(cwd, lang), lang, model)
           .then((r) => send(200, { ok: true, groups: r.groups }))
+          .catch((e) => send(400, toErrorBody(e)));
+        return;
+      }
+      if (url.pathname === '/api/memory-triage') {
+        // 1 プロジェクト分をまとめて 1 回の claude 呼び出しで棚卸しする(結果は再取得で反映)
+        const project = String(data.project || '');
+        const sec = memorySections(cwd).find((s) => s.id === project);
+        if (!sec) throw new ApiError('not-found', project);
+        const files = Array.isArray(data.files)
+          ? data.files.filter((f: unknown): f is string => typeof f === 'string')
+          : undefined;
+        triageProject(sec, lang, model, { force: !!data.force, files })
+          .then((results) => send(200, { ok: true, results }))
           .catch((e) => send(400, toErrorBody(e)));
         return;
       }

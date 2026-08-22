@@ -23,6 +23,7 @@ import {
 import { GridView } from './components/GridView';
 import { DetailView, clearMdCache } from './components/DetailView';
 import { MemoryDetail } from './components/MemoryDetail';
+import { MemoryTriageView } from './components/MemoryTriageView';
 import { ChangesBanner } from './components/ChangesBanner';
 import { SettingsModal } from './components/SettingsModal';
 import { AiMenu } from './components/AiMenu';
@@ -126,6 +127,10 @@ export default function App() {
   /* memory は同名の別定義が無いので、識別子はファイルパスだけで足りる */
   const openMemory = (path: string) => {
     navigate({ pathname: '/memory/' + toId(path), search: params.toString() });
+  };
+  /* 棚卸し診断はプロジェクト単位(id = MemorySection.id = エンコード済みディレクトリ名) */
+  const openTriage = (id: string) => {
+    navigate({ pathname: '/memory/triage/' + id, search: params.toString() });
   };
 
   /* ---- AI summarize-all ---- */
@@ -327,6 +332,8 @@ export default function App() {
                   groupBusy={groupBusy}
                   groupStale={!!data?.groupsStale}
                   onGroups={onGroupGen}
+                  memoryCurrentId={data?.memory?.find((s) => s.isCurrent)?.id}
+                  onTriage={openTriage}
                   onClose={() => setAiMenuOpen(false)}
                 />
               )}
@@ -361,6 +368,7 @@ export default function App() {
                 use={use}
                 onOpen={openSkill}
                 onOpenMemory={openMemory}
+                onOpenTriage={openTriage}
                 reload={reload}
               />
             }
@@ -381,7 +389,12 @@ export default function App() {
               />
             }
           />
-          <Route path="/memory/:id" element={<MemoryDetail data={data} />} />
+          {/* 棚卸し診断はプロジェクト単位の独立画面。:id より前に置いて誤マッチを避ける */}
+          <Route
+            path="/memory/triage/:project"
+            element={<MemoryTriageView data={data} reload={reload} />}
+          />
+          <Route path="/memory/:id" element={<MemoryDetail data={data} reload={reload} />} />
         </Routes>
       )}
     </div>

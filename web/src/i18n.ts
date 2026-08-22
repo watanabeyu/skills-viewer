@@ -4,7 +4,13 @@
  * テスト(Node 環境)からも import されるため、ブラウザ API へのアクセスは必ずガードする。
  */
 
-import type { Lang, LintCode, MemoryType, RelationType } from '../../src/shared/types';
+import type {
+  Lang,
+  LintCode,
+  MemoryType,
+  MemoryVerdict,
+  RelationType,
+} from '../../src/shared/types';
 
 export type { Lang };
 
@@ -109,6 +115,45 @@ const en = {
   'memory.writesTitle':
     'Times this memory was created or updated (Write / Edit) within the transcript retention window',
   'memory.lastRead': 'last Read {date}',
+
+  /* 棚卸し診断: AI は行き先の仮説と指示文までを出し、実行は貼り先の Claude Code に委ねる */
+  'memory.triage.section': '✦ Triage',
+  'memory.triage.sectionTitle':
+    'Ask the model where each memory of this project should go, and get an instruction to paste into Claude Code',
+  'memory.triage.heading': 'Memory triage',
+  'memory.triage.lead':
+    'Facts are measured here; destinations are the model’s hypothesis. Nothing is changed by this tool — paste an instruction into Claude Code to act on it.',
+  'memory.triage.items': '{n} memories',
+  'memory.triage.run': 'Run triage',
+  'memory.triage.running': 'Triaging…',
+  'memory.triage.rerun': 'Re-run triage',
+  'memory.triage.runTitle':
+    'One claude CLI call reads every memory body and proposes a destination (cached per memory; only changed ones are re-asked)',
+  'memory.triage.rerunTitle': 'Re-ask for every memory, ignoring the cache (one claude CLI call)',
+  'memory.triage.pending': 'Not triaged yet — measured facts only.',
+  'memory.triage.noProposals': 'No proposals: every memory can stay as it is.',
+  'memory.triage.verdict.keep': 'Keep as is',
+  'memory.triage.verdict.shrink': 'Shrink the body',
+  'memory.triage.verdict.to-claude-md': 'Move to CLAUDE.md',
+  'memory.triage.verdict.to-docs': 'Move to docs/',
+  'memory.triage.verdict.delete': 'Delete',
+  'memory.triage.verdict.wrong-project': 'Belongs elsewhere',
+  'memory.triage.estIndex': 'index {n} tok/session',
+  'memory.triage.estAlways': 'always-on +{n} tok/session',
+  'memory.triage.estShrink': 'index ±0 · proposes shrinking the body',
+  'memory.triage.instruction': 'Instruction to paste into Claude Code',
+  'memory.triage.copy': 'Copy',
+  'memory.triage.copied': 'Copied',
+  'memory.triage.copyAll': 'Copy all {n} instructions',
+  'memory.triage.totalIndex': 'Applying everything: index {n} tok/session',
+  'memory.triage.totalAlways': ' · always-on +{n} tok/session (CLAUDE.md moves)',
+  'memory.triage.broken': 'broken links {n}',
+  'memory.triage.brokenTitle': '[[link]] targets with no matching memory in this project',
+  'memory.triage.whole': 'Triage the whole project →',
+  'memory.triage.menu': 'Memory triage (current project)',
+  'memory.triage.menuTitle':
+    'Triage the auto memory of the current project: destination, reason and a pasteable instruction',
+  'alert.triageFailed': 'Triage failed: {msg}',
 
   'detail.back': '← Back to list',
   'detail.lastUpdated': 'Last updated {date}',
@@ -360,6 +405,44 @@ const ja: Record<MsgKey, string> = {
     'トランスクリプト保持期間内にこのメモリが作成・更新された回数(Write / Edit)',
   'memory.lastRead': '最終 Read {date}',
 
+  'memory.triage.section': '✦ 棚卸し診断',
+  'memory.triage.sectionTitle':
+    'このプロジェクトのメモリの行き先を AI に診断させ、Claude Code に貼れる指示文を作ります',
+  'memory.triage.heading': '棚卸し診断',
+  'memory.triage.lead':
+    '事実は実測、行き先は AI の仮説です。このツールは何も変更しません。実行したい提案の指示文を Claude Code に貼ってください',
+  'memory.triage.items': '{n} 件',
+  'memory.triage.run': '診断を実行',
+  'memory.triage.running': '診断中…',
+  'memory.triage.rerun': '再診断',
+  'memory.triage.runTitle':
+    '全メモリの本文を 1 回の claude 呼び出しで読み、行き先を提案します(件単位キャッシュ。変更された件だけ再診断)',
+  'memory.triage.rerunTitle': 'キャッシュを無視して全件を診断し直します(claude を 1 回呼びます)',
+  'memory.triage.pending': '未診断です。実測できる事実だけを表示しています',
+  'memory.triage.noProposals': '提案はありません。すべてこのままで問題ない判定です',
+  'memory.triage.verdict.keep': 'このまま',
+  'memory.triage.verdict.shrink': '本文を縮める',
+  'memory.triage.verdict.to-claude-md': 'CLAUDE.md へ',
+  'memory.triage.verdict.to-docs': 'docs/ へ',
+  'memory.triage.verdict.delete': '削除',
+  'memory.triage.verdict.wrong-project': '別プロジェクトの話',
+  'memory.triage.estIndex': '索引 {n} tok/セッション',
+  'memory.triage.estAlways': '常時 +{n} tok/セッション',
+  'memory.triage.estShrink': '索引 ±0 · 本文を縮める提案',
+  'memory.triage.instruction': 'Claude Code に貼る指示文',
+  'memory.triage.copy': 'コピー',
+  'memory.triage.copied': 'コピーしました',
+  'memory.triage.copyAll': '提案 {n} 件分の指示文をまとめてコピー',
+  'memory.triage.totalIndex': '全て適用すると 索引 {n} tok/セッション',
+  'memory.triage.totalAlways': ' · 常時 +{n} tok/セッション(CLAUDE.md 行きの分)',
+  'memory.triage.broken': 'リンク切れ {n}',
+  'memory.triage.brokenTitle': 'このプロジェクトに解決先が無い [[link]] の数',
+  'memory.triage.whole': 'プロジェクト全体を棚卸し →',
+  'memory.triage.menu': 'memory 棚卸し(現在のプロジェクト)',
+  'memory.triage.menuTitle':
+    '現在のプロジェクトの自動メモリを棚卸しし、行き先・理由・貼れる指示文を出します',
+  'alert.triageFailed': '棚卸し診断に失敗: {msg}',
+
   'detail.back': '← 一覧に戻る',
   'detail.lastUpdated': '最終更新 {date}',
   'detail.openEditor': 'エディタで開く',
@@ -557,6 +640,10 @@ export const lintLabel = (code: LintCode): string => t(`lint.${code}`);
 
 /* memory の type は「スコープ」と誤読されやすいので、内容分類として意訳したラベルを引く */
 export const memoryTypeLabel = (type: MemoryType): string => t(`memory.type.${type}`);
+
+/* 棚卸し診断の行き先ラベル(verdict は言語非依存キー) */
+export const memoryVerdictLabel = (verdict: MemoryVerdict): string =>
+  t(`memory.triage.verdict.${verdict}`);
 
 /* API エラー {error: code, detail} を表示文言に変換。未知コードは code: detail をそのまま出す */
 export function apiErrorMessage(body: unknown, status: number): string {

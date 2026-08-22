@@ -436,10 +436,12 @@ export function MemoryList({
   sections,
   q,
   onOpen,
+  onOpenTriage,
 }: {
   sections: MemorySection[];
   q: string;
   onOpen: (path: string) => void;
+  onOpenTriage: (id: string) => void;
 }) {
   const shown = sections
     .map((sec) => ({ sec, items: sec.items.filter((it) => matches(it, q)) }))
@@ -474,6 +476,14 @@ export function MemoryList({
                 {t('memory.orphan')}
               </span>
             )}
+            {/* 棚卸しはプロジェクト単位(重複・別プロジェクト混入は全件を同時に見ないと判定できない) */}
+            <button
+              className="triage-link"
+              title={t('memory.triage.sectionTitle')}
+              onClick={() => onOpenTriage(sec.id)}
+            >
+              {t('memory.triage.section')}
+            </button>
           </div>
           <div className="mem-list">
             {items.map((it) => (
@@ -501,6 +511,7 @@ export function GridView({
   use,
   onOpen,
   onOpenMemory,
+  onOpenTriage,
   reload,
 }: {
   data: SkillsData;
@@ -511,6 +522,7 @@ export function GridView({
   use: UseFilter;
   onOpen: (key: string) => void;
   onOpenMemory: (path: string) => void;
+  onOpenTriage: (id: string) => void;
   reload: () => Promise<void>;
 }) {
   return (
@@ -525,7 +537,14 @@ export function GridView({
         onOpen={onOpen}
         reload={reload}
       />
-      {!!data.memory?.length && <MemoryList sections={data.memory} q={q} onOpen={onOpenMemory} />}
+      {!!data.memory?.length && (
+        <MemoryList
+          sections={data.memory}
+          q={q}
+          onOpen={onOpenMemory}
+          onOpenTriage={onOpenTriage}
+        />
+      )}
     </>
   );
 }

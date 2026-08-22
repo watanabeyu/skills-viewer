@@ -159,6 +159,29 @@ export function relDaysLabel(ms?: number): string {
   return days <= 0 ? t('memory.today') : t('memory.daysAgo', { n: days });
 }
 
+/* memory の実パスからファイル名を取る(API の files 指定・[[link]] 解決で使う) */
+export const fileName = (p: string) => p.split(/[\\/]/).pop() || '';
+/* 拡張子なしのファイル名。[[x]] は frontmatter name とファイル名の両方で書かれ得る */
+export const fileBase = (p: string) => fileName(p).replace(/\.md$/, '');
+
+/*
+ * 棚卸し診断の削減試算(機械層で算出。AI には数値を出させない)。
+ * index = 常時コスト(MEMORY.md の索引行)の増減、always = 毎セッション注入に変わる分。
+ * keep(変更なし)と shrink(本文を縮めるだけで索引は ±0)は数値を出さないので null。
+ */
+export function triageEstimate(it: SkillItem): { index: number; always: number } | null {
+  const v = it.aiTriage?.verdict;
+  const index = it.indexTokens || 0;
+  if (v === 'delete' || v === 'to-docs' || v === 'wrong-project')
+    return { index: -index, always: 0 };
+  // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)
+  if (v === 'to-claude-md') return { index: -index, always: it.bodyTokens || 0 };
+  return null;
+}
+
+/* クリップボードコピー(指示文の貼り付け用。失敗はボタン側で握り潰さず呼び出し元へ) */
+export const copyText = (text: string): Promise<void> => navigator.clipboard.writeText(text);
+
 export const matches = (it: SkillItem, q: string) =>
   !q ||
   (it.name + ' ' + it.description + ' ' + usageLine(it) + ' ' + (it.aiSummary || ''))

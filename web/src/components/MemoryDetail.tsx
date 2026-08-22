@@ -8,13 +8,11 @@ import {
   type SkillItem,
   type SkillsData,
 } from '../api';
-import { fmtDate, relDaysLabel } from '../util';
+import { fileBase, fmtDate, relDaysLabel } from '../util';
 import { esc, mdRender, splitFrontmatter } from '../md';
 import { t } from '../i18n';
 import { MemoryTypeBadge } from './GridView';
-
-/* ファイル名(拡張子なし)。[[x]] は frontmatter name とファイル名の両方で書かれ得る */
-const fileBase = (p: string) => p.split(/[\\/]/).pop()!.replace(/\.md$/, '');
+import { MemoryTriageBlock } from './MemoryTriageView';
 
 /*
  * [[x]] を md レンダリング前に置き換える。レンダラは全テキストをエスケープするので、
@@ -42,7 +40,7 @@ export function renderMemoryBody(
   return mdRender(src).replace(/\uE000(\d+)\uE000/g, (_m, i: string) => holes[Number(i)]);
 }
 
-export function MemoryDetail({ data }: { data: SkillsData }) {
+export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () => Promise<void> }) {
   const { id } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -147,6 +145,8 @@ export function MemoryDetail({ data }: { data: SkillsData }) {
       )}
       <div className="sec-t">{t('detail.description')}</div>
       <p className="full-desc">{it.description}</p>
+      {/* 行き先の仮説と指示文。採否は人間が「貼るかどうか」で決めるので選択 UI は置かない */}
+      <MemoryTriageBlock it={it} sec={sec} reload={reload} />
       {error && <div className="empty">{t('app.loadFailed', { msg: error })}</div>}
       {!error && raw === null && <div className="empty">{t('common.loading')}</div>}
       {!error && raw !== null && (

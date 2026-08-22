@@ -30,6 +30,21 @@ export interface SkillDiagnosis {
   improved: string;
 }
 
+/*
+ * AI 棚卸し診断(memory)の行き先。あくまで仮説で、採否は「指示文を貼るかどうか」で人間が決める
+ * (viewer は選択状態を持たず、実行もしない)。
+ */
+export type MemoryVerdict =
+  'keep' | 'shrink' | 'to-claude-md' | 'to-docs' | 'delete' | 'wrong-project';
+
+/* 1 memory 分の棚卸し診断。instruction は Claude Code に貼る指示文(keep なら空) */
+export interface MemoryTriage {
+  verdict: MemoryVerdict;
+  reason: string;
+  issues: string[];
+  instruction: string;
+}
+
 /* AI グルーピングの1グループ。id は言語非依存スラッグ、label は表示言語で生成 */
 export interface SkillGroup {
   id: string;
@@ -101,6 +116,8 @@ export interface SkillItem {
   originSessionId?: string;
   /* Write / Edit の回数(作成・更新)。参照回数は useCount 側。0 回なら省略 */
   writeCount?: number;
+  /* キャッシュ済みの AI 棚卸し診断(未診断なら省略。生成はオンデマンド) */
+  aiTriage?: MemoryTriage;
 }
 
 /*
