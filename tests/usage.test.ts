@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   encodeProjectPath,
   extractHits,
+  hasTranscripts,
   scanMemoryUsage,
   scanTranscript,
 } from '../src/server/usage';
@@ -111,8 +112,10 @@ describe('scanTranscript (memory ファイルへの Read / Write / Edit)', () =>
 
 describe('scanMemoryUsage (全ディレクトリ横断・file_path キーの集計)', () => {
   /* worktree のセッションは親リポジトリの memory を触るので、集計は file_path に寄せる */
-  const root = path.join(tmp, 'projects');
-  const memPath = path.join(tmp, 'parent-repo', 'memory', 'handoff.md');
+  // 実装は ~/.claude/projects/ 配下だけを memory とみなすので、fixture も同じ形で作る
+  const root = path.join(tmp, '.claude', 'projects');
+  // 自動メモリの実パスは <encoded>/memory/ 直下(親リポジトリ側にだけ作られる)
+  const memPath = path.join(root, '-Users-x-repo', 'memory', 'handoff.md');
   const line = (name: string, ts: string) =>
     `{"timestamp":"${ts}","tool":{"name":"${name}","input":{"file_path":"${memPath}"}}}`;
 
@@ -143,5 +146,50 @@ describe('scanMemoryUsage (全ディレクトリ横断・file_path キーの集�
     // daily は Read のみを数える
     expect(Object.values(byPath[memPath].daily).reduce((a, b) => a + b, 0)).toBe(2);
     expect([...dirsWithTranscripts].sort()).toEqual(['-Users-x-repo', '-Users-x-repo-feat-a']);
+  });
+
+  /* 実データの Edit は {"replace_all":…,"file_path":…} の順で、file_path は第 1 キーではない */
+  it('キー順の違う Edit(replace_all が先頭)も write として拾う', () => {
+    const dir = path.join(root, '-Users-x-edit');
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(root, '-Users-x-edit', 'memory', 'handoff.md');
+    fs.writeFileSync(
+      path.join(dir, 's3.jsonl'),
+      `{"timestamp":"2026-07-10T00:00:00.000Z","tool":{"name":"Edit","input":{"replace_all":false,"file_path":"${p}"}}}`,
+    );
+    const { byPath } = scanMemoryUsage(root);
+    expect(byPath[p]).toMatchObject({ reads: 0, writes: 1 });
+  });
+
+  it('memory 以外の file_path(リポジトリ内の src/memory/ や MEMORY.md)は拾わない', () => {
+    const ok = path.join(root, '-Users-x-repo', 'memory', 'reference.md');
+    const paths = [
+      ok,
+      path.join(root, '-Users-x-repo', 'memory', 'MEMORY.md'), // 索引はアイテムではない
+      path.join(root, '-Users-x-repo', 'memory', 'sub', 'deep.md'), // memory/ 直下ではない
+      '/Users/x/repo/src/memory/notes.md', // リポジトリ内の同名ディレクトリ
+    ];
+    const fp = fixture(
+      paths.map(
+        (p) =>
+          `{"timestamp":"2026-07-11T00:00:00.000Z","tool":{"name":"Read","input":{"file_path":"${p}"}}}`,
+      ),
+    );
+    expect(scanTranscript(fp).memHits.map((h) => h.path)).toEqual([ok]);
+  });
+});
+
+describe('hasTranscripts (usageAvailable の前方一致)', () => {
+  const root = path.join(tmp, '.claude', 'projects');
+  const dirs = () => scanMemoryUsage(root).dirsWithTranscripts;
+
+  it('完全一致・worktree だけの一致で true、境界のない前方一致・jsonl なしは false', () => {
+    expect(hasTranscripts(dirs(), '-Users-x-repo')).toBe(true);
+    // 親のディレクトリを外しても、worktree 側の transcript だけで計測可能とみなす
+    expect(hasTranscripts(new Set(['-Users-x-repo-feat-a']), '-Users-x-repo')).toBe(true);
+    // -Users-x-rep2 が -Users-x-rep に一致しないよう、区切り '-' を必須にする
+    expect(hasTranscripts(dirs(), '-Users-x-rep')).toBe(false);
+    // ディレクトリはあるが jsonl が無い = dirsWithTranscripts に入らない
+    expect(hasTranscripts(dirs(), '-Users-x-empty')).toBe(false);
   });
 });

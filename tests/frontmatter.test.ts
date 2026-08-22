@@ -49,6 +49,18 @@ describe('parseFrontmatter', () => {
     expect(meta.name).toBe('after');
   });
 
+  /* 2 段以上のネストは現実装の対象外。壊れないことと、潰れ方が一定であることだけ固定する */
+  it('ネストは1段のみ対応(深い段は親直下のドット key に潰れる)', () => {
+    const raw = ['---', 'metadata:', '  type: a', '  nested:', '    deep: b', '---', '本文'].join(
+      '\n',
+    );
+    const { meta } = parseFrontmatter(raw);
+    expect(meta['metadata.type']).toBe('a');
+    expect(meta['metadata.nested']).toBe(''); // 中間キーは値なしのまま残る
+    expect(meta['metadata.deep']).toBe('b'); // 2 段目も親(metadata)直下に付く
+    expect(meta['metadata.nested.deep']).toBeUndefined();
+  });
+
   it('値なし + インデントのリスト(- x)はネストとして拾わない', () => {
     const { meta } = parseFrontmatter('---\nallowed-tools:\n  - Bash\n  - Read\nname: x\n---\n');
     expect(meta['allowed-tools']).toBe('');

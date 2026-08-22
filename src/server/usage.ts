@@ -4,7 +4,7 @@
  *   - model via tool:    "name":"Skill","input":{"skill":"weall-ship"
  *   - subagent 起動:      "subagent_type":"code-reviewer"
  * 併せて memory ファイルへの操作も同じ 1 パスで拾う(二度読みしない):
- *   - memory の参照/更新: "name":"Read","input":{"file_path":"…/memory/x.md"
+ *   - memory の参照/更新: "name":"Read|Write|Edit","input":{…"file_path":"…/memory/x.md"
  * ファイルごとに mtime でキャッシュ。トランスクリプトは Claude Code の保持期間で
  * 削除されるため、集計はその期間内のみ。
  */
@@ -86,11 +86,17 @@ function scanLine(line: string, out: ScanResult): void {
   }
   if (isFile) {
     // memory 本文への Read / Write / Edit のみを拾う(skill ファイル等の操作は対象外)。
-    // MEMORY.md は索引であって一覧のアイテムではないので除外する。
-    for (const m of line.matchAll(/"name":"(Read|Write|Edit)","input":\{"file_path":"([^"]+)"/g)) {
+    // input のキー順は固定ではない(実データの Edit は {"replace_all":…,"file_path":…} の順)ので
+    // file_path を第 1 キーと決め打ちしない。走査量を抑えるため間は 160 字までの遅延一致にする。
+    for (const m of line.matchAll(
+      /"name":"(Read|Write|Edit)","input":\{[^{}]{0,160}?"file_path":"([^"]+)"/g,
+    )) {
       const fp = m[2];
-      if (!fp.includes('/memory/') || !fp.endsWith('.md')) continue;
-      if (fp.endsWith('/MEMORY.md')) continue;
+      // 自動メモリは ~/.claude/projects/<encoded>/memory/ 直下の *.md だけ。
+      // リポジトリ内の src/memory/*.md などを巻き込まないよう場所で絞る。
+      if (!fp.includes('/.claude/projects/') || !/\/memory\/[^/]+\.md$/.test(fp)) continue;
+      // MEMORY.md は索引であって一覧のアイテムではないので除外する。
+      if (path.posix.basename(fp) === 'MEMORY.md') continue;
       out.memHits.push({ path: fp, ts, kind: m[1] === 'Read' ? 'read' : 'write' });
     }
   }
@@ -233,6 +239,15 @@ export function scanMemoryUsage(root = path.join(os.homedir(), '.claude', 'proje
     }
   }
   return { byPath, dirsWithTranscripts };
+}
+
+/*
+ * そのプロジェクトの transcript が 1 件でもあるか(usageAvailable 判定)。
+ * worktree のディレクトリ名は親のエンコード名 + '-' で始まるので前方一致も許すが、
+ * 区切りを要求しないと -Users-x-repo2 が -Users-x-repo に一致してしまう。
+ */
+export function hasTranscripts(dirs: Set<string>, encoded: string): boolean {
+  return dirs.has(encoded) || [...dirs].some((d) => d.startsWith(encoded + '-'));
 }
 
 /* Claude Code のトランスクリプトディレクトリ名と同じ規則でプロジェクトパスをエンコード */

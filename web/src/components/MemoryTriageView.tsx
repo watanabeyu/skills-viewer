@@ -8,7 +8,7 @@ import {
   type SkillItem,
   type SkillsData,
 } from '../api';
-import { copyText, fileBase, fileName, relDaysLabel, triageEstimate } from '../util';
+import { copyText, fileName, memoryResolver, relDaysLabel, triageEstimate } from '../util';
 import { memoryVerdictLabel, t } from '../i18n';
 import { MemoryTypeBadge } from './GridView';
 
@@ -87,8 +87,9 @@ function TriageResult({ it }: { it: SkillItem }) {
       {tri.reason && <p className="triage-reason">{tri.reason}</p>}
       {!!tri.issues.length && (
         <div className="triage-issues">
-          {tri.issues.map((issue) => (
-            <span className="triage-issue" key={issue}>
+          {/* 同じ文言が 2 件返り得るので key は index(並びは AI 出力のまま固定) */}
+          {tri.issues.map((issue, i) => (
+            <span className="triage-issue" key={i}>
               {issue}
             </span>
           ))}
@@ -236,9 +237,8 @@ export function MemoryTriageView({
     }
   };
 
-  const broken = (it: SkillItem) =>
-    (it.links || []).filter((n) => !sec.items.some((m) => m.name === n || fileBase(m.path) === n))
-      .length;
+  const resolve = memoryResolver(sec.items);
+  const broken = (it: SkillItem) => (it.links || []).filter((n) => !resolve(n)).length;
 
   return (
     <div className="pane triage-pane">

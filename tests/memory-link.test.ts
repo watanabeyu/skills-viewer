@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { renderMemoryBody } from '../web/src/components/MemoryDetail';
+import { memoryResolver } from '../web/src/util';
 import type { SkillItem } from '../src/shared/types';
 
 const mk = (name: string, p: string): SkillItem => ({
@@ -21,8 +22,8 @@ const items = [
   mk('wiki-mcp-curl', '/m/reference_wiki_mcp_curl.md'),
   mk('handoff', '/m/handoff.md'),
 ];
-const resolve = (n: string) =>
-  items.find((m) => m.name === n || m.path.split('/').pop()!.replace(/\.md$/, '') === n);
+/* 解決規則は実装(memoryResolver)と共有する。テストで再実装すると実装側の退化を検知できない */
+const resolve = memoryResolver(items);
 
 describe('renderMemoryBody ([[link]] の解決)', () => {
   it('frontmatter name で解決してリンクにする', () => {
@@ -42,6 +43,16 @@ describe('renderMemoryBody ([[link]] の解決)', () => {
     expect(html).toContain('<span class="mem-link broken"');
     expect(html).toContain('[[nope]]');
     expect(html).not.toContain('<a class="mem-link"');
+  });
+
+  it('URL の中に [[x]] があっても href 属性の中に <a> が入り込まない', () => {
+    const html = renderMemoryBody('url https://x.com/[[handoff]] end', resolve);
+    // 自動リンクの URL 文字クラスがプレースホルダを飲み込むと href の値に <a> が入る
+    expect(html).not.toContain('href="https://x.com/<a');
+    const at = html.indexOf('<a class="mem-link"');
+    expect(at).toBeGreaterThan(-1);
+    // 直前までの引用符がすべて閉じている = 属性値の中にいない
+    expect(html.slice(0, at).split('"').length % 2).toBe(1);
   });
 
   it('本文の HTML はエスケープされたまま(置換で穴が開かない)', () => {

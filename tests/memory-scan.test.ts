@@ -75,6 +75,12 @@ write(dirA, 'zz_no_meta.md', '# 見出し行\n\n本文\n');
 const dirB = memDir(encB);
 write(dirB, 'MEMORY.md', '- [beta memo](b.md) — beta のメモ');
 write(dirB, 'b.md', '---\nname: beta-memo\ndescription: beta のメモ\n---\n\n本文\n');
+// 未知の type(将来 Claude Code 側が値を増やしたときの想定)
+write(
+  dirB,
+  'z_bogus_type.md',
+  '---\nname: bogus\ndescription: 未知の type\ntype: bogus\n---\n\n本文\n',
+);
 
 // 逆引きできない孤児(削除済みプロジェクト)
 const dirOrphan = memDir('-Users-me-gone');
@@ -84,6 +90,9 @@ write(dirOrphan, 'g.md', '---\nname: gone\ndescription: 消えたプロジェク
 // memory ディレクトリが無いプロジェクト(除外される)
 fs.mkdirSync(path.join(root, '-Users-me-nomemory'), { recursive: true });
 
+// MEMORY.md(索引)だけがあるプロジェクト。アイテムが 0 件なのでセクションにしない
+write(memDir('-Users-me-indexonly'), 'MEMORY.md', '- [none](none.md) — 本文が残っていない');
+
 const sections = scanMemory(projB, { root, projects: [projA, projB] });
 const secA = sections.find((s) => s.projectName === 'alpha')!;
 const secB = sections.find((s) => s.projectName === 'beta')!;
@@ -91,6 +100,15 @@ const secB = sections.find((s) => s.projectName === 'beta')!;
 describe('scanMemory (自動メモリの走査)', () => {
   it('memory ディレクトリのあるプロジェクトだけをセクションにする', () => {
     expect(sections.map((s) => s.projectName)).toEqual(['beta', 'alpha', '-Users-me-gone']);
+  });
+
+  it('MEMORY.md だけのディレクトリはセクションにしない', () => {
+    expect(sections.some((s) => s.id === '-Users-me-indexonly')).toBe(false);
+  });
+
+  it('未知の type は memoryType を付けない(バッジを出さない)', () => {
+    const it = secB.items.find((x) => x.path.endsWith('z_bogus_type.md'))!;
+    expect(it.memoryType).toBeUndefined();
   });
 
   it('cwd のプロジェクトが current で先頭、孤児は末尾', () => {

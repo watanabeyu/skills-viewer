@@ -33,7 +33,8 @@ function memoryTypeOf(meta: Record<string, string>): MemoryType | undefined {
 /* 本文中の [[x]] 参照(重複排除。名前 / ファイル名どちらの表記かは web 側で解決する) */
 function extractLinks(body: string): string[] {
   const links = new Set<string>();
-  for (const m of body.matchAll(/\[\[([^\]]+)\]\]/g)) {
+  // 文字クラスは web 側の renderMemoryBody と同一にする(片方だけ [[a[[b]] を拾う差を作らない)
+  for (const m of body.matchAll(/\[\[([^\][]+)\]\]/g)) {
     const name = m[1].trim();
     if (name) links.add(name);
   }

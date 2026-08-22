@@ -25,9 +25,10 @@ describe('usageLine (呼び出し例の表記)', () => {
   it('skill は /名前 + 引数ヒント', () => {
     expect(usageLine(base({ argumentHint: '<PR>' }))).toBe('/foo <PR>');
   });
-  it('agent は @名前、hook は空', () => {
+  it('agent は @名前、hook / memory は空', () => {
     expect(usageLine(base({ kind: 'agent' }))).toBe('@foo');
     expect(usageLine(base({ kind: 'hook' }))).toBe('');
+    expect(usageLine(base({ kind: 'memory' }))).toBe(''); // memory は起動形を持たない
   });
 });
 

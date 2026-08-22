@@ -165,6 +165,15 @@ export const fileName = (p: string) => p.split(/[\\/]/).pop() || '';
 export const fileBase = (p: string) => fileName(p).replace(/\.md$/, '');
 
 /*
+ * [[x]] の解決器。本文レンダリング・リンク切れ数えの両方が同じ規則で解決するよう 1 箇所に置く
+ * (name 一致とファイル名一致のどちらでも解決する)。
+ */
+export const memoryResolver =
+  (items: SkillItem[]) =>
+  (name: string): SkillItem | undefined =>
+    items.find((m) => m.name === name || fileBase(m.path) === name);
+
+/*
  * 棚卸し診断の削減試算(機械層で算出。AI には数値を出させない)。
  * index = 常時コスト(MEMORY.md の索引行)の増減、always = 毎セッション注入に変わる分。
  * keep(変更なし)と shrink(本文を縮めるだけで索引は ±0)は数値を出さないので null。

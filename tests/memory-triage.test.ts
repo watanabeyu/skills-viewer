@@ -2,10 +2,16 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { parseTriage, selectStale, type TriageStore } from '../src/server/memory-triage';
+import {
+  attachMemoryTriage,
+  buildPrompt,
+  parseTriage,
+  selectStale,
+  type TriageStore,
+} from '../src/server/memory-triage';
 import { contentHash } from '../src/server/summary';
 import { triageEstimate } from '../web/src/util';
-import type { MemoryVerdict, SkillItem } from '../src/shared/types';
+import type { MemorySection, MemoryVerdict, SkillItem } from '../src/shared/types';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-triage-'));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -83,21 +89,32 @@ describe('parseTriage', () => {
     expect([...m.keys()]).toEqual(['a.md']);
   });
 
-  it('keep の instruction は空に正規化し、issues は文字列4件まで', () => {
+  it('keep の instruction は空に正規化し、issues は文字列4件まで。長すぎる文字列は切り詰める', () => {
     const m = parseTriage(
       JSON.stringify([
         {
           file: 'a.md',
           verdict: 'keep',
-          reason: 'そのままでよい',
-          issues: ['1', '2', '3', '4', '5', 42],
+          reason: 'あ'.repeat(500),
+          issues: ['い'.repeat(200), '2', '3', '4', '5', 42],
           instruction: '消してよい',
+        },
+        {
+          file: 'b.md',
+          verdict: 'delete',
+          reason: 'r',
+          issues: [],
+          instruction: 'う'.repeat(2000),
         },
       ]),
       files,
     );
     expect(m.get('a.md')?.instruction).toBe('');
-    expect(m.get('a.md')?.issues).toEqual(['1', '2', '3', '4']);
+    expect(m.get('a.md')?.issues).toEqual(['い'.repeat(80), '2', '3', '4']);
+    expect(m.get('a.md')!.issues[0].length).toBe(80);
+    expect(m.get('a.md')!.reason.length).toBe(400);
+    // instruction の上限は keep 以外(keep は空に正規化されるため)で効く
+    expect(m.get('b.md')!.instruction.length).toBe(1200);
   });
 
   it('同じ file が重複したら先勝ち', () => {
@@ -179,5 +196,94 @@ describe('triageEstimate (削減試算の式)', () => {
     expect(triageEstimate(item('keep'))).toBeNull();
     expect(triageEstimate(item('shrink'))).toBeNull();
     expect(triageEstimate(item(null))).toBeNull();
+  });
+});
+
+describe('buildPrompt (一括診断のプロンプト)', () => {
+  const index =
+    '- [引き継ぎ](handoff.md) — ブランチと base を明記\n- [wiki](wiki.md) — curl で書く';
+  const targets = [
+    memItem('p-handoff.md', '---\nname: handoff\n---\n引き継ぎの本文'),
+    memItem('p-wiki.md', '---\nname: wiki\n---\nwiki の本文'),
+  ];
+  const ctx = { projectName: 'alpha', index, usageAvailable: true };
+
+  it('索引の全文と対象全件のファイル名をプロンプトに載せる', () => {
+    const prompt = buildPrompt(targets, ctx, 'ja');
+    expect(prompt).toContain(index);
+    for (const it of targets) expect(prompt).toContain(path.basename(it.path));
+    expect(prompt).toContain('引き継ぎの本文'); // 本文も渡す
+  });
+
+  it('ja / en とも MEMORY.md の索引行に触れ、verdict の 6 値を提示する', () => {
+    for (const lang of ['ja', 'en'] as const) {
+      const prompt = buildPrompt(targets, ctx, lang);
+      expect(prompt).toContain('MEMORY.md');
+      for (const v of ['keep', 'shrink', 'to-claude-md', 'to-docs', 'delete', 'wrong-project']) {
+        expect(prompt).toContain(v);
+      }
+    }
+  });
+
+  it('usageAvailable が false なら計測不能と書き、参照回数は出さない', () => {
+    const ja = buildPrompt(targets, { ...ctx, usageAvailable: false }, 'ja');
+    expect(ja).toContain('計測不能');
+    expect(ja).not.toContain('Read: 0');
+    const en = buildPrompt(targets, { ...ctx, usageAvailable: false }, 'en');
+    expect(en).toContain('not measurable');
+    expect(en).not.toContain('Read: 0');
+  });
+});
+
+describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
+  const section = (items: SkillItem[]): MemorySection => ({
+    id: '-tmp',
+    projectPath: null,
+    projectName: 'tmp',
+    note: tmp,
+    usageAvailable: false,
+    indexTokens: 0,
+    items,
+  });
+  const entry = (over: Partial<TriageStore[string]> = {}): TriageStore[string] => ({
+    verdict: 'delete',
+    reason: '古い',
+    issues: ['58日更新なし'],
+    instruction: 'MEMORY.md の索引行を消す',
+    hash: null,
+    lang: 'ja',
+    generatedAt: '',
+    ...over,
+  });
+
+  it('hash と lang が一致するときだけ aiTriage を付ける', () => {
+    const it = memItem('at-a.md', 'aaa');
+    attachMemoryTriage([section([it])], 'ja', { [it.path]: entry({ hash: contentHash(it.path) }) });
+    expect(it.aiTriage).toEqual({
+      verdict: 'delete',
+      reason: '古い',
+      issues: ['58日更新なし'],
+      instruction: 'MEMORY.md の索引行を消す',
+    });
+  });
+
+  it('本文が変わっていれば(hash 不一致)付けない', () => {
+    const it = memItem('at-b.md', 'bbb');
+    attachMemoryTriage([section([it])], 'ja', { [it.path]: entry({ hash: 'stale-hash' }) });
+    expect(it.aiTriage).toBeUndefined();
+  });
+
+  it('lang が違えば付けない', () => {
+    const it = memItem('at-c.md', 'ccc');
+    attachMemoryTriage([section([it])], 'en', { [it.path]: entry({ hash: contentHash(it.path) }) });
+    expect(it.aiTriage).toBeUndefined();
+  });
+
+  it('ファイルが消えていれば付けない', () => {
+    const it = memItem('at-d.md', 'ddd');
+    const store: TriageStore = { [it.path]: entry({ hash: contentHash(it.path) }) };
+    fs.rmSync(it.path);
+    attachMemoryTriage([section([it])], 'ja', store);
+    expect(it.aiTriage).toBeUndefined();
   });
 });

@@ -132,6 +132,7 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
       '各メモリの「行き先」を判定し、Claude Code にそのまま貼れる指示文まで作ってください。\n\n' +
       '# 判定指針\n' +
       '| 状態 | 行き先 |\n' +
+      '|---|---|\n' +
       '| project 型で完了済み / 設計文書 | docs/ へ(to-docs) |\n' +
       '| project 型で作業中の状態メモ | issue / PR へ移し完了時に削除(to-docs) |\n' +
       '| feedback 型 | 索引 1 行で機能している。本文は縮める(shrink)。強制力が要るなら CLAUDE.md(to-claude-md) |\n' +
@@ -176,6 +177,7 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
     'Decide where each memory should go, and write an instruction the user can paste into Claude Code.\n\n' +
     '# Guidance\n' +
     '| state | destination |\n' +
+    '|---|---|\n' +
     '| type project, work already finished / design document | move to docs/ (to-docs) |\n' +
     '| type project, notes on work in progress | move to an issue / PR, delete when done (to-docs) |\n' +
     '| type feedback | already works from the one index line; shrink the body (shrink), or CLAUDE.md if it must be binding (to-claude-md) |\n' +
@@ -328,10 +330,16 @@ export async function triageProject(
   return results;
 }
 
-/* スキャン結果にキャッシュ済み診断を付与(内容が変わっていれば付けない) */
-export function attachMemoryTriage(memory: MemorySection[], lang: Lang): void {
+/*
+ * スキャン結果にキャッシュ済み診断を付与(内容が変わっていれば付けない)。
+ * store は selectStale と同じくテストから差し替えられるよう引数にする。
+ */
+export function attachMemoryTriage(
+  memory: MemorySection[],
+  lang: Lang,
+  store: TriageStore = loadTriage(),
+): void {
   if (!memory.length) return;
-  const store = loadTriage();
   for (const sec of memory) {
     for (const it of sec.items) {
       const cached = store[it.path];

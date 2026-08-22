@@ -8,7 +8,7 @@ import {
   type SkillItem,
   type SkillsData,
 } from '../api';
-import { fileBase, fmtDate, relDaysLabel } from '../util';
+import { fmtDate, memoryResolver, relDaysLabel } from '../util';
 import { esc, mdRender, splitFrontmatter } from '../md';
 import { t } from '../i18n';
 import { MemoryTypeBadge } from './GridView';
@@ -72,10 +72,7 @@ export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () =>
   }, [path]);
 
   /* 同一セクション内で name またはファイル名が一致するメモリに解決する */
-  const resolve = useMemo(() => {
-    const items = sec?.items || [];
-    return (name: string) => items.find((m) => m.name === name || fileBase(m.path) === name);
-  }, [sec]);
+  const resolve = useMemo(() => memoryResolver(sec?.items || []), [sec]);
 
   const html = useMemo(
     () => (raw === null ? '' : renderMemoryBody(splitFrontmatter(raw).body, resolve)),

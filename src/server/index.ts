@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process';
 
 import type { Lang, MemorySection, Section, SkillsData } from '../shared/types';
 import { scanSections, listProjects, HOME } from './scan';
-import { scanUsageByDir, scanMemoryUsage, encodeProjectPath } from './usage';
+import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, hasTranscripts } from './usage';
 import { scanMemory } from './memory';
 import {
   loadSummaries,
@@ -121,9 +121,8 @@ function attributeUsage(sections: Section[]): boolean {
 function attributeMemoryUsage(memory: MemorySection[]): void {
   if (!memory.length) return;
   const { byPath, dirsWithTranscripts } = scanMemoryUsage();
-  const dirs = [...dirsWithTranscripts];
   for (const sec of memory) {
-    sec.usageAvailable = dirs.some((d) => d.startsWith(sec.id));
+    sec.usageAvailable = hasTranscripts(dirsWithTranscripts, sec.id);
     for (const it of sec.items) {
       const u = byPath[it.path];
       if (!u) continue;
