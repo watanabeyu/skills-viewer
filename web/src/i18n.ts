@@ -182,19 +182,20 @@ const en = {
   'memory.triage.rerun': 'Re-run triage',
   'memory.triage.runTitle':
     'One claude CLI call reads every memory body and proposes a destination (cached per memory; only changed ones are re-asked)',
-  'memory.triage.rerunTitle': 'Re-ask for every memory, ignoring the cache (one claude CLI call)',
+  'memory.triage.rerunTitle':
+    'Re-ask for every memory, ignoring the cache (claude CLI is called once, or a few times for very large projects)',
   'memory.triage.summary': '{n} triaged — {p} proposals, {k} keep as is',
   'memory.triage.summaryWithErrors':
     '{n} triaged — {p} proposals, {k} keep as is, {e} with invalid output',
   'memory.triage.summaryPending': '{u} of {n} not triaged yet',
   'memory.triage.ctaTitle': 'Not triaged yet',
   'memory.triage.ctaBody':
-    'Nothing has been asked of the AI yet — the rows below are facts only. Run triage to read all {n} bodies in a single claude CLI call and get a destination + a paste-ready instruction for each (usually 1–2 minutes).',
+    'Nothing has been asked of the AI yet — the rows below are facts only. Run triage to read all {n} bodies with the claude CLI (one call; split into a few for very large projects) and get a destination + a paste-ready instruction for each (usually 1–2 minutes).',
   'memory.triage.ctaPartial':
-    '{u} of {n} memories changed since the last triage. Run triage to re-ask only those in a single claude CLI call.',
+    '{u} of {n} memories changed since the last triage. Run triage to re-ask only those with the claude CLI.',
   'memory.triage.busyTitle': 'Triaging…',
   'memory.triage.busyBody':
-    'Reading {n} memory bodies in one claude CLI call. This usually takes 1–2 minutes; the page updates when it finishes.',
+    'Reading {n} memory bodies with the claude CLI (one call; split into a few for very large projects). This usually takes 1–2 minutes; the page updates when it finishes.',
   'memory.triage.verdict.keep': 'Keep as is',
   'memory.triage.verdict.shrink': 'Shrink the body',
   'memory.triage.verdict.to-claude-md': 'Move to CLAUDE.md',
@@ -539,19 +540,20 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.rerun': '再診断',
   'memory.triage.runTitle':
     '全メモリの本文を 1 回の claude 呼び出しで読み、行き先を提案します(件単位キャッシュ。変更された件だけ再診断)',
-  'memory.triage.rerunTitle': 'キャッシュを無視して全件を診断し直します(claude を 1 回呼びます)',
+  'memory.triage.rerunTitle':
+    'キャッシュを無視して全件を診断し直します(claude を呼びます。通常 1 回、件数が非常に多いときは数回)',
   'memory.triage.summary': '{n} 件を診断 — {p} 件に提案、{k} 件は現状維持',
   'memory.triage.summaryWithErrors':
     '{n} 件を診断 — {p} 件に提案、{k} 件は現状維持、{e} 件は出力不正',
   'memory.triage.summaryPending': '{n} 件中 {u} 件が未診断',
   'memory.triage.ctaTitle': 'まだ診断していません',
   'memory.triage.ctaBody':
-    'AI はまだ何も読んでいません(下の行は事実の表示だけ)。「診断を実行」で {n} 件の本文を 1 回の claude 呼び出しで読み、1 件ごとに行き先と貼れる指示文を出します(通常 1〜2 分)。',
+    'AI はまだ何も読んでいません(下の行は事実の表示だけ)。「診断を実行」で {n} 件の本文を claude で読み(通常 1 回、件数が非常に多いときは数回に分割)、1 件ごとに行き先と貼れる指示文を出します(通常 1〜2 分)。',
   'memory.triage.ctaPartial':
-    '前回の診断から {n} 件中 {u} 件が変更されています。「診断を実行」でその {u} 件だけを 1 回の claude 呼び出しで診断し直します。',
+    '前回の診断から {n} 件中 {u} 件が変更されています。「診断を実行」でその {u} 件だけを claude で診断し直します。',
   'memory.triage.busyTitle': '診断中…',
   'memory.triage.busyBody':
-    '{n} 件の本文を 1 回の claude 呼び出しで読んでいます。通常 1〜2 分かかります。終わると画面が更新されます。',
+    '{n} 件の本文を claude で読んでいます(通常 1 回、件数が非常に多いときは数回に分割)。通常 1〜2 分かかります。終わると画面が更新されます。',
   'memory.triage.verdict.keep': 'このまま',
   'memory.triage.verdict.shrink': '本文を縮める',
   'memory.triage.verdict.to-claude-md': 'CLAUDE.md へ',
