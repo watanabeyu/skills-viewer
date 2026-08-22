@@ -97,7 +97,7 @@ const DESC_MAX_CHARS = 120;
  * 見出し行(# 〜 ####)だけを抜く。本文は機密・サイズの両面で渡さない。
  * コードフェンス内の「# コメント」は見出しではないので ``` / ~~~ のトグルで読み飛ばす。
  */
-function headingLines(file: string): string[] {
+export function headingLines(file: string): string[] {
   let text: string;
   try {
     text = fs.readFileSync(file, 'utf8');
@@ -105,12 +105,14 @@ function headingLines(file: string): string[] {
     return []; // 無い・読めないファイルはスキップ
   }
   const out: string[] = [];
-  let fence = ''; // 開いているフェンスの記号(閉じるのは同じ記号だけ)
+  // 開いているフェンス(記号と長さ)。CommonMark と同じく、閉じるのは同種かつ開始以上の長さで
+  // info string を持たない行だけ。入れ子(```` の中の ```)で外側が閉じたと誤認しないため
+  let fence: { ch: string; len: number } | null = null;
   for (const line of text.split('\n')) {
-    const m = /^\s*(```|~~~)/.exec(line);
+    const m = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (m) {
-      if (!fence) fence = m[1];
-      else if (m[1] === fence) fence = '';
+      if (!fence) fence = { ch: m[1][0], len: m[1].length };
+      else if (m[1][0] === fence.ch && m[1].length >= fence.len && !m[2].trim()) fence = null;
       continue;
     }
     if (!fence && /^#{1,4}\s/.test(line)) out.push(line.trimEnd());

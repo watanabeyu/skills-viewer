@@ -10,6 +10,7 @@ import {
   parseTriage,
   selectStale,
   type TriageStore,
+  headingLines,
 } from '../src/server/memory-triage';
 import { contentHash } from '../src/server/summary';
 import { triageEstimate } from '../web/src/util';
@@ -450,6 +451,26 @@ describe('collectTriageContext (常設文脈の収集)', () => {
   it('コードフェンス内の # 行は見出しとして拾わない', () => {
     const { rules } = collectTriageContext(sec, sections, { home });
     expect(rules).not.toContain('# export');
+  });
+
+  it('入れ子のフェンス(```` の中の ```)で外側が閉じたと誤認しない', () => {
+    const fp = path.join(tmp, 'nested-fence-CLAUDE.md');
+    fs.writeFileSync(
+      fp,
+      [
+        '# 通常見出し',
+        '````markdown',
+        '```bash',
+        '# export SECRET=xyz',
+        '```',
+        '````',
+        '# 後続の見出し',
+        '~~~',
+        '# tilde の中',
+        '~~~',
+      ].join('\n'),
+    );
+    expect(headingLines(fp)).toEqual(['# 通常見出し', '# 後続の見出し']);
   });
 
   it('~/.claude/CLAUDE.md の見出しをラベル付きで載せる', () => {
