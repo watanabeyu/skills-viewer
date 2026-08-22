@@ -168,14 +168,15 @@ export function MemoryGrid({
   data,
   q,
   sort,
-  ref,
+  // ref は React の予約 prop 名(memo / forwardRef で剥がされる)なので prop 名は refFilter
+  refFilter,
   onOpen,
   onOpenTriage,
 }: {
   data: SkillsData;
   q: string;
   sort: MemorySortKey;
-  ref: RefFilter;
+  refFilter: RefFilter;
   onOpen: (path: string) => void;
   onOpenTriage: (id: string) => void;
 }) {
@@ -193,7 +194,7 @@ export function MemoryGrid({
     .map((sec) => ({
       sec,
       items: sortMemory(
-        sec.items.filter((it) => matches(it, q) && refMatches(it, ref, sec.usageAvailable)),
+        sec.items.filter((it) => matches(it, q) && refMatches(it, refFilter, sec.usageAvailable)),
         sort,
       ),
     }))

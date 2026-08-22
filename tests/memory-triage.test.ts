@@ -6,6 +6,7 @@ import {
   attachMemoryTriage,
   buildPrompt,
   collectTriageContext,
+  normalizeInstruction,
   parseTriage,
   selectStale,
   type TriageStore,
@@ -134,7 +135,7 @@ describe('parseTriage', () => {
     expect(m.get('a.md')?.verdict).toBe('to-skill');
   });
 
-  it('instruction の体裁を「- 」箇条書きに正規化する(番号付き・散文・空行)', () => {
+  it('instruction の体裁を「- 」箇条書きに正規化する(番号付き・散文)', () => {
     const m = parseTriage(
       JSON.stringify([
         { file: 'a.md', verdict: 'delete', reason: 'r', issues: [], instruction: '1. a\n2. b' },
@@ -144,6 +145,33 @@ describe('parseTriage', () => {
     );
     expect(m.get('a.md')?.instruction).toBe('- a\n- b');
     expect(m.get('b.md')?.instruction).toBe('- 散文');
+  });
+
+  it('normalizeInstruction: 記号・番号・空行・インデントを剥がして「- 」に揃える', () => {
+    expect(normalizeInstruction('- a\n- b')).toBe('- a\n- b'); // 冪等
+    expect(normalizeInstruction('1) a\n2) b')).toBe('- a\n- b');
+    expect(normalizeInstruction('・a\n•b')).toBe('- a\n- b');
+    expect(normalizeInstruction('a\n\nb')).toBe('- a\n- b'); // 空行は落ちて 2 行になる
+    expect(normalizeInstruction('  - a\n    - b')).toBe('- a\n- b');
+    expect(normalizeInstruction('-\n*\n1.\n- a')).toBe('- a'); // 記号だけの行は空行扱い
+  });
+
+  it('normalizeInstruction: 区切り空白の無い数値・符号は内容として残す', () => {
+    expect(normalizeInstruction('-40 tok 減る')).toBe('- -40 tok 減る');
+    expect(normalizeInstruction('1.5 倍になる')).toBe('- 1.5 倍になる');
+    expect(normalizeInstruction('2026.08 に完了')).toBe('- 2026.08 に完了');
+  });
+
+  it('keep 以外で指示文が空(または記号だけ)の要素は捨てる', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        { file: 'a.md', verdict: 'delete', reason: 'r', issues: [], instruction: '  \n- ' },
+        { file: 'b.md', verdict: 'keep', reason: 'r', issues: [], instruction: '' },
+      ]),
+      files,
+    );
+    expect(m.has('a.md')).toBe(false); // 貼るものが無い提案は出さない
+    expect(m.get('b.md')?.verdict).toBe('keep'); // keep は元から instruction 空が正常
   });
 
   it('同じ file が重複したら先勝ち', () => {
@@ -278,8 +306,12 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
   });
 
   it('rules / skills が空なら「無し」と明示する(節ごと落とさない)', () => {
-    expect(buildPrompt(targets, ctx, 'ja')).toContain('(無し)');
-    expect(buildPrompt(targets, ctx, 'en')).toContain('(none)');
+    const ja = buildPrompt(targets, ctx, 'ja');
+    expect(ja).toContain('## CLAUDE.md の見出し\n(無し)');
+    expect(ja).toContain('## skill / command / agent\n(無し)');
+    const en = buildPrompt(targets, ctx, 'en');
+    expect(en).toContain('## CLAUDE.md headings\n(none)');
+    expect(en).toContain('## skill / command / agent\n(none)');
   });
 
   it('usageAvailable が false なら計測不能と書き、参照回数は出さない', () => {
@@ -354,12 +386,38 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
   });
 });
 
+/* 常設文脈のテスト用ヘルパ(見出しの識別子は一般語を避け、実ホームの内容と衝突させない) */
+function fakeHome(prefix: string, body: string): string {
+  const home = fs.mkdtempSync(path.join(tmp, prefix));
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.claude', 'CLAUDE.md'), body);
+  return home;
+}
+const ctxItem = (name: string, kind: SkillItem['kind'], description: string): SkillItem => ({
+  name,
+  description,
+  argumentHint: '',
+  version: '',
+  kind,
+  path: '/x/' + name,
+  files: [],
+});
+const ctxSection = (
+  id: string,
+  source: Section['source'],
+  note: string,
+  items: SkillItem[],
+): Section => ({ id, source, note, items });
+
 describe('collectTriageContext (常設文脈の収集)', () => {
+  /* 擬似ホーム。実ホームの ~/.claude/CLAUDE.md を読ませない(テストを実環境から切り離す) */
+  const home = fakeHome('home-', '# SV-TEST-HOME-HEADING\nホームの本文\n');
   /* projectPath 配下に CLAUDE.md を置いた擬似プロジェクト */
   const proj = fs.mkdtempSync(path.join(tmp, 'proj-'));
   fs.writeFileSync(
     path.join(proj, 'CLAUDE.md'),
-    '# 運用\n本文は渡さない\n## PR\n本文2\n##### 深すぎる見出し\n',
+    '# SV-TEST-PROJ-HEADING\n本文は渡さない\n## PR\n本文2\n##### 深すぎる見出し\n' +
+      '```bash\n# export TOKEN=x\n```\n',
   );
   const sec: MemorySection = {
     id: '-proj',
@@ -370,47 +428,101 @@ describe('collectTriageContext (常設文脈の収集)', () => {
     indexTokens: 0,
     items: [],
   };
-  const item = (name: string, kind: SkillItem['kind'], description: string): SkillItem => ({
-    name,
-    description,
-    argumentHint: '',
-    version: '',
-    kind,
-    path: '/x/' + name,
-    files: [],
-  });
   const sections: Section[] = [
-    { id: 'proj-0', source: 'project', note: proj, items: [item('local', 'command', 'ローカル')] },
-    { id: 'proj-1', source: 'project', note: '/other', items: [item('other', 'skill', '別')] },
-    {
-      id: 'user',
-      source: 'user',
-      note: '/u',
-      items: [item('pr-create', 'skill', 'PR を作る'), item('h', 'hook', 'フック')],
-    },
+    ctxSection('proj-0', 'project', proj, [ctxItem('local', 'command', 'ローカル')]),
+    ctxSection('proj-1', 'project', '/other', [ctxItem('other', 'skill', '別')]),
+    // 入れ子のサブプロジェクト(worktree 等)。パス接頭辞は一致するが cwd が違えば効かない
+    ctxSection('proj-2', 'project', path.join(proj, 'sub'), [ctxItem('nested', 'skill', '入れ子')]),
+    ctxSection('user', 'user', '/u', [
+      ctxItem('pr-create', 'skill', 'PR を作る'),
+      ctxItem('h', 'hook', 'フック'),
+    ]),
   ];
 
   it('見出し行だけを抽出し、本文は載せない', () => {
-    const { rules } = collectTriageContext(sec, sections);
-    expect(rules).toContain('# 運用');
+    const { rules } = collectTriageContext(sec, sections, { home });
+    expect(rules).toContain('# SV-TEST-PROJ-HEADING');
     expect(rules).toContain('## PR');
     expect(rules).not.toContain('本文は渡さない');
     expect(rules).not.toContain('##### 深すぎる見出し'); // #5 個は見出しとして扱わない
   });
 
+  it('コードフェンス内の # 行は見出しとして拾わない', () => {
+    const { rules } = collectTriageContext(sec, sections, { home });
+    expect(rules).not.toContain('# export');
+  });
+
+  it('~/.claude/CLAUDE.md の見出しをラベル付きで載せる', () => {
+    const { rules } = collectTriageContext(sec, sections, { home });
+    expect(rules).toContain('## ~/.claude/CLAUDE.md');
+    expect(rules).toContain('# SV-TEST-HOME-HEADING');
+  });
+
   it('user scope と当該プロジェクトの定義だけを列挙し、hook は除く', () => {
-    const { skills } = collectTriageContext(sec, sections);
+    const { skills } = collectTriageContext(sec, sections, { home });
     expect(skills).toContain('- command local — ローカル');
     expect(skills).toContain('- skill pr-create — PR を作る');
     expect(skills).not.toContain('other');
     expect(skills).not.toContain('フック');
   });
 
+  it('入れ子のサブプロジェクトの定義は「常時有効」に含めない(パス接頭辞一致では拾わない)', () => {
+    const { skills } = collectTriageContext(sec, sections, { home });
+    expect(skills).not.toContain('nested');
+  });
+
   /* 孤児は projectPath が無いのでプロジェクトの CLAUDE.md を特定できない(~/.claude のみ残る) */
-  it('孤児(projectPath null)はプロジェクトの見出しを載せず、skills は user scope のみ', () => {
-    const r = collectTriageContext({ ...sec, projectPath: null }, sections);
-    expect(r.rules).not.toContain('# 運用');
+  it('孤児(projectPath null)はホームの見出しだけを載せ、skills は user scope のみ', () => {
+    const r = collectTriageContext({ ...sec, projectPath: null }, sections, { home });
+    expect(r.rules).toContain('# SV-TEST-HOME-HEADING'); // ホーム分は孤児でも載る
+    expect(r.rules).not.toContain('## CLAUDE.md');
+    expect(r.rules).not.toContain('## .claude/CLAUDE.md');
+    expect(r.rules).not.toContain('# SV-TEST-PROJ-HEADING');
     expect(r.skills).not.toContain('local');
     expect(r.skills).toContain('- skill pr-create — PR を作る');
+  });
+});
+
+/* 上限は「プロンプト全体が本文で既に大きい」前提の防波堤なので、境界そのものを固定する */
+describe('collectTriageContext の上限ガード', () => {
+  const home = fakeHome('lim-home-', '# SV-TEST-HOME-HEADING\n');
+  const proj = fs.mkdtempSync(path.join(tmp, 'lim-proj-'));
+  const sec: MemorySection = {
+    id: '-lim',
+    projectPath: proj,
+    projectName: 'lim',
+    note: tmp,
+    usageAvailable: true,
+    indexTokens: 0,
+    items: [],
+  };
+  const userSection = (items: SkillItem[]): Section[] => [ctxSection('user', 'user', '/u', items)];
+
+  it('description は 120 字で切る', () => {
+    const sections = userSection([ctxItem('longdesc', 'skill', 'x'.repeat(300))]);
+    const { skills } = collectTriageContext(sec, sections, { home });
+    expect(skills).toBe('- skill longdesc — ' + 'x'.repeat(120));
+  });
+
+  it('skills は 120 行で切る', () => {
+    const items = Array.from({ length: 130 }, (_, i) => ctxItem('s' + i, 'skill', 'd'));
+    const { skills } = collectTriageContext(sec, userSection(items), { home });
+    expect(skills.split('\n')).toHaveLength(120);
+  });
+
+  it('skills は 8,000 字でも切る(行数上限を通っても総量を抑える)', () => {
+    // 120 行 × 約 135 字 ≈ 16,000 字。行数上限だけでは総量が抑えられないことを示す
+    const items = Array.from({ length: 120 }, (_, i) => ctxItem('s' + i, 'skill', 'd'.repeat(120)));
+    const { skills } = collectTriageContext(sec, userSection(items), { home });
+    expect(skills).toHaveLength(8000);
+  });
+
+  it('rules は 80 行で切る', () => {
+    fs.writeFileSync(
+      path.join(proj, 'CLAUDE.md'),
+      Array.from({ length: 100 }, (_, i) => '# H-' + i).join('\n'),
+    );
+    const { rules } = collectTriageContext(sec, [], { home });
+    expect(rules.split('\n')).toHaveLength(80);
   });
 });

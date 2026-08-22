@@ -20,7 +20,7 @@ import type {
   Section,
   SkillItem,
 } from '../shared/types';
-import { parseFrontmatter } from './scan';
+import { HOME, parseFrontmatter } from './scan';
 import { contentHash, runClaude } from './summary';
 
 const TRIAGE_FILE = path.join(os.homedir(), '.cache', 'skills-viewer', 'memory-triage.json');
@@ -90,30 +90,47 @@ export interface TriageContext {
 const RULES_MAX_LINES = 80;
 const RULES_MAX_CHARS = 6000;
 const SKILLS_MAX_LINES = 120;
+const SKILLS_MAX_CHARS = 8000;
 const DESC_MAX_CHARS = 120;
 
-/* 見出し行(# 〜 ####)だけを抜く。本文は機密・サイズの両面で渡さない */
+/*
+ * 見出し行(# 〜 ####)だけを抜く。本文は機密・サイズの両面で渡さない。
+ * コードフェンス内の「# コメント」は見出しではないので ``` / ~~~ のトグルで読み飛ばす。
+ */
 function headingLines(file: string): string[] {
+  let text: string;
   try {
-    return fs
-      .readFileSync(file, 'utf8')
-      .split('\n')
-      .filter((l) => /^#{1,4}\s/.test(l))
-      .map((l) => l.trimEnd());
+    text = fs.readFileSync(file, 'utf8');
   } catch {
     return []; // 無い・読めないファイルはスキップ
   }
+  const out: string[] = [];
+  let fence = ''; // 開いているフェンスの記号(閉じるのは同じ記号だけ)
+  for (const line of text.split('\n')) {
+    const m = /^\s*(```|~~~)/.exec(line);
+    if (m) {
+      if (!fence) fence = m[1];
+      else if (m[1] === fence) fence = '';
+      continue;
+    }
+    if (!fence && /^#{1,4}\s/.test(line)) out.push(line.trimEnd());
+  }
+  return out;
 }
 
 /*
  * プロンプトに載せる「常設文脈」を集める。
  * rules = CLAUDE.md の見出しだけ、skills = このプロジェクトで使える定義の name — description。
- * 孤児(projectPath null)は CLAUDE.md を特定できないので rules は空、skills は user scope のみ。
+ * 孤児(projectPath null)はプロジェクトの CLAUDE.md を特定できないので
+ * `~/.claude/CLAUDE.md` の見出しのみ、skills は user scope のみ。
+ * home は既定で scan.ts の HOME。テストから擬似ホームを差せるよう引数にする(実環境依存を断つ)。
  */
 export function collectTriageContext(
   sec: MemorySection,
   sections: Section[],
+  opts: { home?: string } = {},
 ): { rules: string; skills: string } {
+  const home = opts.home || HOME;
   const pp = sec.projectPath;
   const files: { file: string; label: string }[] = [];
   if (pp) {
@@ -121,7 +138,7 @@ export function collectTriageContext(
     files.push({ file: path.join(pp, '.claude', 'CLAUDE.md'), label: '.claude/CLAUDE.md' });
   }
   files.push({
-    file: path.join(os.homedir(), '.claude', 'CLAUDE.md'),
+    file: path.join(home, '.claude', 'CLAUDE.md'),
     label: '~/.claude/CLAUDE.md',
   });
 
@@ -135,9 +152,9 @@ export function collectTriageContext(
 
   const skillLines: string[] = [];
   for (const s of sections) {
-    const inScope =
-      s.source === 'user' ||
-      (s.source === 'project' && !!pp && (s.note === pp || s.note.startsWith(pp + path.sep)));
+    // project は完全一致だけ。入れ子の別プロジェクト(サブディレクトリ・worktree)の定義は
+    // cwd がそこでないと効かないので「このプロジェクトで常時有効」には載せない
+    const inScope = s.source === 'user' || (s.source === 'project' && !!pp && s.note === pp);
     if (!inScope) continue;
     for (const it of s.items) {
       if (it.kind === 'hook') continue; // hook は name/description を注入しないので昇格先にならない
@@ -146,7 +163,9 @@ export function collectTriageContext(
       );
     }
   }
-  return { rules, skills: skillLines.slice(0, SKILLS_MAX_LINES).join('\n') };
+  // rules と同じく行数・文字数の二重上限(1 行が極端に長い description でも総量が跳ねないように)
+  const skills = skillLines.slice(0, SKILLS_MAX_LINES).join('\n').slice(0, SKILLS_MAX_CHARS);
+  return { rules, skills };
 }
 
 /* 1 件分の事実 + 本文。本文は diagnose.ts と同じく 12,000 字で切る */
@@ -342,12 +361,15 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
 export function normalizeInstruction(text: string): string {
   return text
     .split('\n')
-    .map((line) =>
-      line
-        .trim()
-        .replace(/^(?:\d+[.)]|[-*・•])\s*/, '')
-        .trim(),
-    )
+    .map((line) => {
+      const s = line.trim(); // インデントは先に落とす(「  - a」も箇条書きとして扱う)
+      // 記号だけの行は中身が無いので空行と同じ扱いで捨てる
+      if (/^(?:\d+[.)]|[-*・•])$/.test(s)) return '';
+      // ASCII 記号・番号は区切りの空白を必須にする。空白ゼロを許すと
+      // 「-40 tok」→「40 tok」、「1.5 倍」→「5 倍」と内容が変わってしまう。
+      // 「・」「•」は数値・符号と紛れないので、空白なしの「・a」も箇条書きとして剥がす
+      return s.replace(/^(?:(?:\d+[.)]|[-*])\s+|[・•]\s*)/, '').trim();
+    })
     .filter((line) => line.length > 0)
     .map((line) => '- ' + line)
     .join('\n');
@@ -377,6 +399,9 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
       .slice(0, 4);
     const instruction =
       verdict === 'keep' ? '' : normalizeInstruction(String(e?.instruction || ''));
+    // 行き先だけ言って指示文が無い件は貼るものが無く、サマリ・試算・まとめコピーで数え方がずれる。
+    // 不正な verdict と同じく「誤った提案を出すより欠けるほうが安全」で捨てる
+    if (verdict !== 'keep' && !instruction) continue;
     out.set(file, {
       verdict,
       reason: String(e?.reason || '')
@@ -419,7 +444,8 @@ export async function triageProject(
   sec: MemorySection,
   lang: Lang,
   model: AiModel = 'haiku',
-  opts: { force?: boolean; files?: string[]; sections?: Section[] } = {},
+  // sections は遅延評価。キャッシュ済みの再訪ではフルスキャンを払わずに済ませる
+  opts: { force?: boolean; files?: string[]; sections?: () => Section[] } = {},
 ): Promise<TriageResult[]> {
   const wanted = opts.files?.length ? new Set(opts.files.map((f) => path.basename(f))) : null;
   const targets = wanted
@@ -430,7 +456,7 @@ export async function triageProject(
   const store = loadTriage();
   const stale = selectStale(targets, store, lang, !!opts.force);
   if (stale.length) {
-    const standing = collectTriageContext(sec, opts.sections || []);
+    const standing = collectTriageContext(sec, opts.sections?.() || []);
     const ctx: TriageContext = {
       projectName: sec.projectName,
       index: readIndexText(sec.note),

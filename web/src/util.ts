@@ -180,9 +180,10 @@ export function sortMemory<T extends SkillItem>(items: T[], sort: MemorySortKey)
     arr.sort((a, b) => (b.indexTokens || 0) - (a.indexTokens || 0) || byName(a, b));
   else if (sort === 'body')
     arr.sort((a, b) => (b.bodyTokens || 0) - (a.bodyTokens || 0) || byName(a, b));
-  // 更新が古い順(棚卸し候補が先頭に来る)。更新日不明は末尾
+  // 更新が古い順(棚卸し候補が先頭に来る)。更新日不明は末尾。
+  // サーバーは stat 失敗時に updatedAt: 0 を載せるので、?? ではなく falsy で不明扱いにする
   else if (sort === 'updated')
-    arr.sort((a, b) => (a.updatedAt ?? Infinity) - (b.updatedAt ?? Infinity) || byName(a, b));
+    arr.sort((a, b) => (a.updatedAt || Infinity) - (b.updatedAt || Infinity) || byName(a, b));
   else arr.sort(byName);
   return arr;
 }
@@ -242,6 +243,32 @@ export function triageEstimate(it: SkillItem): { index: number; always: number }
   // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)
   if (v === 'to-claude-md') return { index: -index, always: it.bodyTokens || 0 };
   return null;
+}
+
+/* 提案(指示文)のある memory だけ。サマリ・まとめコピーが同じ母集団を見るよう 1 箇所に置く */
+export const instructionsOf = (items: SkillItem[]) =>
+  items.filter((it) => it.aiTriage && it.aiTriage.instruction);
+
+/*
+ * コピーする指示文には「まず確認してから実行」の前置きを付ける。貼り先の Claude Code に
+ * dry run(読み取り → 作業内容の提示 → 承認)を求めるためで、毎回手で書き足さなくて済むようにする。
+ */
+export const withPreamble = (body: string) => t('memory.triage.copyPreamble') + '\n\n' + body;
+
+/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用)。前置きは先頭に 1 回だけ */
+export const joinInstructions = (items: SkillItem[]) =>
+  withPreamble(
+    instructionsOf(items)
+      .map((it) => '## ' + it.name + '\n\n' + it.aiTriage!.instruction)
+      .join('\n\n'),
+  );
+
+/* memory 一覧(view=memory)へ戻る URL。詳細のタブ状態は持ち越さない(次のカードが本文タブで開くのを防ぐ) */
+export function memoryListSearch(params: URLSearchParams): string {
+  const next = new URLSearchParams(params);
+  next.set('view', 'memory');
+  next.delete('tab');
+  return next.toString();
 }
 
 /* クリップボードコピー(指示文の貼り付け用。失敗はボタン側で握り潰さず呼び出し元へ) */

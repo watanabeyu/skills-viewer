@@ -956,7 +956,7 @@ button {
 
 /* SKILL.md rendering */
 .fm-box {
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 10.5px;
   color: #8a8579;
   background: #faf9f7;
@@ -1424,7 +1424,10 @@ button {
   padding: 10px 12px;
 }
 
-/* ---- memory (plan 10): 値は docs/plans/design/{Main,Detail,Triage}.dc.html の <style> から実測転記 ---- */
+/* ---- memory (plan 10): 値は docs/plans/design/{Main,Detail,Triage}.dc.html の <style> から実測転記 ----
+ * 非採用: モックの `.card .meta .tok i`(本文 tok の淡色表示)は切替条件が特定できないため入れていない。
+ * `.sec-t` は skill 詳細と共有のため letter-spacing / color は既存値を維持(モックは 0.08em / #a39d90)。
+ */
 .orphan-badge {
   font-size: 10px;
   color: #8a6d3b;

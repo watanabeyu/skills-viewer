@@ -13,6 +13,7 @@ import {
   backlinksOf,
   fmtMD,
   matches,
+  memoryListSearch,
   memoryResolver,
   refMatches,
   sortMemory,
@@ -57,13 +58,14 @@ export function MemoryDetail({
   data,
   q,
   sort,
-  ref,
+  // ref は React の予約 prop 名(memo / forwardRef で剥がされる)なので prop 名は refFilter
+  refFilter,
   reload,
 }: {
   data: SkillsData;
   q: string;
   sort: MemorySortKey;
-  ref: RefFilter;
+  refFilter: RefFilter;
   reload: () => Promise<void>;
 }) {
   const { id } = useParams();
@@ -106,11 +108,8 @@ export function MemoryDetail({
   );
 
   // 存在しない id は memory 一覧へ戻す(skill 詳細と同じ挙動)
-  const listSearch = new URLSearchParams(params);
-  listSearch.set('view', 'memory');
-  listSearch.delete('tab');
-  if (!sec || !it)
-    return <Navigate to={{ pathname: '/', search: listSearch.toString() }} replace />;
+  const listSearch = memoryListSearch(params);
+  if (!sec || !it) return <Navigate to={{ pathname: '/', search: listSearch }} replace />;
 
   const tab = params.get('tab') === 'body' ? 'body' : 'overview';
   const setTab = (name: 'overview' | 'body') => {
@@ -160,7 +159,7 @@ export function MemoryDetail({
 
   // 左カラムは一覧と同じ検索・参照フィルタ・並び順を映す(skill 詳細の LeftColumn と同じ流儀)
   const listItems = sortMemory(
-    sec.items.filter((x) => matches(x, q) && refMatches(x, ref, sec.usageAvailable)),
+    sec.items.filter((x) => matches(x, q) && refMatches(x, refFilter, sec.usageAvailable)),
     sort,
   );
   const unread = sec.usageAvailable && !it.useCount;
@@ -170,7 +169,8 @@ export function MemoryDetail({
       <div className="left-col">
         <MemoryHeading
           sec={sec}
-          count={sec.items.length}
+          /* 左カラムは listItems(検索・参照フィルタ後)を描くので、件数も一覧と同じくフィルタ後の数 */
+          count={listItems.length}
           tokLabel={'≈' + sec.indexTokens.toLocaleString()}
         />
         {listItems.map((o) => (
@@ -190,10 +190,7 @@ export function MemoryDetail({
       </div>
       <div className="pane">
         <div className="pane-top">
-          <button
-            className="back"
-            onClick={() => navigate({ pathname: '/', search: listSearch.toString() })}
-          >
+          <button className="back" onClick={() => navigate({ pathname: '/', search: listSearch })}>
             {t('memory.back')}
           </button>
           {/* memory は完全読み取り専用: 削除・コピーは置かない(変更は指示文経由で Claude Code に委ねる) */}

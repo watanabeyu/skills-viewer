@@ -42,7 +42,10 @@ const SORT_KEYS: [SortKey, MsgKey][] = [
   ['tokens', 'sort.tokens'],
 ];
 
-/* memory 軸の並び順。URL の sort パラメータは skill と共用し、memory 軸で未知の値なら既定(index)に落とす */
+/*
+ * memory 軸の並び順。URL パラメータは skill 軸の sort と分けて msort に置く
+ * (updated は skill = 新しい順 / memory = 古い順で意味が逆、値の集合も違うため)。
+ */
 const MEM_SORT_KEYS: [MemorySortKey, MsgKey][] = [
   ['index', 'sort.memIndex'],
   ['body', 'sort.memBody'],
@@ -66,12 +69,16 @@ export default function App() {
   const navigate = useNavigate();
 
   const q = (params.get('q') || '').toLowerCase();
-  const sort = (params.get('sort') || 'name') as SortKey;
-  const memSort: MemorySortKey = MEM_SORT_KEYS.some(([k]) => k === params.get('sort'))
-    ? (params.get('sort') as MemorySortKey)
+  // 未知の値(他軸の並び順が混ざった共有 URL 等)は select の空欄を避けるため既定に落とす
+  const sortParam = params.get('sort');
+  const sort: SortKey = SORT_KEYS.some(([k]) => k === sortParam) ? (sortParam as SortKey) : 'name';
+  const msortParam = params.get('msort');
+  const memSort: MemorySortKey = MEM_SORT_KEYS.some(([k]) => k === msortParam)
+    ? (msortParam as MemorySortKey)
     : 'index';
   const refParam = params.get('ref');
-  const ref: RefFilter = refParam === 'read' || refParam === 'unread' ? refParam : 'all';
+  // URL パラメータ名は ref のまま。変数・prop 名だけ React の予約 prop 名を避ける
+  const refFilter: RefFilter = refParam === 'read' || refParam === 'unread' ? refParam : 'all';
   // v0.5.0 までの共有 URL(grouped=0)はフラット表示として解釈する
   const view = (params.get('view') ||
     (params.get('grouped') === '0' ? 'flat' : 'source')) as ViewMode;
@@ -130,14 +137,15 @@ export default function App() {
       return memory.reduce(
         (n, s) =>
           n +
-          s.items.filter((it) => matches(it, q) && refMatches(it, ref, s.usageAvailable)).length,
+          s.items.filter((it) => matches(it, q) && refMatches(it, refFilter, s.usageAvailable))
+            .length,
         0,
       );
     return all.filter(
       (it) =>
         kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, !!data?.usageAvailable),
     ).length;
-  }, [all, memory, view, q, kind, use, ref, data]);
+  }, [all, memory, view, q, kind, use, refFilter, data]);
 
   /* 現在プロジェクトでの1セッションに注入される分(built-in + plugin + user + current project) */
   const sessionTokens = useMemo(() => {
@@ -149,7 +157,11 @@ export default function App() {
   }, [data]);
 
   const openSkill = (key: string) => {
-    navigate({ pathname: '/skills/' + toId(key), search: params.toString() });
+    // memory 軸のまま skill 詳細に入ると DetailView の「← 一覧」が memory 一覧に戻ってしまうので
+    // (What's Changed バナー経由で起きる)、view を落として skill 側の一覧に戻す
+    const next = new URLSearchParams(params);
+    if (view === 'memory') next.delete('view');
+    navigate({ pathname: '/skills/' + toId(key), search: next.toString() });
   };
   /* memory は同名の別定義が無いので、識別子はファイルパスだけで足りる */
   const openMemory = (path: string) => {
@@ -290,7 +302,7 @@ export default function App() {
                 className="sel"
                 value={memSort}
                 onChange={(e) =>
-                  setParam('sort', e.target.value === 'index' ? null : e.target.value)
+                  setParam('msort', e.target.value === 'index' ? null : e.target.value)
                 }
                 title={t('sort.title')}
               >
@@ -306,8 +318,8 @@ export default function App() {
               </select>
               {refAvailable && (
                 <select
-                  className={'sel' + (ref !== 'all' ? ' on' : '')}
-                  value={ref}
+                  className={'sel' + (refFilter !== 'all' ? ' on' : '')}
+                  value={refFilter}
                   title={t('filter.refTitle')}
                   onChange={(e) =>
                     setParam('ref', e.target.value === 'all' ? null : e.target.value)
@@ -440,7 +452,7 @@ export default function App() {
                   data={data}
                   q={q}
                   sort={memSort}
-                  ref={ref}
+                  refFilter={refFilter}
                   onOpen={openMemory}
                   onOpenTriage={openTriage}
                 />
@@ -481,7 +493,15 @@ export default function App() {
           />
           <Route
             path="/memory/:id"
-            element={<MemoryDetail data={data} q={q} sort={memSort} ref={ref} reload={reload} />}
+            element={
+              <MemoryDetail
+                data={data}
+                q={q}
+                sort={memSort}
+                refFilter={refFilter}
+                reload={reload}
+              />
+            }
           />
         </Routes>
       )}

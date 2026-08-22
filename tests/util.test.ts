@@ -5,14 +5,18 @@ import {
   backlinksOf,
   brokenLinkCount,
   invocationOf,
+  joinInstructions,
   kindMatches,
+  memoryListSearch,
   refMatches,
   sameNameOthers,
   sortItems,
   sortMemory,
   usageLine,
   usageMatches,
+  withPreamble,
 } from '../web/src/util';
+import { t } from '../web/src/i18n';
 
 const base = (over: Partial<SkillItem> = {}): SkillItem => ({
   name: 'foo',
@@ -149,6 +153,11 @@ describe('sortMemory (memory 軸の並び順)', () => {
   it('updated は更新が古い順(更新日不明は末尾)', () => {
     expect(sortMemory(items, 'updated').map((i) => i.name)).toEqual(['a', 'b', 'c']);
   });
+  /* サーバーは stat に失敗した項目に updatedAt: 0 を載せるので、0 も「不明」として末尾に置く */
+  it('updatedAt: 0(stat 失敗)は最古ではなく不明として末尾', () => {
+    const withZero = [...items, mem('z', { updatedAt: 0 })];
+    expect(sortMemory(withZero, 'updated').map((i) => i.name)).toEqual(['a', 'b', 'c', 'z']);
+  });
   it('name は名前順', () => {
     expect(sortMemory(items, 'name').map((i) => i.name)).toEqual(['a', 'b', 'c']);
   });
@@ -197,5 +206,56 @@ describe('backlinksOf / brokenLinkCount ([[link]] の被リンクとリンク切
     expect(brokenLinkCount(handoff, items)).toBe(1); // nope
     expect(brokenLinkCount(deploy, items)).toBe(0);
     expect(brokenLinkCount(wiki, items)).toBe(0); // links 無し
+  });
+});
+
+describe('joinInstructions / withPreamble (まとめコピーの本文)', () => {
+  const tri = (instruction: string): SkillItem['aiTriage'] => ({
+    verdict: 'delete',
+    reason: '',
+    issues: [],
+    instruction,
+  });
+  const items = [
+    mem('alpha', { aiTriage: tri('- alpha を消す') }),
+    mem('beta', { aiTriage: tri('') }), // 提案なし(keep 相当)
+    mem('gamma', { aiTriage: tri('- gamma を docs/ へ') }),
+    mem('delta'), // 未診断
+  ];
+  const preamble = t('memory.triage.copyPreamble');
+
+  it('前置きは本文の先頭に 1 回だけ付く', () => {
+    const text = joinInstructions(items);
+    expect(text.startsWith(preamble + '\n\n')).toBe(true);
+    expect(text.split(preamble)).toHaveLength(2); // 出現は 1 回
+    expect(withPreamble('body')).toBe(preamble + '\n\nbody');
+  });
+
+  it('各件は「## name」見出しで区切る', () => {
+    const text = joinInstructions(items);
+    expect(text).toContain('## alpha\n\n- alpha を消す');
+    expect(text).toContain('## gamma\n\n- gamma を docs/ へ');
+  });
+
+  it('指示文が空の件・未診断の件は含めない', () => {
+    const text = joinInstructions(items);
+    expect(text).not.toContain('## beta');
+    expect(text).not.toContain('## delta');
+  });
+});
+
+describe('memoryListSearch (memory 一覧へ戻る URL)', () => {
+  it('view=memory を立て、詳細のタブ状態は捨てる(他の条件は保つ)', () => {
+    const params = new URLSearchParams('q=foo&msort=body&tab=body&view=source');
+    const next = new URLSearchParams(memoryListSearch(params));
+    expect(next.get('view')).toBe('memory');
+    expect(next.get('tab')).toBeNull();
+    expect(next.get('q')).toBe('foo');
+    expect(next.get('msort')).toBe('body');
+  });
+  it('渡された params は変更しない', () => {
+    const params = new URLSearchParams('tab=body');
+    memoryListSearch(params);
+    expect(params.get('tab')).toBe('body');
   });
 });

@@ -312,11 +312,12 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         const files = Array.isArray(data.files)
           ? data.files.filter((f: unknown): f is string => typeof f === 'string')
           : undefined;
-        // sections は「CLAUDE.md / skill に既に書いてある」「skill へ昇格」を判定させる文脈として渡す
+        // sections は「CLAUDE.md / skill に既に書いてある」「skill へ昇格」を判定させる文脈。
+        // AI を呼ぶときだけ要るので、フルスキャンは関数で渡して遅延させる
         triageProject(sec, lang, model, {
           force: !!data.force,
           files,
-          sections: scanSections(cwd, lang),
+          sections: () => scanSections(cwd, lang),
         })
           .then((results) => send(200, { ok: true, results }))
           .catch((e) => send(400, toErrorBody(e)));

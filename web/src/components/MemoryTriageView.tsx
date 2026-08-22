@@ -8,7 +8,15 @@ import {
   type SkillItem,
   type SkillsData,
 } from '../api';
-import { copyText, fileName, triageEstimate } from '../util';
+import {
+  copyText,
+  fileName,
+  instructionsOf,
+  joinInstructions,
+  memoryListSearch,
+  triageEstimate,
+  withPreamble,
+} from '../util';
 import { memoryVerdictLabel, t } from '../i18n';
 import { KindBadge } from './GridView';
 import { MemoryTypeBadge, TokFacts } from './MemoryBits';
@@ -21,23 +29,6 @@ import { MemoryTypeBadge, TokFacts } from './MemoryBits';
 
 /* 試算の符号付き表記(0 は増減なしを明示するため ±0) */
 const signed = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n).toLocaleString();
-
-const instructionsOf = (items: SkillItem[]) =>
-  items.filter((it) => it.aiTriage && it.aiTriage.instruction);
-
-/*
- * コピーする指示文には「まず確認してから実行」の前置きを付ける。貼り先の Claude Code に
- * dry run(読み取り → 作業内容の提示 → 承認)を求めるためで、毎回手で書き足さなくて済むようにする。
- */
-const withPreamble = (body: string) => t('memory.triage.copyPreamble') + '\n\n' + body;
-
-/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用) */
-const joinInstructions = (items: SkillItem[]) =>
-  withPreamble(
-    instructionsOf(items)
-      .map((it) => '## ' + it.name + '\n\n' + it.aiTriage!.instruction)
-      .join('\n\n'),
-  );
 
 /*
  * 削減試算のラベル。機械層で計算する(AI に数値を出させない)。
@@ -171,9 +162,8 @@ export function MemoryTriageView({
 
   const sec = (data.memory || []).find((s) => s.id === project);
   // 存在しないプロジェクト(削除・リネーム後の共有 URL)は memory 一覧へ戻す
-  const listSearch = new URLSearchParams(params);
-  listSearch.set('view', 'memory');
-  if (!sec) return <Navigate to={{ pathname: '/', search: listSearch.toString() }} replace />;
+  const listSearch = memoryListSearch(params);
+  if (!sec) return <Navigate to={{ pathname: '/', search: listSearch }} replace />;
 
   const untriagedCount = sec.items.filter((it) => !it.aiTriage).length;
   const proposals = instructionsOf(sec.items);
@@ -205,10 +195,7 @@ export function MemoryTriageView({
     <div className="triage-view">
       <div className="hd">
         <div className="t-row">
-          <button
-            className="pbtn"
-            onClick={() => navigate({ pathname: '/', search: listSearch.toString() })}
-          >
+          <button className="pbtn" onClick={() => navigate({ pathname: '/', search: listSearch })}>
             {t('memory.triage.back')}
           </button>
           <h1>{t('memory.triage.title', { project: sec.projectName })}</h1>
