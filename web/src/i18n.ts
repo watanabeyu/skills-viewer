@@ -94,6 +94,21 @@ const en = {
   'memory.linkBroken': 'unresolved',
   'memory.linkBrokenTitle': 'No memory with this name in this project',
   'memory.originSession': 'Session {id}',
+  'memory.secTokens': 'index ≈{n} tok/session',
+  'memory.secTokensTitle':
+    'Approx. tokens of this project’s MEMORY.md index lines. The index lists every memory and is injected into every session, whether or not the bodies are read.',
+  'memory.indexTok': 'index {n} tok',
+  'memory.indexTokTitle':
+    'Always-on cost: this memory’s line in MEMORY.md, injected into every session (0 = not listed in the index)',
+  'memory.bodyTok': 'body {n} tok',
+  'memory.bodyTokTitle': 'Pay-per-use cost: the whole body, charged only when it is Read',
+  'memory.reads': 'Read {n}',
+  'memory.readsTitle':
+    'Times this memory was Read within the transcript retention window (default 30 days). 0 does not mean it has never been read.',
+  'memory.writes': 'W/E {n}',
+  'memory.writesTitle':
+    'Times this memory was created or updated (Write / Edit) within the transcript retention window',
+  'memory.lastRead': 'last Read {date}',
 
   'detail.back': '← Back to list',
   'detail.lastUpdated': 'Last updated {date}',
@@ -329,6 +344,21 @@ const ja: Record<MsgKey, string> = {
   'memory.linkBroken': 'リンク切れ',
   'memory.linkBrokenTitle': 'このプロジェクトに同名のメモリがありません',
   'memory.originSession': 'セッション {id}',
+  'memory.secTokens': '索引 ≈{n}tok/セッション',
+  'memory.secTokensTitle':
+    'このプロジェクトの MEMORY.md の索引行の概算トークン。索引は全メモリ分が、本文を読むかどうかに関わらず毎セッション注入されます',
+  'memory.indexTok': '索引 {n} tok',
+  'memory.indexTokTitle':
+    '常時コスト: このメモリの MEMORY.md 上の索引行。毎セッション注入されます(0 = 索引に載っていない)',
+  'memory.bodyTok': '本文 {n} tok',
+  'memory.bodyTokTitle': '従量コスト: 本文全体。Read されたときだけかかります',
+  'memory.reads': 'Read {n}回',
+  'memory.readsTitle':
+    'トランスクリプト保持期間内(既定30日)にこのメモリが Read された回数。0 でも「一度も読まれていない」ことは意味しません',
+  'memory.writes': 'W/E {n}回',
+  'memory.writesTitle':
+    'トランスクリプト保持期間内にこのメモリが作成・更新された回数(Write / Edit)',
+  'memory.lastRead': '最終 Read {date}',
 
   'detail.back': '← 一覧に戻る',
   'detail.lastUpdated': '最終更新 {date}',

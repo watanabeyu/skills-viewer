@@ -84,12 +84,15 @@ export function SectionHeading({
   count,
   small,
   tokens,
+  extra,
 }: {
   section: Section;
   count: number;
   small?: boolean;
   /* セクション全体(フィルタ前)の注入トークン概算。省略時は非表示 */
   tokens?: number;
+  /* tokens と同じ位置に差し込む追加表示。memory は文言・tooltip が異なるため自前で描く */
+  extra?: React.ReactNode;
 }) {
   return (
     <div className={'sec-h' + (small ? ' sm' : '')}>
@@ -101,6 +104,7 @@ export function SectionHeading({
           {t('sec.tokens', { n: tokens.toLocaleString() })}
         </span>
       )}
+      {extra}
       <span className="ln" />
     </div>
   );
@@ -379,7 +383,19 @@ function memoryAsSection(sec: MemorySection): Section {
   };
 }
 
-function MemoryRow({ it, onOpen }: { it: SkillItem; onOpen: (path: string) => void }) {
+/*
+ * 索引 tok(常時コスト)と本文 tok(Read されたときの従量コスト)は性質が違うので必ず並べて出す。
+ * Read / W-E はトランスクリプトが 1 件も無いプロジェクトでは無意味なので列ごと出さない。
+ */
+function MemoryRow({
+  it,
+  usageAvailable,
+  onOpen,
+}: {
+  it: SkillItem;
+  usageAvailable: boolean;
+  onOpen: (path: string) => void;
+}) {
   return (
     <button className="mem-row" onClick={() => onOpen(it.path)}>
       <span className="r1">
@@ -387,7 +403,27 @@ function MemoryRow({ it, onOpen }: { it: SkillItem; onOpen: (path: string) => vo
         <MemoryTypeBadge it={it} />
         <span className="age">{relDaysLabel(it.updatedAt)}</span>
       </span>
-      <span className="d1">{it.description}</span>
+      <span className="d-row">
+        <span className="d1">{it.description}</span>
+        <span className="mem-meta">
+          <span title={t('memory.indexTokTitle')}>
+            {t('memory.indexTok', { n: (it.indexTokens || 0).toLocaleString() })}
+          </span>
+          <span title={t('memory.bodyTokTitle')}>
+            {t('memory.bodyTok', { n: (it.bodyTokens || 0).toLocaleString() })}
+          </span>
+          {usageAvailable && (
+            <>
+              <span title={t('memory.readsTitle')}>
+                {t('memory.reads', { n: it.useCount || 0 })}
+              </span>
+              <span title={t('memory.writesTitle')}>
+                {t('memory.writes', { n: it.writeCount || 0 })}
+              </span>
+            </>
+          )}
+        </span>
+      </span>
     </button>
   );
 }
@@ -420,7 +456,19 @@ export function MemoryList({
       {shown.map(({ sec, items }) => (
         <div key={sec.id}>
           <div className="mem-sec-h">
-            <SectionHeading section={memoryAsSection(sec)} count={items.length} small />
+            <SectionHeading
+              section={memoryAsSection(sec)}
+              count={items.length}
+              small
+              /* 索引はフィルタと無関係に全件が毎セッション注入されるので sec.indexTokens をそのまま出す */
+              extra={
+                !!sec.indexTokens && (
+                  <span className="sec-tok" title={t('memory.secTokensTitle')}>
+                    {t('memory.secTokens', { n: sec.indexTokens.toLocaleString() })}
+                  </span>
+                )
+              }
+            />
             {sec.orphan && (
               <span className="orphan-badge" title={t('memory.orphanTitle')}>
                 {t('memory.orphan')}
@@ -429,7 +477,12 @@ export function MemoryList({
           </div>
           <div className="mem-list">
             {items.map((it) => (
-              <MemoryRow key={it.path} it={it} onOpen={onOpen} />
+              <MemoryRow
+                key={it.path}
+                it={it}
+                usageAvailable={sec.usageAvailable}
+                onOpen={onOpen}
+              />
             ))}
           </div>
         </div>

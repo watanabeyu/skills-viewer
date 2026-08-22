@@ -99,6 +99,8 @@ export interface SkillItem {
   links?: string[];
   /* このメモリを書いたセッションの id(frontmatter 由来) */
   originSessionId?: string;
+  /* Write / Edit の回数(作成・更新)。参照回数は useCount 側。0 回なら省略 */
+  writeCount?: number;
 }
 
 /*

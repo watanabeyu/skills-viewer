@@ -10,9 +10,9 @@ import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 
-import type { Lang, Section, SkillsData } from '../shared/types';
+import type { Lang, MemorySection, Section, SkillsData } from '../shared/types';
 import { scanSections, listProjects, HOME } from './scan';
-import { scanUsageByDir, encodeProjectPath } from './usage';
+import { scanUsageByDir, scanMemoryUsage, encodeProjectPath } from './usage';
 import { scanMemory } from './memory';
 import {
   loadSummaries,
@@ -111,6 +111,31 @@ function attributeUsage(sections: Section[]): boolean {
   return Object.keys(byDir).length > 0;
 }
 
+/*
+ * memory の Read(参照)/ Write・Edit(作成・更新)実績を付与する。
+ * skill と違って帰属先の解決は不要で、Read の file_path がそのまま実ファイルを指す。
+ * usageAvailable は「そのプロジェクトのトランスクリプトがあるか」= エンコード名で始まる
+ * ディレクトリ(worktree 分を含む)に jsonl が 1 件以上あるか。false なら Read 列は出さない。
+ */
+function attributeMemoryUsage(memory: MemorySection[]): void {
+  if (!memory.length) return;
+  const { byPath, dirsWithTranscripts } = scanMemoryUsage();
+  const dirs = [...dirsWithTranscripts];
+  for (const sec of memory) {
+    sec.usageAvailable = dirs.some((d) => d.startsWith(sec.id));
+    for (const it of sec.items) {
+      const u = byPath[it.path];
+      if (!u) continue;
+      if (u.reads > 0) {
+        it.useCount = u.reads;
+        it.lastUsed = u.lastRead;
+        it.dailyUse = u.daily;
+      }
+      if (u.writes > 0) it.writeCount = u.writes;
+    }
+  }
+}
+
 function collect(cwd: string, lang: Lang): SkillsData {
   const sections = scanSections(cwd, lang);
   const usageAvailable = attributeUsage(sections);
@@ -142,6 +167,7 @@ function collect(cwd: string, lang: Lang): SkillsData {
   const aiStale = staleItems(sections, lang).length;
   // memory は「呼び出す」ものではないので sections には混ぜず、別配列で同乗させる
   const memory = scanMemory(cwd);
+  attributeMemoryUsage(memory);
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
     ...listProjects(cwd)

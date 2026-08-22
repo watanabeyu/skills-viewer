@@ -8,7 +8,7 @@ import {
   type SkillItem,
   type SkillsData,
 } from '../api';
-import { relDaysLabel } from '../util';
+import { fmtDate, relDaysLabel } from '../util';
 import { esc, mdRender, splitFrontmatter } from '../md';
 import { t } from '../i18n';
 import { MemoryTypeBadge } from './GridView';
@@ -118,6 +118,28 @@ export function MemoryDetail({ data }: { data: SkillsData }) {
           )}
         </span>
         <span className="m-upd">{relDaysLabel(it.updatedAt)}</span>
+        {/* 常時コスト(索引)と従量コスト(本文)、参照/更新の実績を事実として並べる */}
+        <span className="mem-fact" title={t('memory.indexTokTitle')}>
+          {t('memory.indexTok', { n: (it.indexTokens || 0).toLocaleString() })}
+        </span>
+        <span className="mem-fact" title={t('memory.bodyTokTitle')}>
+          {t('memory.bodyTok', { n: (it.bodyTokens || 0).toLocaleString() })}
+        </span>
+        {sec.usageAvailable && (
+          <>
+            <span className="mem-fact" title={t('memory.readsTitle')}>
+              {t('memory.reads', { n: it.useCount || 0 })}
+            </span>
+            <span className="mem-fact" title={t('memory.writesTitle')}>
+              {t('memory.writes', { n: it.writeCount || 0 })}
+            </span>
+            {!!it.lastUsed && (
+              <span className="mem-fact">
+                {t('memory.lastRead', { date: fmtDate(it.lastUsed) })}
+              </span>
+            )}
+          </>
+        )}
       </div>
       <h2 className="d-name">{it.name}</h2>
       {it.originSessionId && (

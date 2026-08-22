@@ -1486,12 +1486,38 @@ button {
   color: #a39d90;
   white-space: nowrap;
 }
+.mem-row .d-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
 .mem-row .d1 {
+  flex: 1;
+  min-width: 0;
   font-size: 11.5px;
   color: #8a8579;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* 索引 tok / 本文 tok / Read / W-E。数値の桁を揃えたいので等幅 */
+.mem-row .mem-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: #a39d90;
+  font-family: ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  cursor: help;
+}
+.mem-fact {
+  font-size: 11px;
+  color: #a39d90;
+  font-family: ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+}
+.mem-fact[title] {
+  cursor: help;
 }
 .mtype {
   font-size: 10px;

@@ -3,6 +3,8 @@
  *   - user-typed slash:  <command-name>/weall-ship</command-name>
  *   - model via tool:    "name":"Skill","input":{"skill":"weall-ship"
  *   - subagent 起動:      "subagent_type":"code-reviewer"
+ * 併せて memory ファイルへの操作も同じ 1 パスで拾う(二度読みしない):
+ *   - memory の参照/更新: "name":"Read","input":{"file_path":"…/memory/x.md"
  * ファイルごとに mtime でキャッシュ。トランスクリプトは Claude Code の保持期間で
  * 削除されるため、集計はその期間内のみ。
  */
@@ -25,6 +27,29 @@ export interface UsageAgg {
   daily: Record<string, number>;
 }
 
+/*
+ * memory ファイルへのツール操作 1 件。Read は「参照」、Write / Edit は「作成・更新」なので
+ * 区別する。worktree のセッションは親リポジトリの memory を読み書きし、そのトランスクリプトは
+ * worktree 側のディレクトリに置かれるため、集計キーはディレクトリではなく file_path(実パス)。
+ */
+export interface MemHit {
+  path: string;
+  ts: number;
+  kind: 'read' | 'write';
+}
+export interface MemUsageAgg {
+  reads: number;
+  writes: number;
+  lastRead: number;
+  /* 日別 Read 回数(YYYY-MM-DD → 回数、ローカルタイムゾーン) */
+  daily: Record<string, number>;
+}
+/* 1 ファイルのスキャン結果。トランスクリプトを二度読みしないよう両方を同時に取る */
+export interface ScanResult {
+  hits: Hit[];
+  memHits: MemHit[];
+}
+
 /* ローカルタイムゾーンの日付キー。web 側のスパークラインと同じ形式であること */
 export function dayKey(ts: number): string {
   const d = new Date(ts);
@@ -32,13 +57,15 @@ export function dayKey(ts: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-const usageCache = new Map<string, { mtimeMs: number; hits: Hit[] }>();
+const usageCache = new Map<string, { mtimeMs: number } & ScanResult>();
 
-function scanLine(line: string, hits: Hit[]): void {
+function scanLine(line: string, out: ScanResult): void {
+  const hits = out.hits;
   const isCmd = line.includes('<command-name>');
   const isSkill = line.includes('"name":"Skill"');
   const isAgent = line.includes('"subagent_type"');
-  if (!isCmd && !isSkill && !isAgent) return;
+  const isFile = line.includes('"file_path"');
+  if (!isCmd && !isSkill && !isAgent && !isFile) return;
   const tm = line.match(/"timestamp":"([^"]+)"/);
   const ts = tm ? Date.parse(tm[1]) || 0 : 0;
   if (isCmd) {
@@ -57,6 +84,16 @@ function scanLine(line: string, hits: Hit[]): void {
       hits.push({ name: m[1], ts, via: 'auto' });
     }
   }
+  if (isFile) {
+    // memory 本文への Read / Write / Edit のみを拾う(skill ファイル等の操作は対象外)。
+    // MEMORY.md は索引であって一覧のアイテムではないので除外する。
+    for (const m of line.matchAll(/"name":"(Read|Write|Edit)","input":\{"file_path":"([^"]+)"/g)) {
+      const fp = m[2];
+      if (!fp.includes('/memory/') || !fp.endsWith('.md')) continue;
+      if (fp.endsWith('/MEMORY.md')) continue;
+      out.memHits.push({ path: fp, ts, kind: m[1] === 'Read' ? 'read' : 'write' });
+    }
+  }
 }
 
 /*
@@ -64,13 +101,13 @@ function scanLine(line: string, hits: Hit[]): void {
  * 行ごとに処理する(メモリ使用はチャンク + 改行待ちの1行分に収まる)。
  * chunkSize はテスト用に指定可能。StringDecoder が境界で割れたマルチバイト文字を繋ぐ。
  */
-export function extractHits(fp: string, chunkSize = 1 << 20): Hit[] {
-  const hits: Hit[] = [];
+export function scanTranscript(fp: string, chunkSize = 1 << 20): ScanResult {
+  const out: ScanResult = { hits: [], memHits: [] };
   let fd: number;
   try {
     fd = fs.openSync(fp, 'r');
   } catch {
-    return hits;
+    return out;
   }
   try {
     const buf = Buffer.alloc(chunkSize);
@@ -80,16 +117,59 @@ export function extractHits(fp: string, chunkSize = 1 << 20): Hit[] {
     while ((bytes = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
       const lines = (rest + decoder.write(buf.subarray(0, bytes))).split('\n');
       rest = lines.pop() || '';
-      for (const line of lines) scanLine(line, hits);
+      for (const line of lines) scanLine(line, out);
     }
     rest += decoder.end();
-    if (rest) scanLine(rest, hits);
+    if (rest) scanLine(rest, out);
   } catch {
     /* 途中で読めなくなったら部分結果を返す */
   } finally {
     fs.closeSync(fd);
   }
-  return hits;
+  return out;
+}
+
+/* skill / agent 起動だけを見たい呼び出し元向けの薄いラッパ */
+export function extractHits(fp: string, chunkSize = 1 << 20): Hit[] {
+  return scanTranscript(fp, chunkSize).hits;
+}
+
+/* mtime キャッシュ経由で 1 ファイル分のスキャン結果を得る(skill / memory 集計で共用) */
+function cachedScan(fp: string): ScanResult | null {
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(fp);
+  } catch {
+    return null;
+  }
+  let entry = usageCache.get(fp);
+  if (!entry || entry.mtimeMs !== st.mtimeMs) {
+    entry = { mtimeMs: st.mtimeMs, ...scanTranscript(fp) };
+    usageCache.set(fp, entry);
+  }
+  return entry;
+}
+
+/* ~/.claude/projects 配下の <ディレクトリ名, jsonl 実パス[]> 一覧(root はテストで差し替える) */
+function listTranscripts(root: string): { name: string; files: string[] }[] {
+  let dirs: fs.Dirent[];
+  try {
+    dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+  } catch {
+    return [];
+  }
+  const out: { name: string; files: string[] }[] = [];
+  for (const d of dirs) {
+    const dir = path.join(root, d.name);
+    let files: string[];
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+    } catch {
+      continue;
+    }
+    out.push({ name: d.name, files: files.map((f) => path.join(dir, f)) });
+  }
+  return out;
 }
 
 /*
@@ -99,34 +179,11 @@ export function extractHits(fp: string, chunkSize = 1 << 20): Hit[] {
 export function scanUsageByDir(): Record<string, Record<string, UsageAgg>> {
   const byDir: Record<string, Record<string, UsageAgg>> = {};
   const root = path.join(os.homedir(), '.claude', 'projects');
-  let dirs: fs.Dirent[];
-  try {
-    dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
-  } catch {
-    return byDir;
-  }
-  for (const d of dirs) {
-    const dir = path.join(root, d.name);
-    let files: string[];
-    try {
-      files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
-    } catch {
-      continue;
-    }
+  for (const d of listTranscripts(root)) {
     const agg = byDir[d.name] || (byDir[d.name] = {});
-    for (const f of files) {
-      const fp = path.join(dir, f);
-      let st: fs.Stats;
-      try {
-        st = fs.statSync(fp);
-      } catch {
-        continue;
-      }
-      let entry = usageCache.get(fp);
-      if (!entry || entry.mtimeMs !== st.mtimeMs) {
-        entry = { mtimeMs: st.mtimeMs, hits: extractHits(fp) };
-        usageCache.set(fp, entry);
-      }
+    for (const fp of d.files) {
+      const entry = cachedScan(fp);
+      if (!entry) continue;
       for (const h of entry.hits) {
         const a = agg[h.name] || (agg[h.name] = { typed: 0, auto: 0, last: 0, daily: {} });
         a[h.via === 'typed' ? 'typed' : 'auto']++;
@@ -139,6 +196,43 @@ export function scanUsageByDir(): Record<string, Record<string, UsageAgg>> {
     }
   }
   return byDir;
+}
+
+/*
+ * memory ファイルの Read / Write / Edit 実績。worktree のセッションは親リポジトリの memory を
+ * 触り、そのトランスクリプトは worktree 側のディレクトリに残るため、ディレクトリ別ではなく
+ * 全ディレクトリ横断・file_path キーで集計する。
+ * dirsWithTranscripts は jsonl を 1 件以上持つディレクトリ名(usageAvailable 判定用。
+ * 走査を共有するためここで一緒に返す)。
+ */
+export function scanMemoryUsage(root = path.join(os.homedir(), '.claude', 'projects')): {
+  byPath: Record<string, MemUsageAgg>;
+  dirsWithTranscripts: Set<string>;
+} {
+  const byPath: Record<string, MemUsageAgg> = {};
+  const dirsWithTranscripts = new Set<string>();
+  for (const d of listTranscripts(root)) {
+    if (d.files.length) dirsWithTranscripts.add(d.name);
+    for (const fp of d.files) {
+      const entry = cachedScan(fp);
+      if (!entry) continue;
+      for (const h of entry.memHits) {
+        const a =
+          byPath[h.path] || (byPath[h.path] = { reads: 0, writes: 0, lastRead: 0, daily: {} });
+        if (h.kind === 'write') {
+          a.writes++;
+          continue; // 日別・最終参照は Read(参照)だけを数える
+        }
+        a.reads++;
+        if (h.ts > a.lastRead) a.lastRead = h.ts;
+        if (h.ts > 0) {
+          const day = dayKey(h.ts);
+          a.daily[day] = (a.daily[day] || 0) + 1;
+        }
+      }
+    }
+  }
+  return { byPath, dirsWithTranscripts };
 }
 
 /* Claude Code のトランスクリプトディレクトリ名と同じ規則でプロジェクトパスをエンコード */
