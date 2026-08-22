@@ -20,6 +20,7 @@ import type {
   Section,
   SkillItem,
 } from '../shared/types';
+import { pruneMissing } from './cache';
 import { HOME, parseFrontmatter } from './scan';
 import { contentHash, runClaude } from './summary';
 
@@ -54,7 +55,8 @@ export function loadTriage(): TriageStore {
 
 function saveTriage(store: TriageStore): void {
   fs.mkdirSync(path.dirname(TRIAGE_FILE), { recursive: true });
-  fs.writeFileSync(TRIAGE_FILE, JSON.stringify(store, null, 1));
+  // 保存のついでに死にエントリを掃除する(GET では書き込まないので掃除もしない)
+  fs.writeFileSync(TRIAGE_FILE, JSON.stringify(pruneMissing(store), null, 1));
 }
 
 /* MEMORY.md(索引)の全文。差分 call でも重複・別プロジェクト判定の文脈として常に渡す */
@@ -378,8 +380,21 @@ export function normalizeInstruction(text: string): string {
 }
 
 /*
- * 出力を検証つきでパース。file 対応が取れない・verdict が 7 値以外の要素は
- * keep に落とさず捨てる(誤った行き先を提示するより出さない方が安全)。
+ * 採用できなかった件の記録。誤った行き先を出さないのは従来どおりだが、
+ * 「診断済み・出力不正」として残さないと差分診断のたびに同じ件を呼び直すことになる。
+ */
+export const invalidTriage = (): MemoryTriage => ({
+  verdict: 'keep',
+  reason: '',
+  issues: [],
+  instruction: '',
+  error: 'invalid-output',
+});
+
+/*
+ * 出力を検証つきでパース。file 対応が取れない要素(対象外・欠落・重複)は捨て、
+ * verdict が 7 値以外・keep 以外で指示文が空の要素は出力不正として記録する
+ * (誤った行き先は提示しないが、診断済みであることは残して再 call を防ぐ)。
  */
 export function parseTriage(text: string, allowedFiles: string[]): Map<string, MemoryTriage> {
   const stripped = text
@@ -394,7 +409,10 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
     const file = typeof e?.file === 'string' ? e.file.trim() : '';
     if (!allowed.has(file) || out.has(file)) continue; // 対象外・欠落・重複(先勝ち)
     const verdict = e?.verdict as MemoryVerdict;
-    if (!VERDICTS.includes(verdict)) continue;
+    if (!VERDICTS.includes(verdict)) {
+      out.set(file, invalidTriage());
+      continue;
+    }
     const issues = (Array.isArray(e?.issues) ? e.issues : [])
       .filter((x: unknown) => typeof x === 'string')
       .map((s: string) => s.slice(0, 80))
@@ -402,8 +420,11 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
     const instruction =
       verdict === 'keep' ? '' : normalizeInstruction(String(e?.instruction || ''));
     // 行き先だけ言って指示文が無い件は貼るものが無く、サマリ・試算・まとめコピーで数え方がずれる。
-    // 不正な verdict と同じく「誤った提案を出すより欠けるほうが安全」で捨てる
-    if (verdict !== 'keep' && !instruction) continue;
+    // 不正な verdict と同じく「誤った提案を出すより欠けるほうが安全」で出力不正にする
+    if (verdict !== 'keep' && !instruction) {
+      out.set(file, invalidTriage());
+      continue;
+    }
     out.set(file, {
       verdict,
       reason: String(e?.reason || '')
@@ -439,7 +460,36 @@ export interface TriageResult extends MemoryTriage {
 }
 
 /*
- * 1 プロジェクト分の棚卸し。未キャッシュの件だけを集めて claude を 1 回だけ呼ぶ。
+ * 累積サイズが limit を超えない範囲で items を前から詰めて分割する。
+ * 1 件で limit を超えるものは単独チャンクにする(落とすと診断が欠けるため)。
+ */
+export function chunkByChars<T>(items: T[], sizeOf: (t: T) => number, limit: number): T[][] {
+  const out: T[][] = [];
+  let current: T[] = [];
+  let sum = 0;
+  for (const item of items) {
+    const size = sizeOf(item);
+    if (current.length && sum + size > limit) {
+      out.push(current);
+      current = [];
+      sum = 0;
+    }
+    current.push(item);
+    sum += size;
+  }
+  if (current.length) out.push(current);
+  return out;
+}
+
+/*
+ * 1 プロンプトの上限。実測では最大の環境でも 26 件 / 13.4k tok で 1 チャンクに収まるが、
+ * 件数が極端に多い環境でモデルのコンテキストを超えるのを避けるための保険として分割する。
+ */
+const PROMPT_MAX_CHARS = 160_000;
+
+/*
+ * 1 プロジェクト分の棚卸し。未キャッシュの件だけを集めて claude を呼ぶ(通常は 1 回、
+ * 上限を超える件数のときだけチャンク分割して順に呼ぶ)。
  * 入力が大きい(全件の本文)ので timeout は groups.ts と同じ 10 分。
  */
 export async function triageProject(
@@ -466,18 +516,28 @@ export async function triageProject(
       rules: standing.rules,
       skills: standing.skills,
     };
-    const text = await runClaude(buildPrompt(stale, ctx, lang), model, 600000);
-    const parsed = parseTriage(
-      text,
-      stale.map((it) => path.basename(it.path)),
+    // ctx(索引全文・常設文脈)はチャンクごとに付け直す(重複・別プロジェクト判定に必ず要る)
+    const chunks = chunkByChars(
+      stale,
+      (it) => itemBlock(it, ctx.usageAvailable, lang).length,
+      PROMPT_MAX_CHARS,
     );
-    const generatedAt = new Date().toISOString();
-    for (const it of stale) {
-      const r = parsed.get(path.basename(it.path));
-      if (!r) continue; // AI が返さなかった件はキャッシュも結果も作らない
-      store[it.path] = { ...r, hash: contentHash(it.path), lang, model, generatedAt };
+    for (const chunk of chunks) {
+      const text = await runClaude(buildPrompt(chunk, ctx, lang), model, 600000);
+      const parsed = parseTriage(
+        text,
+        chunk.map((it) => path.basename(it.path)),
+      );
+      const generatedAt = new Date().toISOString();
+      for (const it of chunk) {
+        // AI が返さなかった件も出力不正として hash 付きで残す
+        // (未診断のままだと差分診断のたびに再 call され続ける。force で再試行できる)
+        const r = parsed.get(path.basename(it.path)) || invalidTriage();
+        store[it.path] = { ...r, hash: contentHash(it.path), lang, model, generatedAt };
+      }
+      // チャンクごとに保存する(後続チャンクが失敗しても済んだ分の call を無駄にしない)
+      saveTriage(store);
     }
-    saveTriage(store);
   }
 
   const results: TriageResult[] = [];
@@ -491,6 +551,7 @@ export async function triageProject(
       reason: e.reason,
       issues: e.issues,
       instruction: e.instruction,
+      ...(e.error ? { error: e.error } : {}),
     });
   }
   return results;
@@ -518,6 +579,8 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
           reason: cached.reason,
           issues: cached.issues,
           instruction: cached.instruction,
+          // 出力不正も「診断済み」として載せる(未診断と区別し、再診断を促す)
+          ...(cached.error ? { error: cached.error } : {}),
         };
       }
     }

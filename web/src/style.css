@@ -1426,8 +1426,13 @@ button {
 
 /* ---- memory (plan 10): 値は docs/plans/design/{Main,Detail,Triage}.dc.html の <style> から実測転記 ----
  * 非採用: モックの `.card .meta .tok i`(本文 tok の淡色表示)は切替条件が特定できないため入れていない。
- * `.sec-t` は skill 詳細と共有のため letter-spacing / color は既存値を維持(モックは 0.08em / #a39d90)。
+ * `.sec-t` は skill 詳細と共有のため既存値を維持し、memory 画面は `.sec-t.mem` でモック値に上書きする。
  */
+/* 見出し(Detail / Triage の <style> 実測値: letter-spacing 0.08em / color #a39d90) */
+.sec-t.mem {
+  letter-spacing: 0.08em;
+  color: #a39d90;
+}
 .orphan-badge {
   font-size: 10px;
   color: #8a6d3b;
@@ -1895,8 +1900,10 @@ button {
   color: #b0836a;
   background: #b0836a1c;
 }
+/* v-error は「AI 出力が不正」= 内容を出せない状態。注意色は delete 系と共有する */
 .vbadge.v-wrong-project,
-.vbadge.v-delete {
+.vbadge.v-delete,
+.vbadge.v-error {
   color: #b0432f;
   background: #b0432f1c;
 }

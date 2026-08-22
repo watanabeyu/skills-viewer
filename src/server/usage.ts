@@ -92,9 +92,10 @@ function scanLine(line: string, out: ScanResult): void {
       /"name":"(Read|Write|Edit)","input":\{[^{}]{0,160}?"file_path":"([^"]+)"/g,
     )) {
       const fp = m[2];
-      // 自動メモリは ~/.claude/projects/<encoded>/memory/ 直下の *.md だけ。
-      // リポジトリ内の src/memory/*.md などを巻き込まないよう場所で絞る。
-      if (!fp.includes('/.claude/projects/') || !/\/memory\/[^/]+\.md$/.test(fp)) continue;
+      // 自動メモリは <encoded>/memory/ 直下の *.md。ここでは形だけで拾い、
+      // 置き場(~/.claude/projects 相当)の判定は scanMemoryUsage(root) の後段に任せる
+      // (root をテスト・設定で差し替えても判定が効くように)。
+      if (!/\/memory\/[^/]+\.md$/.test(fp)) continue;
       // MEMORY.md は索引であって一覧のアイテムではないので除外する。
       if (path.posix.basename(fp) === 'MEMORY.md') continue;
       out.memHits.push({ path: fp, ts, kind: m[1] === 'Read' ? 'read' : 'write' });
@@ -207,7 +208,7 @@ export function scanUsageByDir(): Record<string, Record<string, UsageAgg>> {
 /*
  * memory ファイルの Read / Write / Edit 実績。worktree のセッションは親リポジトリの memory を
  * 触り、そのトランスクリプトは worktree 側のディレクトリに残るため、ディレクトリ別ではなく
- * 全ディレクトリ横断・file_path キーで集計する。
+ * 全ディレクトリ横断・file_path キーで集計し、root 配下のパスだけを自動メモリとして採る。
  * dirsWithTranscripts は jsonl を 1 件以上持つディレクトリ名(usageAvailable 判定用。
  * 走査を共有するためここで一緒に返す)。
  */
@@ -223,6 +224,8 @@ export function scanMemoryUsage(root = path.join(os.homedir(), '.claude', 'proje
       const entry = cachedScan(fp);
       if (!entry) continue;
       for (const h of entry.memHits) {
+        // root 外の memory/ ディレクトリ(リポジトリ内の src/memory/*.md など)は自動メモリではない
+        if (!h.path.startsWith(root + path.sep)) continue;
         const a =
           byPath[h.path] || (byPath[h.path] = { reads: 0, writes: 0, lastRead: 0, daily: {} });
         if (h.kind === 'write') {

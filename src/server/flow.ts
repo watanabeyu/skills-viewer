@@ -8,6 +8,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { AiModel, Lang, Section, SkillFlow, SkillFlowStep } from '../shared/types';
+import { pruneMissing } from './cache';
 import { contentHash, runClaude } from './summary';
 
 const FLOW_FILE = path.join(os.homedir(), '.cache', 'skills-viewer', 'flows.json');
@@ -40,7 +41,8 @@ export function loadFlows(): FlowStore {
 
 function saveFlows(store: FlowStore): void {
   fs.mkdirSync(path.dirname(FLOW_FILE), { recursive: true });
-  fs.writeFileSync(FLOW_FILE, JSON.stringify(store, null, 1));
+  // 保存のついでに死にエントリを掃除する(GET では書き込まないので掃除もしない)
+  fs.writeFileSync(FLOW_FILE, JSON.stringify(pruneMissing(store), null, 1));
 }
 
 function buildPrompt(name: string, content: string, lang: Lang): string {

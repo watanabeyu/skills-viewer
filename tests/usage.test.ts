@@ -161,21 +161,31 @@ describe('scanMemoryUsage (全ディレクトリ横断・file_path キーの集�
     expect(byPath[p]).toMatchObject({ reads: 0, writes: 1 });
   });
 
-  it('memory 以外の file_path(リポジトリ内の src/memory/ や MEMORY.md)は拾わない', () => {
+  /*
+   * 場所の判定は scanLine ではなく scanMemoryUsage(root) の後段が持つ(root を差し替えても効くように)。
+   * リポジトリ内の src/memory/*.md は scanTranscript 単体では拾われ、root 外として集計から落ちる。
+   */
+  it('memory 以外の file_path(MEMORY.md・memory 直下でない)は拾わず、root 外は集計から落ちる', () => {
     const ok = path.join(root, '-Users-x-repo', 'memory', 'reference.md');
+    const outside = '/Users/x/repo/src/memory/notes.md'; // リポジトリ内の同名ディレクトリ
     const paths = [
       ok,
       path.join(root, '-Users-x-repo', 'memory', 'MEMORY.md'), // 索引はアイテムではない
       path.join(root, '-Users-x-repo', 'memory', 'sub', 'deep.md'), // memory/ 直下ではない
-      '/Users/x/repo/src/memory/notes.md', // リポジトリ内の同名ディレクトリ
+      outside,
     ];
-    const fp = fixture(
-      paths.map(
-        (p) =>
-          `{"timestamp":"2026-07-11T00:00:00.000Z","tool":{"name":"Read","input":{"file_path":"${p}"}}}`,
-      ),
+    const lines = paths.map(
+      (p) =>
+        `{"timestamp":"2026-07-11T00:00:00.000Z","tool":{"name":"Read","input":{"file_path":"${p}"}}}`,
     );
-    expect(scanTranscript(fp).memHits.map((h) => h.path)).toEqual([ok]);
+    expect(scanTranscript(fixture(lines)).memHits.map((h) => h.path)).toEqual([ok, outside]);
+
+    const dir = path.join(root, '-Users-x-outside');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 's4.jsonl'), lines.join('\n'));
+    const { byPath } = scanMemoryUsage(root);
+    expect(byPath[ok]).toMatchObject({ reads: 1 });
+    expect(byPath[outside]).toBeUndefined();
   });
 });
 

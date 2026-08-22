@@ -184,6 +184,8 @@ const en = {
     'One claude CLI call reads every memory body and proposes a destination (cached per memory; only changed ones are re-asked)',
   'memory.triage.rerunTitle': 'Re-ask for every memory, ignoring the cache (one claude CLI call)',
   'memory.triage.summary': '{n} triaged — {p} proposals, {k} keep as is',
+  'memory.triage.summaryWithErrors':
+    '{n} triaged — {p} proposals, {k} keep as is, {e} with invalid output',
   'memory.triage.summaryPending': '{u} of {n} not triaged yet',
   'memory.triage.ctaTitle': 'Not triaged yet',
   'memory.triage.ctaBody':
@@ -200,6 +202,7 @@ const en = {
   'memory.triage.verdict.delete': 'Delete',
   'memory.triage.verdict.wrong-project': 'Belongs elsewhere',
   'memory.triage.verdict.to-skill': 'Move to skill',
+  'memory.triage.verdict.error': 'Invalid output — re-run to retry',
   'memory.triage.seen': 'read {n}×',
   'memory.triage.unseen': 'no reads',
   'memory.triage.estApply': 'applied: index {n} tok/session',
@@ -538,6 +541,8 @@ const ja: Record<MsgKey, string> = {
     '全メモリの本文を 1 回の claude 呼び出しで読み、行き先を提案します(件単位キャッシュ。変更された件だけ再診断)',
   'memory.triage.rerunTitle': 'キャッシュを無視して全件を診断し直します(claude を 1 回呼びます)',
   'memory.triage.summary': '{n} 件を診断 — {p} 件に提案、{k} 件は現状維持',
+  'memory.triage.summaryWithErrors':
+    '{n} 件を診断 — {p} 件に提案、{k} 件は現状維持、{e} 件は出力不正',
   'memory.triage.summaryPending': '{n} 件中 {u} 件が未診断',
   'memory.triage.ctaTitle': 'まだ診断していません',
   'memory.triage.ctaBody':
@@ -554,6 +559,7 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.verdict.delete': '削除',
   'memory.triage.verdict.wrong-project': '別プロジェクトの話',
   'memory.triage.verdict.to-skill': 'skill へ',
+  'memory.triage.verdict.error': '出力不正 — 再診断で再試行',
   'memory.triage.seen': '{n} 回参照',
   'memory.triage.unseen': '参照なし',
   'memory.triage.estApply': '適用で 索引 {n} tok/セッション',

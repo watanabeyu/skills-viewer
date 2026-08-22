@@ -81,8 +81,11 @@ export function CopyButton({
   );
 }
 
-export function VerdictBadge({ verdict }: { verdict: MemoryTriage['verdict'] }) {
-  return <span className={'vbadge v-' + verdict}>✦ {memoryVerdictLabel(verdict)}</span>;
+/* 出力不正の件は行き先が無いので、verdict の代わりに再診断を促すバッジを出す */
+export function VerdictBadge({ tri }: { tri: MemoryTriage }) {
+  if (tri.error)
+    return <span className="vbadge v-error">✦ {t('memory.triage.verdict.error')}</span>;
+  return <span className={'vbadge v-' + tri.verdict}>✦ {memoryVerdictLabel(tri.verdict)}</span>;
 }
 
 /*
@@ -91,7 +94,8 @@ export function VerdictBadge({ verdict }: { verdict: MemoryTriage['verdict'] }) 
  */
 function TriageResult({ it }: { it: SkillItem }) {
   const tri = it.aiTriage;
-  if (!tri) return null;
+  // 出力不正の件は理由・根拠・指示文・試算のいずれも信用できないので何も出さない
+  if (!tri || tri.error) return null;
   return (
     <>
       {tri.reason && <p className="reason">{tri.reason}</p>}
@@ -132,7 +136,7 @@ export function MemoryTriageBox({ it, sec }: { it: SkillItem; sec: MemorySection
   return (
     <div className="diag-box triage-box">
       <div className="nmline">
-        <VerdictBadge verdict={tri.verdict} />
+        <VerdictBadge tri={tri} />
       </div>
       <TriageResult it={it} />
       <button
@@ -167,7 +171,9 @@ export function MemoryTriageView({
 
   const untriagedCount = sec.items.filter((it) => !it.aiTriage).length;
   const proposals = instructionsOf(sec.items);
-  const keepCount = sec.items.length - untriagedCount - proposals.length;
+  // 出力不正は verdict keep / 指示文なしで入っているので、現状維持の件数から除いて別に数える
+  const errorCount = sec.items.filter((it) => it.aiTriage?.error).length;
+  const keepCount = sec.items.length - untriagedCount - proposals.length - errorCount;
   const totals = sec.items.reduce(
     (acc, it) => {
       const est = triageEstimate(it);
@@ -215,13 +221,14 @@ export function MemoryTriageView({
         </div>
       </div>
       <div className="triage-pad">
-        <div className="sec-t tri">
+        <div className="sec-t mem tri">
           {untriagedCount
             ? t('memory.triage.summaryPending', { n: sec.items.length, u: untriagedCount })
-            : t('memory.triage.summary', {
+            : t(errorCount ? 'memory.triage.summaryWithErrors' : 'memory.triage.summary', {
                 n: sec.items.length,
                 p: proposals.length,
                 k: keepCount,
+                e: errorCount,
               })}
         </div>
         {/* 入口の「✦ 棚卸し診断」は遷移だけで AI は走らない。未診断・診断中は行の上で状態を明示する */}
@@ -276,7 +283,7 @@ export function MemoryTriageView({
                 <KindBadge it={it} />
                 <MemoryTypeBadge it={it} />
                 {/* 未診断の行は verdict 無しで事実だけを出す */}
-                {it.aiTriage && <VerdictBadge verdict={it.aiTriage.verdict} />}
+                {it.aiTriage && <VerdictBadge tri={it.aiTriage} />}
                 <span className="toks">
                   <TokFacts it={it} bold />
                   {/* 参照回数はトランスクリプトが無いプロジェクトでは判定不能なので出さない */}

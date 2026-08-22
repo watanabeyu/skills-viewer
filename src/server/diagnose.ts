@@ -8,6 +8,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { AiModel, Lang, Section, SkillDiagnosis } from '../shared/types';
+import { pruneMissing } from './cache';
 import { contentHash, runClaude } from './summary';
 
 const DIAG_FILE = path.join(os.homedir(), '.cache', 'skills-viewer', 'diagnoses.json');
@@ -31,7 +32,8 @@ export function loadDiagnoses(): DiagStore {
 
 function saveDiagnoses(store: DiagStore): void {
   fs.mkdirSync(path.dirname(DIAG_FILE), { recursive: true });
-  fs.writeFileSync(DIAG_FILE, JSON.stringify(store, null, 1));
+  // 保存のついでに死にエントリを掃除する(GET では書き込まないので掃除もしない)
+  fs.writeFileSync(DIAG_FILE, JSON.stringify(pruneMissing(store), null, 1));
 }
 
 function buildPrompt(name: string, content: string, lang: Lang): string {

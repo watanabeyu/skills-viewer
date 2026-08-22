@@ -288,7 +288,7 @@ function OverviewTab({
       {/* 行き先の仮説と指示文。採否は人間が「貼るかどうか」で決めるので選択 UI は置かない */}
       <MemoryTriageBox it={it} sec={sec} />
 
-      <div className="sec-t">{t('memory.sec.cost')}</div>
+      <div className="sec-t mem">{t('memory.sec.cost')}</div>
       <div className="cost2">
         <div className="cbox">
           <span className="k">{t('memory.cbox.indexK')}</span>
@@ -308,7 +308,7 @@ function OverviewTab({
         </div>
       </div>
 
-      <div className="sec-t">{t('memory.sec.reads')}</div>
+      <div className="sec-t mem">{t('memory.sec.reads')}</div>
       <div className="f-row mem">
         <span className="rk">{t('memory.f.reads')}</span>
         <span title={t('memory.readsTitle')}>
@@ -346,7 +346,7 @@ function OverviewTab({
 
       {(outgoing.length > 0 || backlinks.length > 0) && (
         <>
-          <div className="sec-t">{t('memory.sec.links')}</div>
+          <div className="sec-t mem">{t('memory.sec.links')}</div>
           <div className="linkrow">
             {outgoing.map(({ name, to }) =>
               to ? (
@@ -371,7 +371,7 @@ function OverviewTab({
         </>
       )}
 
-      <div className="sec-t">{t('memory.sec.frontmatter')}</div>
+      <div className="sec-t mem">{t('memory.sec.frontmatter')}</div>
       <div className="fm-box mem">
         {raw === null ? t('common.loading') : (frontmatter ? frontmatter + '\n\n' : '') + it.path}
       </div>

@@ -3,6 +3,31 @@
 All notable changes to this project are documented here, in English followed by Japanese.
 このファイルには主要な変更を記録します(英語の後に日本語を併記)。
 
+## [0.8.0] - Unreleased
+
+Your auto memory now has a place to be seen — and a way to get smaller.
+自動メモリを「見える」ようにし、「減らす」動線をつけました。
+
+### Added
+
+- **Memory view** — a fourth view axis, _Memory_, lists Claude Code's auto memory (`~/.claude/projects/<project>/memory/*.md`) per project, independent of skills. Each project gets a cost bar that splits the context cost into the always-on part (the `MEMORY.md` index line injected into every session, ≈40 tok per memory) and the pay-per-use part (the body, charged only when Read), the per-memory average, and a comparison against the tokens your plugins and user-scope skills inject. Cards show the frontmatter type, whether the body was Read within the transcript retention window, and the two costs; the detail pane adds Read / Write counts, the originating session, outgoing links, backlinks, unresolved `[[link]]`s and the raw frontmatter. Memory is read-only in the viewer. Orphan memory directories (projects no longer registered) are listed too.
+  **Memory ビュー** — 表示軸に「メモリ」を追加し、Claude Code の自動メモリ(`~/.claude/projects/<project>/memory/*.md`)を skill とは独立にプロジェクト単位で一覧します。プロジェクトごとのコストバーは、コンテキストコストを常時コスト(`MEMORY.md` の索引行。毎セッション注入され 1 件 ≈40 tok)と従量コスト(本文。Read されたときだけ)に分け、1 件あたりの平均と、plugin・user scope の skill が注入するトークンとの比較を出します。カードには frontmatter の type、保持期間内に本文が Read されたか、2 種類のコストを表示し、詳細では Read / Write 回数・生成元セッション・発リンク・被リンク・リンク切れ・frontmatter 原文を確認できます。viewer から memory への書き込みはしません。登録が消えたプロジェクトの孤児 memory も列挙します。
+- **AI memory triage** — one claude CLI call reads every memory of a project (only the ones whose body changed since the last run; results are cached per memory by content hash + language) and proposes a destination for each: keep / shrink / move to CLAUDE.md / move to docs / move to a skill / delete / wrong project, with the reasoning, the facts behind it, a static token estimate, and a paste-ready instruction for Claude Code that always covers removing the `MEMORY.md` index line, re-pointing `[[link]]`s, and the cost warning when a move to CLAUDE.md would turn one index line into a full-body injection. The prompt also carries the headings of the project's `CLAUDE.md` and the names + descriptions of its skills, so rules that already live there are flagged for deletion and skill-specific preferences are promoted to the skill instead of staying in memory. Copied instructions start with a "inspect first, ask when unsure, execute after approval" preamble. Three entry points: the cost bar, the detail pane (single memory) and the ✦ AI menu.
+  **AI memory 棚卸し** — プロジェクトの memory 全件(前回から本文が変わった件だけ。結果は本文 hash + 言語で件単位キャッシュ)を 1 回の claude CLI 呼び出しで読み、1 件ごとに行き先 — このまま / 本文を縮める / CLAUDE.md へ / docs へ / skill へ / 削除 / 別プロジェクト — と理由・根拠・削減試算・**Claude Code に貼れる指示文**を提案します。指示文には `MEMORY.md` の索引行の削除・`[[link]]` の張り替え・CLAUDE.md 行きで全文注入に変わるときのコスト警告を必ず含めます。プロンプトにはプロジェクトの `CLAUDE.md` の見出しと skill の name + description も渡すので、既に書いてあるルールは削除、特定 skill に関する好みはその skill へ昇格、と判断されます。コピーした指示文には「まず確認 → 判断が要る点は質問 → 承認後に実行」の前置きが付きます。入口はコストバー・詳細(1 件)・✦ AI メニューの 3 つです。
+- **Memory Read / Write tracking** — transcripts are scanned for Read / Write / Edit tool calls on memory files in the same pass that already collects skill usage, attributed by file path so that sessions running in git worktrees count toward their parent repository's memory.
+  **memory の Read / Write 集計** — skill の使用実績を集める transcript の 1 パスで memory ファイルへの Read / Write / Edit も拾い、ファイルパスで集計するため、git worktree で動いたセッションの参照も親リポジトリの memory に寄ります。
+
+### Changed
+
+- The _unused_ badge and filter are now worded _no recent use_ / _recent use_ — the data only covers the transcript retention window (`cleanupPeriodDays`, default 30 days), so "unused" was a claim the tool could not back. The CLI startup summary follows suit.
+  「未使用」バッジとフィルタを「直近未使用 / 直近使用あり」に改めました。データは transcript の保持期間(`cleanupPeriodDays`、既定 30 日)の範囲しか無いので、「未使用」は言い切りすぎでした。CLI の起動サマリも同様です。
+- Frontmatter parsing now understands one level of nesting (`metadata:` blocks), which Claude Code uses in memory files. Existing skill / command / agent parsing is unchanged.
+  frontmatter のパーサが 1 段のネスト(memory ファイルで使われる `metadata:` ブロック)を読めるようになりました。既存の skill / command / agent の解釈は変わりません。
+- When run from a git worktree, the parent repository is now treated as the current project for memory (memory lives per repository, not per worktree).
+  git worktree から起動したとき、memory については親リポジトリを現在のプロジェクトとして扱います(memory は worktree ごとではなくリポジトリ単位にあるため)。
+- AI caches keyed by file path (summaries / diagnoses / flows / memory triage) drop entries for files that no longer exist when they are saved.
+  ファイルパスをキーにする AI キャッシュ(要約 / 診断 / フロー / memory 棚卸し)は、保存時に存在しないファイルのエントリを捨てるようになりました。
+
 ## [0.6.0] - 2026-07-28
 
 Skills now group by _when you use them_, not just where they live.

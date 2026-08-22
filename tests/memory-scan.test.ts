@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { scanMemory } from '../src/server/memory';
+import { mainWorktreeOf, scanMemory } from '../src/server/memory';
 import { encodeProjectPath } from '../src/server/usage';
 import { estimateTokens } from '../src/server/lint';
 
@@ -94,7 +94,7 @@ fs.mkdirSync(path.join(root, '-Users-me-nomemory'), { recursive: true });
 // MEMORY.md(索引)だけがあるプロジェクト。アイテムが 0 件なのでセクションにしない
 write(memDir('-Users-me-indexonly'), 'MEMORY.md', '- [none](none.md) — 本文が残っていない');
 
-const sections = scanMemory(projB, { root, projects: [projA, projB] });
+const sections = scanMemory(projB, { root, projects: [projA, projB], mainWorktree: null });
 const secA = sections.find((s) => s.projectName === 'alpha')!;
 const secB = sections.find((s) => s.projectName === 'beta')!;
 
@@ -187,6 +187,89 @@ describe('scanMemory (自動メモリの走査)', () => {
   });
 
   it('ルートが存在しなければ空配列', () => {
-    expect(scanMemory(projA, { root: path.join(tmp, 'nope'), projects: [projA] })).toEqual([]);
+    expect(
+      scanMemory(projA, { root: path.join(tmp, 'nope'), projects: [projA], mainWorktree: null }),
+    ).toEqual([]);
+  });
+});
+
+/* worktree(.git がファイル)から起動しても親リポジトリの memory を current にできること */
+describe('mainWorktreeOf (.git だけからメインワークツリーを解決する)', () => {
+  const gitTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-worktree-'));
+  afterAll(() => fs.rmSync(gitTmp, { recursive: true, force: true }));
+  const main = path.join(gitTmp, 'main');
+  const wt = path.join(gitTmp, 'wt');
+  fs.mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
+  fs.mkdirSync(wt, { recursive: true });
+  fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ' + path.join(main, '.git', 'worktrees', 'wt'));
+
+  it('.git がファイル(worktree)なら gitdir から親のルートを返す', () => {
+    expect(mainWorktreeOf(wt)).toBe(main);
+  });
+
+  it('.git がディレクトリ(通常のリポジトリ)なら自分自身', () => {
+    expect(mainWorktreeOf(main)).toBe(main);
+  });
+
+  it('.git が無い / gitdir が worktree の形でなければ null', () => {
+    expect(mainWorktreeOf(path.join(gitTmp, 'nogit'))).toBeNull();
+    const sub = path.join(gitTmp, 'sub');
+    fs.mkdirSync(sub, { recursive: true });
+    // submodule の .git ファイル(…/.git/modules/<name>)は worktree ではない
+    fs.writeFileSync(
+      path.join(sub, '.git'),
+      'gitdir: ' + path.join(main, '.git', 'modules', 'sub'),
+    );
+    expect(mainWorktreeOf(sub)).toBeNull();
+  });
+});
+
+describe('scanMemory (worktree から起動したとき)', () => {
+  it('メインワークツリーの memory を current にし、projects に無くても逆引きできる', () => {
+    const wtRoot = path.join(tmp, 'wt-projects');
+    const mainProj = path.join(tmp, 'work', 'main-repo');
+    const worktree = path.join(tmp, 'work', 'main-repo-feat-a');
+    fs.mkdirSync(mainProj, { recursive: true });
+    fs.mkdirSync(worktree, { recursive: true });
+    const dir = path.join(wtRoot, encodeProjectPath(mainProj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [memo](m.md) — メモ');
+    write(dir, 'm.md', '---\nname: memo\ndescription: メモ\n---\n\n本文\n');
+
+    // projects には worktree 側しか無い(~/.claude.json に親が登録されていない状況)
+    const secs = scanMemory(worktree, {
+      root: wtRoot,
+      projects: [worktree],
+      mainWorktree: mainProj,
+    });
+    expect(secs).toHaveLength(1);
+    expect(secs[0].projectPath).toBe(mainProj);
+    expect(secs[0].isCurrent).toBe(true);
+    expect(secs[0].orphan).toBeUndefined();
+  });
+
+  it('worktree 用の memory もあれば両方 current で、cwd 完全一致が先頭', () => {
+    const wtRoot = path.join(tmp, 'wt2-projects');
+    const mainProj = path.join(tmp, 'work2', 'aaa-main');
+    const worktree = path.join(tmp, 'work2', 'zzz-feat');
+    fs.mkdirSync(mainProj, { recursive: true });
+    fs.mkdirSync(worktree, { recursive: true });
+    for (const [proj, file] of [
+      [mainProj, 'main.md'],
+      [worktree, 'wt.md'],
+    ]) {
+      const dir = path.join(wtRoot, encodeProjectPath(proj), 'memory');
+      fs.mkdirSync(dir, { recursive: true });
+      write(dir, 'MEMORY.md', `- [x](${file}) — メモ`);
+      write(dir, file, '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    }
+    const secs = scanMemory(worktree, {
+      root: wtRoot,
+      projects: [mainProj, worktree],
+      mainWorktree: mainProj,
+    });
+    // 名前順(aaa-main < zzz-feat)ではなく cwd → メインワークツリーの順に並ぶ
+    expect(secs.map((s) => s.projectPath)).toEqual([worktree, mainProj]);
+    expect(secs.every((s) => s.isCurrent)).toBe(true);
   });
 });

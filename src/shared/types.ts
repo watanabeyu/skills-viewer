@@ -50,6 +50,8 @@ export interface MemoryTriage {
   reason: string;
   issues: string[];
   instruction: string;
+  /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
+  error?: 'invalid-output';
 }
 
 /* AI グルーピングの1グループ。id は言語非依存スラッグ、label は表示言語で生成 */

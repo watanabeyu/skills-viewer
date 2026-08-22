@@ -368,7 +368,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
 
 /*
  * 起動時の1〜2行サマリー(--no-open 運用でも価値が出るように)。
- * 前回からの差分 + セッション注入トークン概算 + 未使用件数。失敗しても起動は止めない。
+ * 前回からの差分 + セッション注入トークン概算 + 直近未使用の件数。失敗しても起動は止めない。
  */
 function printStartupSummary(cwd: string): void {
   try {
@@ -393,9 +393,9 @@ function printStartupSummary(cwd: string): void {
     console.log(
       srvMsg(
         `スキル定義のセッション注入 ≈${sessionTokens.toLocaleString()}tok` +
-          (unused !== null ? ` / 未使用 ${unused} 件` : ''),
+          (unused !== null ? ` / 直近未使用 ${unused} 件` : ''),
         `Skill definitions inject ≈${sessionTokens.toLocaleString()} tok/session` +
-          (unused !== null ? ` / ${unused} unused` : ''),
+          (unused !== null ? ` / ${unused} with no recent use` : ''),
       ),
     );
   } catch {

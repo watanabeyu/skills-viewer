@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   attachMemoryTriage,
   buildPrompt,
+  chunkByChars,
   collectTriageContext,
   normalizeInstruction,
   parseTriage,
@@ -13,7 +14,7 @@ import {
   headingLines,
 } from '../src/server/memory-triage';
 import { contentHash } from '../src/server/summary';
-import { triageEstimate } from '../web/src/util';
+import { instructionsOf, triageEstimate } from '../web/src/util';
 import type { MemorySection, MemoryVerdict, Section, SkillItem } from '../src/shared/types';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-triage-'));
@@ -68,7 +69,7 @@ describe('parseTriage', () => {
     expect(m.get('a.md')?.verdict).toBe('keep');
   });
 
-  it('不正な verdict の要素は keep に落とさず捨てる', () => {
+  it('不正な verdict の要素は行き先を出さず「出力不正」として記録する', () => {
     const m = parseTriage(
       JSON.stringify([
         { file: 'a.md', verdict: 'archive', reason: 'r', issues: [], instruction: 'x' },
@@ -76,11 +77,18 @@ describe('parseTriage', () => {
       ]),
       files,
     );
-    expect(m.has('a.md')).toBe(false);
+    // 診断済みとして残す(捨てると差分診断のたびに再 call される)が、行き先と指示文は出さない
+    expect(m.get('a.md')).toEqual({
+      verdict: 'keep',
+      reason: '',
+      issues: [],
+      instruction: '',
+      error: 'invalid-output',
+    });
     expect(m.get('b.md')?.verdict).toBe('delete');
   });
 
-  it('file の欠落・対象外は捨てる', () => {
+  it('file の欠落・対象外は捨てる(記録もしない)', () => {
     const m = parseTriage(
       JSON.stringify([
         { verdict: 'delete', reason: 'r', issues: [], instruction: 'x' },
@@ -163,7 +171,7 @@ describe('parseTriage', () => {
     expect(normalizeInstruction('2026.08 に完了')).toBe('- 2026.08 に完了');
   });
 
-  it('keep 以外で指示文が空(または記号だけ)の要素は捨てる', () => {
+  it('keep 以外で指示文が空(または記号だけ)の要素は「出力不正」として記録する', () => {
     const m = parseTriage(
       JSON.stringify([
         { file: 'a.md', verdict: 'delete', reason: 'r', issues: [], instruction: '  \n- ' },
@@ -171,8 +179,10 @@ describe('parseTriage', () => {
       ]),
       files,
     );
-    expect(m.has('a.md')).toBe(false); // 貼るものが無い提案は出さない
+    expect(m.get('a.md')?.error).toBe('invalid-output'); // 貼るものが無い提案は出さない
+    expect(m.get('a.md')?.instruction).toBe('');
     expect(m.get('b.md')?.verdict).toBe('keep'); // keep は元から instruction 空が正常
+    expect(m.get('b.md')?.error).toBeUndefined();
   });
 
   it('同じ file が重複したら先勝ち', () => {
@@ -258,6 +268,33 @@ describe('triageEstimate (削減試算の式)', () => {
     expect(triageEstimate(item('keep'))).toBeNull();
     expect(triageEstimate(item('shrink'))).toBeNull();
     expect(triageEstimate(item(null))).toBeNull();
+  });
+
+  it('出力不正(verdict keep + error)は試算にも提案にも数えない', () => {
+    const broken = item('keep');
+    broken.aiTriage = { ...broken.aiTriage!, error: 'invalid-output' };
+    expect(triageEstimate(broken)).toBeNull();
+    expect(instructionsOf([broken])).toEqual([]);
+  });
+});
+
+describe('chunkByChars (プロンプト合計サイズでの分割)', () => {
+  const size = (n: number) => n;
+
+  it('累積が上限以下の間は同じチャンクにまとめる', () => {
+    expect(chunkByChars([3, 3, 3], size, 10)).toEqual([[3, 3, 3]]);
+  });
+
+  it('上限を超える手前で切る(境界ちょうどは同じチャンク)', () => {
+    expect(chunkByChars([4, 3, 3, 1], size, 10)).toEqual([[4, 3, 3], [1]]);
+  });
+
+  it('1 件で上限を超えるものは単独チャンクにする(落とさない)', () => {
+    expect(chunkByChars([2, 99, 2], size, 10)).toEqual([[2], [99], [2]]);
+  });
+
+  it('空配列はチャンクを作らない', () => {
+    expect(chunkByChars([], size, 10)).toEqual([]);
   });
 });
 
