@@ -32,6 +32,12 @@ describe('mdRender (SKILL.md レンダラ)', () => {
     const html = mdRender('<img src=x onerror=alert(1)>');
     expect(html).not.toContain('<img');
   });
+
+  it('[text](url) はリンクになる(memory のプレースホルダ除外で正常系を壊していない)', () => {
+    expect(mdRender('see [a](https://x.com) now')).toContain(
+      '<a href="https://x.com" target="_blank" rel="noopener">a</a>',
+    );
+  });
 });
 
 describe('splitFrontmatter', () => {

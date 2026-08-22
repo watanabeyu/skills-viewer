@@ -292,7 +292,7 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     expect(it.aiTriage).toBeUndefined();
   });
 
-  /* hash: null は contentHash('') と一致し得ないが、existsSync の判定が先に効くことを固定する */
+  /* ファイル消失時は contentHash も null を返して hash 比較が通ってしまうため、existsSync が唯一の防波堤 */
   it('hash が null のキャッシュはファイルが消えていれば付けない', () => {
     const it2 = memItem('at-e.md', 'eee');
     const store: TriageStore = { [it2.path]: entry({ hash: null }) };
