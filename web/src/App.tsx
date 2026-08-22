@@ -13,14 +13,18 @@ import {
   flatten,
   kindMatches,
   matches,
+  refMatches,
   usageMatches,
   type FlatItem,
   type KindFilter,
+  type MemorySortKey,
+  type RefFilter,
   type SortKey,
   type UseFilter,
   type ViewMode,
 } from './util';
 import { GridView } from './components/GridView';
+import { MemoryGrid } from './components/MemoryGrid';
 import { DetailView, clearMdCache } from './components/DetailView';
 import { MemoryDetail } from './components/MemoryDetail';
 import { MemoryTriageView } from './components/MemoryTriageView';
@@ -38,11 +42,20 @@ const SORT_KEYS: [SortKey, MsgKey][] = [
   ['tokens', 'sort.tokens'],
 ];
 
+/* memory 軸の並び順。URL の sort パラメータは skill と共用し、memory 軸で未知の値なら既定(index)に落とす */
+const MEM_SORT_KEYS: [MemorySortKey, MsgKey][] = [
+  ['index', 'sort.memIndex'],
+  ['body', 'sort.memBody'],
+  ['updated', 'sort.memStale'],
+  ['name', 'sort.name'],
+];
+
 const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
 
 const VIEW_MODES: [ViewMode, MsgKey][] = [
   ['source', 'view.source'],
   ['group', 'view.group'],
+  ['memory', 'view.memory'],
   ['flat', 'view.flat'],
 ];
 
@@ -54,6 +67,11 @@ export default function App() {
 
   const q = (params.get('q') || '').toLowerCase();
   const sort = (params.get('sort') || 'name') as SortKey;
+  const memSort: MemorySortKey = MEM_SORT_KEYS.some(([k]) => k === params.get('sort'))
+    ? (params.get('sort') as MemorySortKey)
+    : 'index';
+  const refParam = params.get('ref');
+  const ref: RefFilter = refParam === 'read' || refParam === 'unread' ? refParam : 'all';
   // v0.5.0 までの共有 URL(grouped=0)はフラット表示として解釈する
   const view = (params.get('view') ||
     (params.get('grouped') === '0' ? 'flat' : 'source')) as ViewMode;
@@ -103,14 +121,23 @@ export default function App() {
   }, [reload]);
 
   const all: FlatItem[] = useMemo(() => (data ? flatten(data.sections) : []), [data]);
-  const shownCount = useMemo(
-    () =>
-      all.filter(
-        (it) =>
-          kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, !!data?.usageAvailable),
-      ).length,
-    [all, q, kind, use, data],
-  );
+  const memory = useMemo(() => data?.memory || [], [data]);
+  const memoryCount = memory.reduce((n, s) => n + s.items.length, 0);
+  /* 参照フィルタはトランスクリプトのあるプロジェクトが 1 つも無ければ意味が無いので出さない */
+  const refAvailable = memory.some((s) => s.usageAvailable);
+  const shownCount = useMemo(() => {
+    if (view === 'memory')
+      return memory.reduce(
+        (n, s) =>
+          n +
+          s.items.filter((it) => matches(it, q) && refMatches(it, ref, s.usageAvailable)).length,
+        0,
+      );
+    return all.filter(
+      (it) =>
+        kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, !!data?.usageAvailable),
+    ).length;
+  }, [all, memory, view, q, kind, use, ref, data]);
 
   /* 現在プロジェクトでの1セッションに注入される分(built-in + plugin + user + current project) */
   const sessionTokens = useMemo(() => {
@@ -224,7 +251,7 @@ export default function App() {
           </h1>
           <span className="sub">{t('app.subtitle')}</span>
           <span className="count">
-            {data ? t('app.count', { shown: shownCount, total: all.length }) : '…'}
+            {data ? t('app.count', { shown: shownCount, total: all.length + memoryCount }) : '…'}
           </span>
           {sessionTokens > 0 && (
             <span className="count tok-total" title={t('app.tokensTitle')}>
@@ -234,7 +261,7 @@ export default function App() {
         </div>
         <input
           className="q"
-          placeholder={t('app.searchPlaceholder')}
+          placeholder={t(view === 'memory' ? 'memory.searchPlaceholder' : 'app.searchPlaceholder')}
           value={params.get('q') || ''}
           onChange={(e) => setParam('q', e.target.value || null)}
         />
@@ -257,56 +284,105 @@ export default function App() {
               </button>
             ))}
           </span>
-          <select
-            className="sel"
-            value={sort}
-            onChange={(e) => setParam('sort', e.target.value === 'name' ? null : e.target.value)}
-            title={t('sort.title')}
-          >
-            {SORT_KEYS.map(([key, msgKey]) => (
-              <option key={key} value={key}>
-                {t(msgKey)}
-              </option>
-            ))}
-          </select>
-          {/* kind / 使用実績はボタン群だと場所を取るので、並び順と同じ select に統一 */}
-          <select
-            className={'sel' + (kind !== 'all' ? ' on' : '')}
-            value={kind}
-            onChange={(e) => setParam('kind', e.target.value === 'all' ? null : e.target.value)}
-          >
-            {KIND_FILTERS.map((key) => (
-              <option key={key} value={key}>
-                {t('filter.kindPrefix', { v: key === 'all' ? t('kind.all') : key })}
-              </option>
-            ))}
-          </select>
-          {data?.usageAvailable && (
-            <select
-              className={'sel' + (use !== 'all' ? ' on' : '')}
-              value={use}
-              title={t('filter.unusedTitle')}
-              onChange={(e) => {
-                // 旧パラメータ(unused=1)は新パラメータ設定時に掃除する
-                const next = new URLSearchParams(params);
-                next.delete('unused');
-                if (e.target.value === 'all') next.delete('use');
-                else next.set('use', e.target.value);
-                setParams(next, { replace: true });
-              }}
-            >
-              {(
-                [
-                  ['all', t('kind.all')],
-                  ['used', t('filter.used')],
-                  ['unused', t('filter.unused')],
-                ] as [UseFilter, string][]
-              ).map(([key, label]) => (
-                <option key={key} value={key}>
-                  {t('filter.usePrefix', { v: label })}
-                </option>
-              ))}
-            </select>
+          {view === 'memory' ? (
+            <>
+              <select
+                className="sel"
+                value={memSort}
+                onChange={(e) =>
+                  setParam('sort', e.target.value === 'index' ? null : e.target.value)
+                }
+                title={t('sort.title')}
+              >
+                {MEM_SORT_KEYS.map(([key, msgKey]) => (
+                  <option key={key} value={key}>
+                    {t(msgKey)}
+                  </option>
+                ))}
+              </select>
+              {/* memory 軸では種類は memory 固定(選択肢は 1 つ)。適用中と分かるよう on 強調 */}
+              <select className="sel on" defaultValue="memory">
+                <option value="memory">{t('filter.kindPrefix', { v: 'memory' })}</option>
+              </select>
+              {refAvailable && (
+                <select
+                  className={'sel' + (ref !== 'all' ? ' on' : '')}
+                  value={ref}
+                  title={t('filter.refTitle')}
+                  onChange={(e) =>
+                    setParam('ref', e.target.value === 'all' ? null : e.target.value)
+                  }
+                >
+                  {(
+                    [
+                      ['all', t('kind.all')],
+                      ['read', t('filter.refRead')],
+                      ['unread', t('filter.refUnread')],
+                    ] as [RefFilter, string][]
+                  ).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {t('filter.refPrefix', { v: label })}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
+          ) : (
+            <>
+              <select
+                className="sel"
+                value={sort}
+                onChange={(e) =>
+                  setParam('sort', e.target.value === 'name' ? null : e.target.value)
+                }
+                title={t('sort.title')}
+              >
+                {SORT_KEYS.map(([key, msgKey]) => (
+                  <option key={key} value={key}>
+                    {t(msgKey)}
+                  </option>
+                ))}
+              </select>
+              {/* kind / 使用実績はボタン群だと場所を取るので、並び順と同じ select に統一 */}
+              <select
+                className={'sel' + (kind !== 'all' ? ' on' : '')}
+                value={kind}
+                onChange={(e) => setParam('kind', e.target.value === 'all' ? null : e.target.value)}
+              >
+                {KIND_FILTERS.map((key) => (
+                  <option key={key} value={key}>
+                    {t('filter.kindPrefix', { v: key === 'all' ? t('kind.all') : key })}
+                  </option>
+                ))}
+              </select>
+              {data?.usageAvailable && (
+                <select
+                  className={'sel' + (use !== 'all' ? ' on' : '')}
+                  value={use}
+                  title={t('filter.unusedTitle')}
+                  onChange={(e) => {
+                    // 旧パラメータ(unused=1)は新パラメータ設定時に掃除する
+                    const next = new URLSearchParams(params);
+                    next.delete('unused');
+                    if (e.target.value === 'all') next.delete('use');
+                    else next.set('use', e.target.value);
+                    setParams(next, { replace: true });
+                  }}
+                >
+                  {(
+                    [
+                      ['all', t('kind.all')],
+                      ['used', t('filter.used')],
+                      ['unused', t('filter.unused')],
+                    ] as [UseFilter, string][]
+                  ).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {t('filter.usePrefix', { v: label })}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
           )}
           <span className="controls-r">
             <span style={{ position: 'relative' }}>
@@ -359,18 +435,27 @@ export default function App() {
           <Route
             path="/"
             element={
-              <GridView
-                data={data}
-                q={q}
-                sort={sort}
-                view={view}
-                kind={kind}
-                use={use}
-                onOpen={openSkill}
-                onOpenMemory={openMemory}
-                onOpenTriage={openTriage}
-                reload={reload}
-              />
+              view === 'memory' ? (
+                <MemoryGrid
+                  data={data}
+                  q={q}
+                  sort={memSort}
+                  ref={ref}
+                  onOpen={openMemory}
+                  onOpenTriage={openTriage}
+                />
+              ) : (
+                <GridView
+                  data={data}
+                  q={q}
+                  sort={sort}
+                  view={view}
+                  kind={kind}
+                  use={use}
+                  onOpen={openSkill}
+                  reload={reload}
+                />
+              )
             }
           />
           <Route
@@ -394,7 +479,10 @@ export default function App() {
             path="/memory/triage/:project"
             element={<MemoryTriageView data={data} reload={reload} />}
           />
-          <Route path="/memory/:id" element={<MemoryDetail data={data} reload={reload} />} />
+          <Route
+            path="/memory/:id"
+            element={<MemoryDetail data={data} q={q} sort={memSort} ref={ref} reload={reload} />}
+          />
         </Routes>
       )}
     </div>

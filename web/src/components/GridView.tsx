@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { MemorySection, SkillsData } from '../api';
+import type { SkillsData } from '../api';
 import { generateGroups, itemKey } from '../api';
 import {
   flatten,
@@ -12,7 +12,6 @@ import {
   isUnused,
   kindMatches,
   matches,
-  relDaysLabel,
   sortItems,
   usageLine,
   usageMatches,
@@ -24,18 +23,12 @@ import {
   type UseFilter,
   type ViewMode,
 } from '../util';
-import { lintLabel, memoryTypeLabel, t } from '../i18n';
+import { lintLabel, t } from '../i18n';
 import type { Section, SkillItem, Source } from '../api';
 
 export function KindBadge({ it }: { it: SkillItem }) {
   const label = KIND_LABEL[it.kind];
   return label ? <span className="kbadge">{label}</span> : null;
-}
-
-/* memory の frontmatter type。スコープと誤読されないよう内容分類として意訳したラベルを出す */
-export function MemoryTypeBadge({ it }: { it: SkillItem }) {
-  if (!it.memoryType) return null;
-  return <span className={'mtype mtype-' + it.memoryType}>{memoryTypeLabel(it.memoryType)}</span>;
 }
 
 export function UnusedBadge({ show }: { show: boolean }) {
@@ -84,15 +77,12 @@ export function SectionHeading({
   count,
   small,
   tokens,
-  extra,
 }: {
   section: Section;
   count: number;
   small?: boolean;
   /* セクション全体(フィルタ前)の注入トークン概算。省略時は非表示 */
   tokens?: number;
-  /* tokens と同じ位置に差し込む追加表示。memory は文言・tooltip が異なるため自前で描く */
-  extra?: React.ReactNode;
 }) {
   return (
     <div className={'sec-h' + (small ? ' sm' : '')}>
@@ -104,7 +94,6 @@ export function SectionHeading({
           {t('sec.tokens', { n: tokens.toLocaleString() })}
         </span>
       )}
-      {extra}
       <span className="ln" />
     </div>
   );
@@ -225,8 +214,11 @@ function SkillCard({
   );
 }
 
-/* skill / command / agent / hook の一覧本体(表示軸・フィルタの対象) */
-function SkillGrid({
+/*
+ * skill / command / agent / hook の一覧本体(表示軸・フィルタの対象)。
+ * memory は別の軸(view=memory → MemoryGrid)で、ここには一切出さない。
+ */
+export function GridView({
   data,
   q,
   sort,
@@ -365,186 +357,5 @@ function SkillGrid({
         <div className="empty">{t('list.empty')}</div>
       )}
     </div>
-  );
-}
-
-/*
- * SectionHeading は Section 型(source 必須。headingOf / SRC_COLOR が依存)を前提にしているので、
- * MemorySection を Section 互換オブジェクトに変換して見出しだけ流用する。
- */
-function memoryAsSection(sec: MemorySection): Section {
-  return {
-    id: 'mem-' + sec.id,
-    source: 'project',
-    projectName: sec.projectName,
-    ...(sec.isCurrent ? { isCurrent: true } : {}),
-    note: sec.note,
-    items: sec.items,
-  };
-}
-
-/*
- * 索引 tok(常時コスト)と本文 tok(Read されたときの従量コスト)は性質が違うので必ず並べて出す。
- * Read / W-E はトランスクリプトが 1 件も無いプロジェクトでは無意味なので列ごと出さない。
- */
-function MemoryRow({
-  it,
-  usageAvailable,
-  onOpen,
-}: {
-  it: SkillItem;
-  usageAvailable: boolean;
-  onOpen: (path: string) => void;
-}) {
-  return (
-    <button className="mem-row" onClick={() => onOpen(it.path)}>
-      <span className="r1">
-        <span className="nm">{it.name}</span>
-        <MemoryTypeBadge it={it} />
-        <span className="age">{relDaysLabel(it.updatedAt)}</span>
-      </span>
-      <span className="d-row">
-        <span className="d1">{it.description}</span>
-        <span className="mem-meta">
-          <span title={t('memory.indexTokTitle')}>
-            {t('memory.indexTok', { n: (it.indexTokens || 0).toLocaleString() })}
-          </span>
-          <span title={t('memory.bodyTokTitle')}>
-            {t('memory.bodyTok', { n: (it.bodyTokens || 0).toLocaleString() })}
-          </span>
-          {usageAvailable && (
-            <>
-              <span title={t('memory.readsTitle')}>
-                {t('memory.reads', { n: it.useCount || 0 })}
-              </span>
-              <span title={t('memory.writesTitle')}>
-                {t('memory.writes', { n: it.writeCount || 0 })}
-              </span>
-            </>
-          )}
-        </span>
-      </span>
-    </button>
-  );
-}
-
-/*
- * 自動メモリの一覧。memory は「呼び出す」ものではないので、表示軸・種類フィルタ・
- * 使用実績フィルタの影響を受けず、常に skill セクション群の下にまとめて出す(検索だけ効く)。
- */
-export function MemoryList({
-  sections,
-  q,
-  onOpen,
-  onOpenTriage,
-}: {
-  sections: MemorySection[];
-  q: string;
-  onOpen: (path: string) => void;
-  onOpenTriage: (id: string) => void;
-}) {
-  const shown = sections
-    .map((sec) => ({ sec, items: sec.items.filter((it) => matches(it, q)) }))
-    .filter((s) => s.items.length > 0);
-  if (!shown.length) return null;
-  const total = shown.reduce((n, s) => n + s.items.length, 0);
-  return (
-    <div className="mem-pad">
-      <div className="sec-h mem-top" title={t('memory.headingTitle')}>
-        <span className="lbl">{t('memory.heading')}</span>
-        <span className="n">{total}</span>
-        <span className="ln" />
-      </div>
-      {shown.map(({ sec, items }) => (
-        <div key={sec.id}>
-          <div className="mem-sec-h">
-            <SectionHeading
-              section={memoryAsSection(sec)}
-              count={items.length}
-              small
-              /* 索引はフィルタと無関係に全件が毎セッション注入されるので sec.indexTokens をそのまま出す */
-              extra={
-                !!sec.indexTokens && (
-                  <span className="sec-tok" title={t('memory.secTokensTitle')}>
-                    {t('memory.secTokens', { n: sec.indexTokens.toLocaleString() })}
-                  </span>
-                )
-              }
-            />
-            {sec.orphan && (
-              <span className="orphan-badge" title={t('memory.orphanTitle')}>
-                {t('memory.orphan')}
-              </span>
-            )}
-            {/* 棚卸しはプロジェクト単位(重複・別プロジェクト混入は全件を同時に見ないと判定できない) */}
-            <button
-              className="triage-link"
-              title={t('memory.triage.sectionTitle')}
-              onClick={() => onOpenTriage(sec.id)}
-            >
-              {t('memory.triage.section')}
-            </button>
-          </div>
-          <div className="mem-list">
-            {items.map((it) => (
-              <MemoryRow
-                key={it.path}
-                it={it}
-                usageAvailable={sec.usageAvailable}
-                onOpen={onOpen}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* 一覧ページ全体。skill セクション群の下に、独立した Memory セクションを並べる */
-export function GridView({
-  data,
-  q,
-  sort,
-  view,
-  kind,
-  use,
-  onOpen,
-  onOpenMemory,
-  onOpenTriage,
-  reload,
-}: {
-  data: SkillsData;
-  q: string;
-  sort: SortKey;
-  view: ViewMode;
-  kind: KindFilter;
-  use: UseFilter;
-  onOpen: (key: string) => void;
-  onOpenMemory: (path: string) => void;
-  onOpenTriage: (id: string) => void;
-  reload: () => Promise<void>;
-}) {
-  return (
-    <>
-      <SkillGrid
-        data={data}
-        q={q}
-        sort={sort}
-        view={view}
-        kind={kind}
-        use={use}
-        onOpen={onOpen}
-        reload={reload}
-      />
-      {!!data.memory?.length && (
-        <MemoryList
-          sections={data.memory}
-          q={q}
-          onOpen={onOpenMemory}
-          onOpenTriage={onOpenTriage}
-        />
-      )}
-    </>
   );
 }

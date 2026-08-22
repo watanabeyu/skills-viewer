@@ -5,13 +5,14 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   attachMemoryTriage,
   buildPrompt,
+  collectTriageContext,
   parseTriage,
   selectStale,
   type TriageStore,
 } from '../src/server/memory-triage';
 import { contentHash } from '../src/server/summary';
 import { triageEstimate } from '../web/src/util';
-import type { MemorySection, MemoryVerdict, SkillItem } from '../src/shared/types';
+import type { MemorySection, MemoryVerdict, Section, SkillItem } from '../src/shared/types';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-triage-'));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -53,7 +54,7 @@ describe('parseTriage', () => {
       verdict: 'to-docs',
       reason: '完了済みの設計文書',
       issues: ['58日更新なし'],
-      instruction: 'docs/ へ移し MEMORY.md の索引行を消す',
+      instruction: '- docs/ へ移し MEMORY.md の索引行を消す',
     });
   });
 
@@ -115,6 +116,34 @@ describe('parseTriage', () => {
     expect(m.get('a.md')!.reason.length).toBe(400);
     // instruction の上限は keep 以外(keep は空に正規化されるため)で効く
     expect(m.get('b.md')!.instruction.length).toBe(1200);
+  });
+
+  it('to-skill を通す(7 値目)', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        {
+          file: 'a.md',
+          verdict: 'to-skill',
+          reason: 'pr-create の挙動への好み',
+          issues: [],
+          instruction: '- pr-create の SKILL.md に 1 行足す',
+        },
+      ]),
+      files,
+    );
+    expect(m.get('a.md')?.verdict).toBe('to-skill');
+  });
+
+  it('instruction の体裁を「- 」箇条書きに正規化する(番号付き・散文・空行)', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        { file: 'a.md', verdict: 'delete', reason: 'r', issues: [], instruction: '1. a\n2. b' },
+        { file: 'b.md', verdict: 'delete', reason: 'r', issues: [], instruction: '散文' },
+      ]),
+      files,
+    );
+    expect(m.get('a.md')?.instruction).toBe('- a\n- b');
+    expect(m.get('b.md')?.instruction).toBe('- 散文');
   });
 
   it('同じ file が重複したら先勝ち', () => {
@@ -188,6 +217,10 @@ describe('triageEstimate (削減試算の式)', () => {
     }
   });
 
+  it('to-skill は to-docs と同じ(索引分だけ減り常時注入は増えない)', () => {
+    expect(triageEstimate(item('to-skill'))).toEqual({ index: -20, always: 0 });
+  });
+
   it('to-claude-md は索引が減る代わりに本文が常時注入になる', () => {
     expect(triageEstimate(item('to-claude-md'))).toEqual({ index: -20, always: 600 });
   });
@@ -228,6 +261,25 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
       expect(prompt).toContain(schema);
       expect(prompt).toContain('|---|---|'); // 判定指針テーブルが崩れていない
     }
+  });
+
+  it('常設文脈(CLAUDE.md の見出し・skill 一覧)を ja / en とも節として載せる', () => {
+    const withCtx = {
+      ...ctx,
+      rules: '## CLAUDE.md\n# 運用ルール',
+      skills: '- skill pr-create — PR を作る',
+    };
+    for (const lang of ['ja', 'en'] as const) {
+      const prompt = buildPrompt(targets, withCtx, lang);
+      expect(prompt).toContain('# 運用ルール');
+      expect(prompt).toContain('- skill pr-create — PR を作る');
+      expect(prompt).toContain('## skill / command / agent');
+    }
+  });
+
+  it('rules / skills が空なら「無し」と明示する(節ごと落とさない)', () => {
+    expect(buildPrompt(targets, ctx, 'ja')).toContain('(無し)');
+    expect(buildPrompt(targets, ctx, 'en')).toContain('(none)');
   });
 
   it('usageAvailable が false なら計測不能と書き、参照回数は出さない', () => {
@@ -299,5 +351,66 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     fs.rmSync(it2.path);
     attachMemoryTriage([section([it2])], 'ja', store);
     expect(it2.aiTriage).toBeUndefined();
+  });
+});
+
+describe('collectTriageContext (常設文脈の収集)', () => {
+  /* projectPath 配下に CLAUDE.md を置いた擬似プロジェクト */
+  const proj = fs.mkdtempSync(path.join(tmp, 'proj-'));
+  fs.writeFileSync(
+    path.join(proj, 'CLAUDE.md'),
+    '# 運用\n本文は渡さない\n## PR\n本文2\n##### 深すぎる見出し\n',
+  );
+  const sec: MemorySection = {
+    id: '-proj',
+    projectPath: proj,
+    projectName: 'proj',
+    note: tmp,
+    usageAvailable: true,
+    indexTokens: 0,
+    items: [],
+  };
+  const item = (name: string, kind: SkillItem['kind'], description: string): SkillItem => ({
+    name,
+    description,
+    argumentHint: '',
+    version: '',
+    kind,
+    path: '/x/' + name,
+    files: [],
+  });
+  const sections: Section[] = [
+    { id: 'proj-0', source: 'project', note: proj, items: [item('local', 'command', 'ローカル')] },
+    { id: 'proj-1', source: 'project', note: '/other', items: [item('other', 'skill', '別')] },
+    {
+      id: 'user',
+      source: 'user',
+      note: '/u',
+      items: [item('pr-create', 'skill', 'PR を作る'), item('h', 'hook', 'フック')],
+    },
+  ];
+
+  it('見出し行だけを抽出し、本文は載せない', () => {
+    const { rules } = collectTriageContext(sec, sections);
+    expect(rules).toContain('# 運用');
+    expect(rules).toContain('## PR');
+    expect(rules).not.toContain('本文は渡さない');
+    expect(rules).not.toContain('##### 深すぎる見出し'); // #5 個は見出しとして扱わない
+  });
+
+  it('user scope と当該プロジェクトの定義だけを列挙し、hook は除く', () => {
+    const { skills } = collectTriageContext(sec, sections);
+    expect(skills).toContain('- command local — ローカル');
+    expect(skills).toContain('- skill pr-create — PR を作る');
+    expect(skills).not.toContain('other');
+    expect(skills).not.toContain('フック');
+  });
+
+  /* 孤児は projectPath が無いのでプロジェクトの CLAUDE.md を特定できない(~/.claude のみ残る) */
+  it('孤児(projectPath null)はプロジェクトの見出しを載せず、skills は user scope のみ', () => {
+    const r = collectTriageContext({ ...sec, projectPath: null }, sections);
+    expect(r.rules).not.toContain('# 運用');
+    expect(r.skills).not.toContain('local');
+    expect(r.skills).toContain('- skill pr-create — PR を作る');
   });
 });

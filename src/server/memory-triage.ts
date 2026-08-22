@@ -17,6 +17,7 @@ import type {
   MemorySection,
   MemoryTriage,
   MemoryVerdict,
+  Section,
   SkillItem,
 } from '../shared/types';
 import { parseFrontmatter } from './scan';
@@ -31,6 +32,7 @@ const VERDICTS: readonly MemoryVerdict[] = [
   'to-docs',
   'delete',
   'wrong-project',
+  'to-skill',
 ];
 
 interface TriageEntry extends MemoryTriage {
@@ -75,6 +77,76 @@ export interface TriageContext {
   index: string;
   /* false = そのプロジェクトの transcript が無い = Read / W-E は計測不能 */
   usageAvailable: boolean;
+  /*
+   * このプロジェクトで常時有効なもの。「もう CLAUDE.md に書いてある(= delete)」
+   * 「その skill に 1 行足せば memory 自体が要らない(= to-skill)」を判定させるための文脈。
+   * 収集できなければ空文字(呼び出し側の都合で省略も可)。
+   */
+  rules?: string;
+  skills?: string;
+}
+
+/* 常設文脈の上限。プロンプト全体が本文で既に大きいので、見出し・名前だけに絞って総量を抑える */
+const RULES_MAX_LINES = 80;
+const RULES_MAX_CHARS = 6000;
+const SKILLS_MAX_LINES = 120;
+const DESC_MAX_CHARS = 120;
+
+/* 見出し行(# 〜 ####)だけを抜く。本文は機密・サイズの両面で渡さない */
+function headingLines(file: string): string[] {
+  try {
+    return fs
+      .readFileSync(file, 'utf8')
+      .split('\n')
+      .filter((l) => /^#{1,4}\s/.test(l))
+      .map((l) => l.trimEnd());
+  } catch {
+    return []; // 無い・読めないファイルはスキップ
+  }
+}
+
+/*
+ * プロンプトに載せる「常設文脈」を集める。
+ * rules = CLAUDE.md の見出しだけ、skills = このプロジェクトで使える定義の name — description。
+ * 孤児(projectPath null)は CLAUDE.md を特定できないので rules は空、skills は user scope のみ。
+ */
+export function collectTriageContext(
+  sec: MemorySection,
+  sections: Section[],
+): { rules: string; skills: string } {
+  const pp = sec.projectPath;
+  const files: { file: string; label: string }[] = [];
+  if (pp) {
+    files.push({ file: path.join(pp, 'CLAUDE.md'), label: 'CLAUDE.md' });
+    files.push({ file: path.join(pp, '.claude', 'CLAUDE.md'), label: '.claude/CLAUDE.md' });
+  }
+  files.push({
+    file: path.join(os.homedir(), '.claude', 'CLAUDE.md'),
+    label: '~/.claude/CLAUDE.md',
+  });
+
+  const ruleLines: string[] = [];
+  for (const f of files) {
+    const heads = headingLines(f.file);
+    if (!heads.length) continue;
+    ruleLines.push('## ' + f.label, ...heads);
+  }
+  const rules = ruleLines.slice(0, RULES_MAX_LINES).join('\n').slice(0, RULES_MAX_CHARS);
+
+  const skillLines: string[] = [];
+  for (const s of sections) {
+    const inScope =
+      s.source === 'user' ||
+      (s.source === 'project' && !!pp && (s.note === pp || s.note.startsWith(pp + path.sep)));
+    if (!inScope) continue;
+    for (const it of s.items) {
+      if (it.kind === 'hook') continue; // hook は name/description を注入しないので昇格先にならない
+      skillLines.push(
+        '- ' + it.kind + ' ' + it.name + ' — ' + it.description.slice(0, DESC_MAX_CHARS),
+      );
+    }
+  }
+  return { rules, skills: skillLines.slice(0, SKILLS_MAX_LINES).join('\n') };
 }
 
 /* 1 件分の事実 + 本文。本文は diagnose.ts と同じく 12,000 字で切る */
@@ -124,6 +196,25 @@ function itemBlock(it: SkillItem, usageAvailable: boolean, lang: Lang): string {
 export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang): string {
   const blocks = targets.map((it) => itemBlock(it, ctx.usageAvailable, lang)).join('\n\n');
   const files = targets.map((it) => path.basename(it.path)).join(', ');
+  const standing =
+    lang === 'ja'
+      ? '# このプロジェクトで常時有効なもの(重複・昇格先の判断に使う)\n\n' +
+        '## CLAUDE.md の見出し\n' +
+        (ctx.rules || '(無し)') +
+        '\n\n## skill / command / agent\n' +
+        (ctx.skills || '(無し)') +
+        '\n\n' +
+        'これらの本文は渡していない。見出し・名前・description から重複や昇格先の見当を付け、' +
+        '確証が無い場合は instruction に「<file> と重複していないか確認してから」と書くこと。\n'
+      : '# Always-on context for this project (use it to spot duplicates and promotion targets)\n\n' +
+        '## CLAUDE.md headings\n' +
+        (ctx.rules || '(none)') +
+        '\n\n## skill / command / agent\n' +
+        (ctx.skills || '(none)') +
+        '\n\n' +
+        'Their bodies are NOT provided. Use the headings, names and descriptions to guess duplicates and ' +
+        'promotion targets; when you are not certain, write "check it does not duplicate <file> first" ' +
+        'in the instruction.\n';
   if (lang === 'ja') {
     return (
       'あなたは Claude Code の自動メモリ(~/.claude/projects/<project>/memory/)の棚卸しをします。\n' +
@@ -138,7 +229,11 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
       '| feedback 型 | 索引 1 行で機能している。本文は縮める(shrink)。強制力が要るなら CLAUDE.md(to-claude-md) |\n' +
       '| reference 型で Read 実績あり | そのまま。触らない(keep) |\n' +
       '| reference 型で長期 Read 0 | 削除(delete)か docs/ へ(to-docs) |\n' +
-      '| 別プロジェクトの話 | 移動または削除(wrong-project) |\n\n' +
+      '| 別プロジェクトの話 | 移動または削除(wrong-project) |\n' +
+      '| 内容が特定の skill / command の手順や挙動に対する好み(例: PR 作成前に止まる、ブランチ名の確認) | ' +
+      'その skill の SKILL.md に追記して memory を消す(to-skill)。全プロジェクトで効くようになる |\n' +
+      '| CLAUDE.md や skill に既に同じことが書いてある | 削除(delete) |\n' +
+      '| 一次情報(wiki / issue / PR / docs)が既に外にあり、memory はその目次コピー | 削除(delete)。移す先は無い。to-docs にしない |\n\n' +
       '# 注意\n' +
       '- Read 0 は異常ではありません。feedback 型は索引の 1 行だけでエージェントの行動を変えるため、本文が読まれないのが正常です。Read 0 だけを根拠に削除を勧めないこと。\n' +
       '- 「参照実績: 計測不能」の件は、参照回数を根拠に使わないこと。\n' +
@@ -147,24 +242,31 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
       '# 出力\n' +
       '次の JSON 配列だけを出力してください(前置き・コードフェンス不要):\n' +
       '[{"file": "対象のファイル名(入力の file をそのまま)",\n' +
-      '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project",\n' +
-      '  "reason": "そう判断した理由(1〜2文)",\n' +
+      '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill",\n' +
+      '  "reason": "そう判断した理由(1〜3文)",\n' +
       '  "issues": ["判断の根拠になった事実(各30字程度、最大4件。無ければ空配列)"],\n' +
       '  "instruction": "Claude Code に貼る指示文(keep のときは空文字)"}]\n\n' +
       '制約:\n' +
       '- 対象ファイル(' +
       files +
       ')それぞれについて 1 要素ずつ、過不足なく出すこと\n' +
-      '- verdict は上記 6 値のみ。それ以外の値は使わない\n' +
-      '- instruction は 3〜6 行。貼る先はこのプロジェクトで動いている Claude Code 本人なので、' +
+      '- verdict は上記 7 値のみ。それ以外の値は使わない\n' +
+      '- instruction は各行を「- 」で始める箇条書きで 3〜6 行。改行で区切る(1 行 1 要点)。' +
+      '1 行目は「何をどこへ」(意図)、2 行目以降は見落としやすい要点。番号付き(1.)や散文にしない\n' +
+      '- 貼る先はこのプロジェクトで動いている Claude Code 本人なので、' +
       'フルパスや手順の詳細は書かず、意図と見落としやすい要点だけを書く\n' +
       '- instruction に必ず含めること: MEMORY.md の該当索引行の削除 / 他メモリからの [[link]] の張り替え / ' +
       'shrink なら何を残し何を本文から出すかの分割線 / to-claude-md なら「全文が毎セッション注入になり +(本文 tok) tok」というコスト警告\n' +
+      '- to-skill の instruction に必ず含めること: 追記先の skill / command 名' +
+      '(~/.claude/skills/<name>/SKILL.md か .claude/skills/... かの別も書く)/ 追記する 1〜2 行の要旨 / ' +
+      'MEMORY.md の該当索引行の削除\n' +
       '- 6 行に収まらない提案は複雑すぎるサインです。より単純な行き先を選ぶこと\n' +
       '- 出力の文章はすべて日本語で書くこと\n\n' +
       '# プロジェクト: ' +
       ctx.projectName +
-      '\n\n# MEMORY.md(索引全文)\n' +
+      '\n\n' +
+      standing +
+      '\n# MEMORY.md(索引全文)\n' +
       (ctx.index || '(索引なし)') +
       '\n\n# 対象メモリ\n\n' +
       blocks
@@ -183,7 +285,12 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
     '| type feedback | already works from the one index line; shrink the body (shrink), or CLAUDE.md if it must be binding (to-claude-md) |\n' +
     '| type reference with Read activity | leave it alone (keep) |\n' +
     '| type reference with no Read for a long time | delete, or move to docs/ (to-docs) |\n' +
-    '| belongs to a different project | move or delete (wrong-project) |\n\n' +
+    '| belongs to a different project | move or delete (wrong-project) |\n' +
+    '| a preference about how a specific skill / command behaves (e.g. stop before creating the PR, ' +
+    'confirm the branch name) | add it to that skill SKILL.md and drop the memory (to-skill); ' +
+    'it then applies in every project |\n' +
+    '| CLAUDE.md or a skill already says the same thing | delete |\n' +
+    '| the primary source already lives outside (wiki / issue / PR / docs) and the memory is just an index copy | delete — there is nothing to move; do not use to-docs |\n\n' +
     '# Notes\n' +
     '- Read 0 is NOT an anomaly. A feedback memory changes the agent behaviour from its single index ' +
     'line alone, so its body is never read in normal operation. Never recommend deletion on Read 0 alone.\n' +
@@ -194,25 +301,33 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
     '# Output\n' +
     'Output ONLY this JSON array (no preamble, no code fences):\n' +
     '[{"file": "the target file name, exactly as given",\n' +
-    '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project",\n' +
-    '  "reason": "why (1-2 sentences)",\n' +
+    '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill",\n' +
+    '  "reason": "why (1-3 sentences)",\n' +
     '  "issues": ["facts behind the call (about 10 words each, max 4; empty array if none)"],\n' +
     '  "instruction": "instruction to paste into Claude Code (empty string when verdict is keep)"}]\n\n' +
     'Constraints:\n' +
     '- Emit exactly one element for each target file (' +
     files +
     '), no more, no less.\n' +
-    '- verdict must be one of the six values above; never invent another value.\n' +
-    '- instruction is 3 to 6 lines. It is pasted into the Claude Code session running in THIS project, ' +
-    'so state intent and the easy-to-miss points only — no full paths, no step-by-step detail.\n' +
+    '- verdict must be one of the seven values above; never invent another value.\n' +
+    '- instruction is a bullet list of 3 to 6 lines, every line starting with "- ", one point per line, ' +
+    'separated by newlines. The first line says what moves where (the intent); the rest are the ' +
+    'easy-to-miss points. Never use numbered lists ("1.") or prose.\n' +
+    '- It is pasted into the Claude Code session running in THIS project, so state intent and the ' +
+    'easy-to-miss points only — no full paths, no step-by-step detail.\n' +
     '- instruction MUST cover: removing the matching line from MEMORY.md; re-pointing [[link]] references ' +
     'from other memories; for shrink, where to cut (what stays, what moves out); for to-claude-md, the cost ' +
     'warning that the full body becomes a per-session injection of +(body tok) tokens.\n' +
+    '- For to-skill, the instruction MUST cover: the target skill / command name (and whether it is ' +
+    '~/.claude/skills/<name>/SKILL.md or .claude/skills/...); the gist of the 1-2 lines to add; ' +
+    'removing the matching line from MEMORY.md.\n' +
     '- A proposal that does not fit in 6 lines is too complex; pick a simpler destination.\n' +
     '- Write all prose in English.\n\n' +
     '# Project: ' +
     ctx.projectName +
-    '\n\n# MEMORY.md (full index)\n' +
+    '\n\n' +
+    standing +
+    '\n# MEMORY.md (full index)\n' +
     (ctx.index || '(no index)') +
     '\n\n# Target memories\n\n' +
     blocks
@@ -220,7 +335,26 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
 }
 
 /*
- * 出力を検証つきでパース。file 対応が取れない・verdict が 6 値以外の要素は
+ * 指示文の体裁をモデルに依らず固定する。プロンプトで「- 」箇条書きを指定しても
+ * haiku は「1. 2. 3.」、opus は改行なしの散文で返すため、貼り先が読む文章としてここで揃える。
+ * 番号・記号を剥がして全行を「- 」始まりにし、散文 1 行で来ても最低 1 箇条にする。
+ */
+export function normalizeInstruction(text: string): string {
+  return text
+    .split('\n')
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^(?:\d+[.)]|[-*・•])\s*/, '')
+        .trim(),
+    )
+    .filter((line) => line.length > 0)
+    .map((line) => '- ' + line)
+    .join('\n');
+}
+
+/*
+ * 出力を検証つきでパース。file 対応が取れない・verdict が 7 値以外の要素は
  * keep に落とさず捨てる(誤った行き先を提示するより出さない方が安全)。
  */
 export function parseTriage(text: string, allowedFiles: string[]): Map<string, MemoryTriage> {
@@ -241,7 +375,8 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
       .filter((x: unknown) => typeof x === 'string')
       .map((s: string) => s.slice(0, 80))
       .slice(0, 4);
-    const instruction = verdict === 'keep' ? '' : String(e?.instruction || '').trim();
+    const instruction =
+      verdict === 'keep' ? '' : normalizeInstruction(String(e?.instruction || ''));
     out.set(file, {
       verdict,
       reason: String(e?.reason || '')
@@ -284,7 +419,7 @@ export async function triageProject(
   sec: MemorySection,
   lang: Lang,
   model: AiModel = 'haiku',
-  opts: { force?: boolean; files?: string[] } = {},
+  opts: { force?: boolean; files?: string[]; sections?: Section[] } = {},
 ): Promise<TriageResult[]> {
   const wanted = opts.files?.length ? new Set(opts.files.map((f) => path.basename(f))) : null;
   const targets = wanted
@@ -295,10 +430,13 @@ export async function triageProject(
   const store = loadTriage();
   const stale = selectStale(targets, store, lang, !!opts.force);
   if (stale.length) {
+    const standing = collectTriageContext(sec, opts.sections || []);
     const ctx: TriageContext = {
       projectName: sec.projectName,
       index: readIndexText(sec.note),
       usageAvailable: sec.usageAvailable,
+      rules: standing.rules,
+      skills: standing.skills,
     };
     const text = await runClaude(buildPrompt(stale, ctx, lang), model, 600000);
     const parsed = parseTriage(

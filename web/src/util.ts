@@ -17,8 +17,11 @@ export const SRC_TINT: Record<Source, string> = {
 
 export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
 
-/* 一覧の表示軸: ソース別(置き場所)/ 用途別(AI グルーピング)/ フラット */
-export type ViewMode = 'source' | 'group' | 'flat';
+/* 一覧の表示軸: ソース別(置き場所)/ 用途別(AI グルーピング)/ メモリ(自動メモリのみ)/ フラット */
+export type ViewMode = 'source' | 'group' | 'memory' | 'flat';
+
+/* memory セクションのアクセント色(skill の SRC_COLOR に相当。AI マークと同系色) */
+export const MEM_COLOR = '#b0836a';
 
 export interface FlatItem extends SkillItem {
   key: string;
@@ -66,6 +69,7 @@ export const KIND_LABEL: Partial<Record<SkillItem['kind'], string>> = {
   command: 'command',
   agent: 'agent',
   hook: 'hook',
+  memory: 'memory',
 };
 
 export type KindFilter = 'all' | SkillItem['kind'];
@@ -151,12 +155,62 @@ export const fmtDate = (ms?: number) => {
 };
 
 /*
- * 経過日ラベル(memory の「いつ書かれたか」用)。日付そのものより鮮度が重要なので相対表記。
+ * 経過日ラベル(memory の「どれだけ更新されていないか」用)。日付そのものより鮮度が重要なので相対表記。
  */
 export function relDaysLabel(ms?: number): string {
   if (!ms) return '';
   const days = Math.floor((Date.now() - ms) / 86400000);
-  return days <= 0 ? t('memory.today') : t('memory.daysAgo', { n: days });
+  return days <= 0 ? t('memory.today') : t('memory.stale', { n: days });
+}
+
+/* M/D 表記(カードの「最終 8/14」用。年は鮮度判断に不要なので省く) */
+export const fmtMD = (ms?: number) => {
+  if (!ms) return '';
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+};
+
+/* memory 軸の並び順。既定は索引トークン(常時コスト)が多い順 = 減らす価値が高い順 */
+export type MemorySortKey = 'index' | 'body' | 'updated' | 'name';
+
+export function sortMemory<T extends SkillItem>(items: T[], sort: MemorySortKey): T[] {
+  const arr = [...items];
+  const byName = (a: T, b: T) => a.name.localeCompare(b.name);
+  if (sort === 'index')
+    arr.sort((a, b) => (b.indexTokens || 0) - (a.indexTokens || 0) || byName(a, b));
+  else if (sort === 'body')
+    arr.sort((a, b) => (b.bodyTokens || 0) - (a.bodyTokens || 0) || byName(a, b));
+  // 更新が古い順(棚卸し候補が先頭に来る)。更新日不明は末尾
+  else if (sort === 'updated')
+    arr.sort((a, b) => (a.updatedAt ?? Infinity) - (b.updatedAt ?? Infinity) || byName(a, b));
+  else arr.sort(byName);
+  return arr;
+}
+
+/*
+ * 参照フィルタ(本文が Read されたか)。トランスクリプトが無いプロジェクトは「未参照」ではなく
+ * 判定不能なので、read / unread のどちらにも含めない(all だけが通す)。
+ */
+export type RefFilter = 'all' | 'read' | 'unread';
+
+export const refMatches = (it: SkillItem, f: RefFilter, usageAvailable: boolean) => {
+  if (f === 'read') return usageAvailable && !!it.useCount;
+  if (f === 'unread') return usageAvailable && !it.useCount;
+  return true;
+};
+
+/* 被リンク: 同プロジェクトの他 memory の [[x]] がこの memory を name かファイル名で指しているもの */
+export function backlinksOf<T extends SkillItem>(it: T, items: T[]): T[] {
+  const base = fileBase(it.path);
+  return items.filter(
+    (o) => o.path !== it.path && (o.links || []).some((n) => n === it.name || n === base),
+  );
+}
+
+/* リンク切れ数: 発リンクのうち同プロジェクト内で解決できないもの(解決規則は memoryResolver と同一) */
+export function brokenLinkCount(it: SkillItem, items: SkillItem[]): number {
+  const resolve = memoryResolver(items);
+  return (it.links || []).filter((n) => !resolve(n)).length;
 }
 
 /* memory の実パスからファイル名を取る(API の files 指定・[[link]] 解決で使う) */
@@ -181,7 +235,9 @@ export const memoryResolver =
 export function triageEstimate(it: SkillItem): { index: number; always: number } | null {
   const v = it.aiTriage?.verdict;
   const index = it.indexTokens || 0;
-  if (v === 'delete' || v === 'to-docs' || v === 'wrong-project')
+  // to-skill は SKILL.md 側(元から常時注入されている description ではなく本文)へ移すので、
+  // memory 側は索引が消えるだけ = to-docs と同じ試算になる
+  if (v === 'delete' || v === 'to-docs' || v === 'wrong-project' || v === 'to-skill')
     return { index: -index, always: 0 };
   // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)
   if (v === 'to-claude-md') return { index: -index, always: it.bodyTokens || 0 };

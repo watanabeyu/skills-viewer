@@ -8,9 +8,10 @@ import {
   type SkillItem,
   type SkillsData,
 } from '../api';
-import { copyText, fileName, memoryResolver, relDaysLabel, triageEstimate } from '../util';
+import { copyText, fileName, triageEstimate } from '../util';
 import { memoryVerdictLabel, t } from '../i18n';
-import { MemoryTypeBadge } from './GridView';
+import { KindBadge } from './GridView';
+import { MemoryTypeBadge, TokFacts } from './MemoryBits';
 
 /*
  * memory 棚卸し診断の画面 + 詳細画面に埋めるブロック。
@@ -24,13 +25,49 @@ const signed = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n)
 const instructionsOf = (items: SkillItem[]) =>
   items.filter((it) => it.aiTriage && it.aiTriage.instruction);
 
+/*
+ * コピーする指示文には「まず確認してから実行」の前置きを付ける。貼り先の Claude Code に
+ * dry run(読み取り → 作業内容の提示 → 承認)を求めるためで、毎回手で書き足さなくて済むようにする。
+ */
+const withPreamble = (body: string) => t('memory.triage.copyPreamble') + '\n\n' + body;
+
 /* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用) */
 const joinInstructions = (items: SkillItem[]) =>
-  instructionsOf(items)
-    .map((it) => '## ' + it.name + '\n\n' + it.aiTriage!.instruction)
-    .join('\n\n');
+  withPreamble(
+    instructionsOf(items)
+      .map((it) => '## ' + it.name + '\n\n' + it.aiTriage!.instruction)
+      .join('\n\n'),
+  );
 
-function CopyButton({ text, label }: { text: string; label?: string }) {
+/*
+ * 削減試算のラベル。機械層で計算する(AI に数値を出させない)。
+ * shrink は索引が変わらないので数値でなく文言だけ、keep は空。
+ */
+function estimateLabel(it: SkillItem): string {
+  if (it.aiTriage?.verdict === 'shrink') return t('memory.triage.estShrink');
+  const est = triageEstimate(it);
+  if (!est) return '';
+  if (est.always > 0)
+    return t('memory.triage.estApplyClaude', {
+      n: signed(est.index),
+      m: est.always.toLocaleString(),
+    });
+  return t('memory.triage.estApply', { n: signed(est.index) });
+}
+
+/* 1 件の棚卸しを実行(詳細画面の「✦ 棚卸し診断」)。診断済みなら force で診断し直す */
+export const runTriageOne = (sec: MemorySection, it: SkillItem) =>
+  triageMemory(sec.id, [fileName(it.path)], !!it.aiTriage);
+
+export function CopyButton({
+  text,
+  label,
+  className,
+}: {
+  text: string;
+  label?: string;
+  className: string;
+}) {
   const [done, setDone] = useState(false);
   // コピー成功のフィードバックは 2 秒でラベルを戻す
   useEffect(() => {
@@ -47,151 +84,73 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
     }
   };
   return (
-    <button className="pbtn sm" onClick={onClick}>
+    <button className={className} onClick={onClick}>
       {done ? t('memory.triage.copied') : label || t('memory.triage.copy')}
     </button>
   );
 }
 
+export function VerdictBadge({ verdict }: { verdict: MemoryTriage['verdict'] }) {
+  return <span className={'vbadge v-' + verdict}>✦ {memoryVerdictLabel(verdict)}</span>;
+}
+
 /*
- * 削減試算は機械層で計算する(AI に数値を出させない)。
- * shrink は索引が変わらないので数値でなく文言だけを出す。
+ * 診断結果の本体(棚卸し行 / 詳細ブロックで共用)。理由 → issues → 指示文。
+ * 指示文は折りたたまず全文を出す(貼るかどうかの判断がここで完結するように)。
  */
-function TriageEstimate({ it }: { it: SkillItem }) {
-  if (it.aiTriage?.verdict === 'shrink')
-    return <span className="triage-est">{t('memory.triage.estShrink')}</span>;
-  const est = triageEstimate(it);
-  if (!est) return null;
-  return (
-    <span className="triage-est">
-      {t('memory.triage.estIndex', { n: signed(est.index) })}
-      {est.always > 0 && ' · ' + t('memory.triage.estAlways', { n: est.always.toLocaleString() })}
-    </span>
-  );
-}
-
-export function TriageVerdictBadge({ verdict }: { verdict: MemoryTriage['verdict'] }) {
-  return <span className={'triage-verdict v-' + verdict}>{memoryVerdictLabel(verdict)}</span>;
-}
-
-/* 診断結果の本体(行 / 詳細ブロックで共用)。指示文は折りたたまず全文を出す */
 function TriageResult({ it }: { it: SkillItem }) {
   const tri = it.aiTriage;
   if (!tri) return null;
   return (
     <>
-      <div className="triage-head">
-        <TriageVerdictBadge verdict={tri.verdict} />
-        <TriageEstimate it={it} />
-      </div>
-      {tri.reason && <p className="triage-reason">{tri.reason}</p>}
+      {tri.reason && <p className="reason">{tri.reason}</p>}
       {!!tri.issues.length && (
-        <div className="triage-issues">
+        <div className="issues">
           {/* 同じ文言が 2 件返り得るので key は index(並びは AI 出力のまま固定) */}
           {tri.issues.map((issue, i) => (
-            <span className="triage-issue" key={i}>
+            <span className="issue" key={i}>
               {issue}
             </span>
           ))}
         </div>
       )}
       {tri.instruction && (
-        <div className="triage-instr">
-          <div className="triage-instr-t">{t('memory.triage.instruction')}</div>
-          <pre className="triage-instr-body">{tri.instruction}</pre>
-          <CopyButton text={tri.instruction} />
+        <div className="instr">
+          <div className="instr-h">
+            <span className="instr-t">{t('memory.triage.instruction')}</span>
+            <span className="instr-d">{estimateLabel(it)}</span>
+            <CopyButton className="copybtn" text={withPreamble(tri.instruction)} />
+          </div>
+          <div className="instr-body">{tri.instruction}</div>
         </div>
       )}
     </>
   );
 }
 
-/* 機械層の事実。未診断でもここだけは常に出す(Read 0 は異常ではないので強調しない) */
-function TriageFacts({ it, sec, broken }: { it: SkillItem; sec: MemorySection; broken: number }) {
-  return (
-    <span className="triage-facts">
-      <span title={t('memory.indexTokTitle')}>
-        {t('memory.indexTok', { n: (it.indexTokens || 0).toLocaleString() })}
-      </span>
-      <span title={t('memory.bodyTokTitle')}>
-        {t('memory.bodyTok', { n: (it.bodyTokens || 0).toLocaleString() })}
-      </span>
-      <span>{relDaysLabel(it.updatedAt)}</span>
-      {sec.usageAvailable && (
-        <>
-          <span title={t('memory.readsTitle')}>{t('memory.reads', { n: it.useCount || 0 })}</span>
-          <span title={t('memory.writesTitle')}>
-            {t('memory.writes', { n: it.writeCount || 0 })}
-          </span>
-        </>
-      )}
-      {broken > 0 && (
-        <span className="triage-broken" title={t('memory.triage.brokenTitle')}>
-          {t('memory.triage.broken', { n: broken })}
-        </span>
-      )}
-    </span>
-  );
-}
-
 /*
- * 詳細画面に出す 1 件分の棚卸し診断ブロック(diag-box と同じ枠構造)。
- * API は一覧と同じ /api/memory-triage で、files に自分 1 件だけを渡す。
- * 結果は同じ件単位キャッシュに載るので、一覧側の診断とも共有される。
+ * 詳細画面の概要タブに出す 1 件分の診断ブロック(発動診断の diag-box と同じ枠)。
+ * 実行ボタンは pane-top 側にあるので、ここは診断済みのときだけ結果を描く。
+ * 結果は一覧と同じ件単位キャッシュに載るので、棚卸し画面とも共有される。
  */
-export function MemoryTriageBlock({
-  it,
-  sec,
-  reload,
-}: {
-  it: SkillItem;
-  sec: MemorySection;
-  reload: () => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
+export function MemoryTriageBox({ it, sec }: { it: SkillItem; sec: MemorySection }) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const tri = it.aiTriage;
-
-  const run = async () => {
-    setBusy(true);
-    try {
-      // 既に診断済みなら force。内容が変わっていない限りキャッシュが返るため
-      await triageMemory(sec.id, [fileName(it.path)], !!tri);
-      await reload();
-    } catch (e) {
-      alert(t('alert.triageFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  if (!tri) return null;
   return (
-    <div className="triage-block">
-      {tri && (
-        <div className="triage-box">
-          <TriageResult it={it} />
-          <button
-            className="triage-whole"
-            onClick={() =>
-              navigate({ pathname: '/memory/triage/' + sec.id, search: params.toString() })
-            }
-          >
-            {t('memory.triage.whole')}
-          </button>
-        </div>
-      )}
+    <div className="diag-box triage-box">
+      <div className="nmline">
+        <VerdictBadge verdict={tri.verdict} />
+      </div>
+      <TriageResult it={it} />
       <button
-        className="pbtn sm"
-        disabled={busy}
-        onClick={run}
-        title={t(tri ? 'memory.triage.rerunTitle' : 'memory.triage.runTitle')}
+        className="triage-whole"
+        onClick={() =>
+          navigate({ pathname: '/memory/triage/' + sec.id, search: params.toString() })
+        }
       >
-        {busy
-          ? t('memory.triage.running')
-          : tri
-            ? t('memory.triage.rerun')
-            : '✦ ' + t('memory.triage.heading')}
+        {t('memory.triage.whole')}
       </button>
     </div>
   );
@@ -211,11 +170,14 @@ export function MemoryTriageView({
   const [busy, setBusy] = useState(false);
 
   const sec = (data.memory || []).find((s) => s.id === project);
-  // 存在しないプロジェクト(削除・リネーム後の共有 URL)は一覧へ戻す
-  if (!sec) return <Navigate to={{ pathname: '/', search: params.toString() }} replace />;
+  // 存在しないプロジェクト(削除・リネーム後の共有 URL)は memory 一覧へ戻す
+  const listSearch = new URLSearchParams(params);
+  listSearch.set('view', 'memory');
+  if (!sec) return <Navigate to={{ pathname: '/', search: listSearch.toString() }} replace />;
 
-  const untriaged = sec.items.some((it) => !it.aiTriage);
+  const untriagedCount = sec.items.filter((it) => !it.aiTriage).length;
   const proposals = instructionsOf(sec.items);
+  const keepCount = sec.items.length - untriagedCount - proposals.length;
   const totals = sec.items.reduce(
     (acc, it) => {
       const est = triageEstimate(it);
@@ -223,12 +185,14 @@ export function MemoryTriageView({
     },
     { index: 0, always: 0 },
   );
+  const diff = totals.index + totals.always;
+  const applied = sec.indexTokens + diff;
 
   const run = async () => {
     setBusy(true);
     try {
       // 未診断が残っていれば差分診断、全件診断済みなら force で全件を診断し直す
-      await triageMemory(sec.id, undefined, !untriaged);
+      await triageMemory(sec.id, undefined, untriagedCount === 0);
       await reload();
     } catch (e) {
       alert(t('alert.triageFailed', { msg: e instanceof Error ? e.message : String(e) }));
@@ -237,83 +201,142 @@ export function MemoryTriageView({
     }
   };
 
-  const resolve = memoryResolver(sec.items);
-  const broken = (it: SkillItem) => (it.links || []).filter((n) => !resolve(n)).length;
-
   return (
-    <div className="pane triage-pane">
-      <button
-        className="back"
-        onClick={() => navigate({ pathname: '/', search: params.toString() })}
-      >
-        {t('detail.back')}
-      </button>
-      <div className="meta-row">
-        <span className="mem-proj">
-          {sec.projectName}
-          {sec.orphan && (
-            <span className="orphan-badge" title={t('memory.orphanTitle')}>
-              {t('memory.orphan')}
-            </span>
-          )}
-        </span>
-        <span className="mem-fact">{t('memory.triage.items', { n: sec.items.length })}</span>
-        <span className="mem-fact" title={t('memory.secTokensTitle')}>
-          {t('memory.secTokens', { n: sec.indexTokens.toLocaleString() })}
-        </span>
+    <div className="triage-view">
+      <div className="hd">
+        <div className="t-row">
+          <button
+            className="pbtn"
+            onClick={() => navigate({ pathname: '/', search: listSearch.toString() })}
+          >
+            {t('memory.triage.back')}
+          </button>
+          <h1>{t('memory.triage.title', { project: sec.projectName })}</h1>
+          <span className="sub">{t('memory.triage.sub')}</span>
+          <button
+            className="pbtn push-r"
+            disabled={busy}
+            onClick={run}
+            title={t(untriagedCount ? 'memory.triage.runTitle' : 'memory.triage.rerunTitle')}
+          >
+            {busy
+              ? t('memory.triage.running')
+              : untriagedCount
+                ? t('memory.triage.run')
+                : t('memory.triage.rerun')}
+          </button>
+        </div>
       </div>
-      <h2 className="d-name">{t('memory.triage.heading')}</h2>
-      <p className="triage-lead">{t('memory.triage.lead')}</p>
-      <div className="triage-actions">
-        <button
-          className="pbtn sm"
-          disabled={busy}
-          onClick={run}
-          title={t(untriaged ? 'memory.triage.runTitle' : 'memory.triage.rerunTitle')}
-        >
-          {busy
-            ? t('memory.triage.running')
-            : untriaged
-              ? '✦ ' + t('memory.triage.run')
-              : t('memory.triage.rerun')}
-        </button>
-        {untriaged && <span className="triage-note">{t('memory.triage.pending')}</span>}
-        {!untriaged && !proposals.length && (
-          <span className="triage-note">{t('memory.triage.noProposals')}</span>
+      <div className="triage-pad">
+        <div className="sec-t tri">
+          {untriagedCount
+            ? t('memory.triage.summaryPending', { n: sec.items.length, u: untriagedCount })
+            : t('memory.triage.summary', {
+                n: sec.items.length,
+                p: proposals.length,
+                k: keepCount,
+              })}
+        </div>
+        {/* 入口の「✦ 棚卸し診断」は遷移だけで AI は走らない。未診断・診断中は行の上で状態を明示する */}
+        {busy ? (
+          <div className="triage-cta busy">
+            <div className="txt">
+              <span className="ttl">{t('memory.triage.busyTitle')}</span>
+              <span className="bd">
+                {t('memory.triage.busyBody', { n: untriagedCount || sec.items.length })}
+              </span>
+            </div>
+          </div>
+        ) : (
+          untriagedCount > 0 && (
+            <div className="triage-cta">
+              <div className="txt">
+                <span className="ttl">{t('memory.triage.ctaTitle')}</span>
+                <span className="bd">
+                  {untriagedCount === sec.items.length
+                    ? t('memory.triage.ctaBody', { n: sec.items.length })
+                    : t('memory.triage.ctaPartial', { n: sec.items.length, u: untriagedCount })}
+                </span>
+              </div>
+              <button className="apply" onClick={run} title={t('memory.triage.runTitle')}>
+                ✦ {t('memory.triage.run')}
+              </button>
+            </div>
+          )
+        )}
+        {/* 前置きは画面にも 1 回だけ出す(範囲選択でコピーする人が拾えるように)。行の指示文には繰り返さない */}
+        {!!proposals.length && !busy && (
+          <div className="triage-preamble">
+            <div className="txt">
+              <span className="lbl">{t('memory.triage.preambleLabel')}</span>
+              <span className="bd">{t('memory.triage.copyPreamble')}</span>
+            </div>
+            <CopyButton className="copybtn" text={t('memory.triage.copyPreamble')} />
+          </div>
+        )}
+        <div className={'triage-rows' + (busy ? ' busy' : '')}>
+          {sec.items.map((it) => (
+            <div className="triage-row" key={it.path}>
+              <div className="nmline">
+                <button
+                  className="nm"
+                  onClick={() =>
+                    navigate({ pathname: '/memory/' + toId(it.path), search: params.toString() })
+                  }
+                >
+                  {it.name}
+                </button>
+                <KindBadge it={it} />
+                <MemoryTypeBadge it={it} />
+                {/* 未診断の行は verdict 無しで事実だけを出す */}
+                {it.aiTriage && <VerdictBadge verdict={it.aiTriage.verdict} />}
+                <span className="toks">
+                  <TokFacts it={it} bold />
+                  {/* 参照回数はトランスクリプトが無いプロジェクトでは判定不能なので出さない */}
+                  {sec.usageAvailable && (
+                    <span title={t('memory.readsTitle')}>
+                      {it.useCount
+                        ? t('memory.triage.seen', { n: it.useCount })
+                        : t('memory.triage.unseen')}
+                    </span>
+                  )}
+                </span>
+              </div>
+              <TriageResult it={it} />
+            </div>
+          ))}
+        </div>
+        {!!proposals.length && (
+          <div className="foot">
+            <div className="cell">
+              <span className="k">{t('memory.triage.footProposals')}</span>
+              <span className="v">
+                {proposals.length}
+                <span className="u"> {t('memory.triage.footProposalsUnit')}</span>
+              </span>
+            </div>
+            <div className="cell">
+              <span className="k">{t('memory.triage.footApplied')}</span>
+              <span className="v">
+                {applied.toLocaleString()}
+                <span className="u"> {t('memory.triage.footTokUnit')}</span>
+              </span>
+            </div>
+            <div className="cell">
+              <span className="k">{t('memory.triage.footDiff')}</span>
+              <span className={'v' + (diff < 0 ? ' neg' : '')}>
+                {t('memory.triage.footDiffVal', { n: signed(diff) })}
+              </span>
+            </div>
+            <span className="note">{t('memory.triage.footNote')}</span>
+            <CopyButton
+              className="apply"
+              text={joinInstructions(sec.items)}
+              label={t('memory.triage.copyAll', { n: proposals.length })}
+            />
+          </div>
         )}
       </div>
-      <div className="triage-list">
-        {sec.items.map((it) => (
-          <div className="triage-row" key={it.path}>
-            <div className="r1">
-              <button
-                className="nm"
-                onClick={() =>
-                  navigate({ pathname: '/memory/' + toId(it.path), search: params.toString() })
-                }
-              >
-                {it.name}
-              </button>
-              <MemoryTypeBadge it={it} />
-              <TriageFacts it={it} sec={sec} broken={broken(it)} />
-            </div>
-            <TriageResult it={it} />
-          </div>
-        ))}
-      </div>
-      {!!proposals.length && (
-        <div className="triage-foot">
-          <CopyButton
-            text={joinInstructions(sec.items)}
-            label={t('memory.triage.copyAll', { n: proposals.length })}
-          />
-          <span className="triage-total">
-            {t('memory.triage.totalIndex', { n: signed(totals.index) })}
-            {totals.always > 0 &&
-              t('memory.triage.totalAlways', { n: totals.always.toLocaleString() })}
-          </span>
-        </div>
-      )}
     </div>
   );
 }

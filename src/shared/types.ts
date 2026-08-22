@@ -35,7 +35,14 @@ export interface SkillDiagnosis {
  * (viewer は選択状態を持たず、実行もしない)。
  */
 export type MemoryVerdict =
-  'keep' | 'shrink' | 'to-claude-md' | 'to-docs' | 'delete' | 'wrong-project';
+  | 'keep'
+  | 'shrink'
+  | 'to-claude-md'
+  | 'to-docs'
+  | 'delete'
+  | 'wrong-project'
+  /* 特定の skill / command の挙動への好み。SKILL.md へ書けば全プロジェクトで効き、memory 自体が不要になる */
+  | 'to-skill';
 
 /* 1 memory 分の棚卸し診断。instruction は Claude Code に貼る指示文(keep なら空) */
 export interface MemoryTriage {

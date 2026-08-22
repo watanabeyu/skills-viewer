@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { SkillItem } from '../src/shared/types';
 import { itemKey } from '../web/src/api';
 import {
+  backlinksOf,
+  brokenLinkCount,
   invocationOf,
   kindMatches,
+  refMatches,
   sameNameOthers,
   sortItems,
+  sortMemory,
   usageLine,
   usageMatches,
 } from '../web/src/util';
@@ -122,5 +126,76 @@ describe('kindMatches / sameNameOthers', () => {
       { ...base({ name: 'unrelated' }), key: 'k5' },
     ];
     expect(sameNameOthers(me, all).map((x) => x.key)).toEqual(['k2', 'k3']);
+  });
+});
+
+/* ---- memory 軸(plan 10 Phase D)の純関数 ---- */
+
+const mem = (name: string, over: Partial<SkillItem> = {}): SkillItem =>
+  base({ name, kind: 'memory', path: `/m/${name}.md`, ...over });
+
+describe('sortMemory (memory 軸の並び順)', () => {
+  const items = [
+    mem('b', { indexTokens: 30, bodyTokens: 900, updatedAt: 200 }),
+    mem('a', { indexTokens: 30, bodyTokens: 100, updatedAt: 100 }),
+    mem('c', { indexTokens: 50, bodyTokens: 500 }),
+  ];
+  it('index は索引トークンが多い順、同値は名前順', () => {
+    expect(sortMemory(items, 'index').map((i) => i.name)).toEqual(['c', 'a', 'b']);
+  });
+  it('body は本文トークンが多い順', () => {
+    expect(sortMemory(items, 'body').map((i) => i.name)).toEqual(['b', 'c', 'a']);
+  });
+  it('updated は更新が古い順(更新日不明は末尾)', () => {
+    expect(sortMemory(items, 'updated').map((i) => i.name)).toEqual(['a', 'b', 'c']);
+  });
+  it('name は名前順', () => {
+    expect(sortMemory(items, 'name').map((i) => i.name)).toEqual(['a', 'b', 'c']);
+  });
+  it('元の配列を変更しない', () => {
+    const before = items.map((i) => i.name);
+    sortMemory(items, 'index');
+    expect(items.map((i) => i.name)).toEqual(before);
+  });
+});
+
+describe('refMatches (参照フィルタ)', () => {
+  const read = mem('r', { useCount: 2 });
+  const unread = mem('u');
+  it('all は常に通す(計測不能でも)', () => {
+    expect(refMatches(read, 'all', true)).toBe(true);
+    expect(refMatches(unread, 'all', false)).toBe(true);
+  });
+  it('read / unread を Read 回数で出し分ける', () => {
+    expect(refMatches(read, 'read', true)).toBe(true);
+    expect(refMatches(unread, 'read', true)).toBe(false);
+    expect(refMatches(read, 'unread', true)).toBe(false);
+    expect(refMatches(unread, 'unread', true)).toBe(true);
+  });
+  it('トランスクリプトが無いプロジェクトは「未参照」ではなく判定不能なので、どちらにも含めない', () => {
+    expect(refMatches(read, 'read', false)).toBe(false);
+    expect(refMatches(unread, 'unread', false)).toBe(false);
+  });
+});
+
+describe('backlinksOf / brokenLinkCount ([[link]] の被リンクとリンク切れ)', () => {
+  // ファイル名 ≠ frontmatter name のケース(旧形式のファイル名が残っている)を含める
+  const wiki = mem('wiki-mcp-curl', { path: '/m/reference_wiki_mcp_curl.md' });
+  const handoff = mem('handoff', { links: ['wiki-mcp-curl', 'nope'] });
+  const deploy = mem('deploy', { links: ['reference_wiki_mcp_curl', 'handoff'] });
+  const lonely = mem('lonely', { links: ['lonely'] });
+  const items = [wiki, handoff, deploy, lonely];
+
+  it('被リンクは name 一致とファイル名一致のどちらでも拾う', () => {
+    expect(backlinksOf(wiki, items).map((i) => i.name)).toEqual(['handoff', 'deploy']);
+    expect(backlinksOf(handoff, items).map((i) => i.name)).toEqual(['deploy']);
+  });
+  it('自分自身へのリンクは被リンクに数えない', () => {
+    expect(backlinksOf(lonely, items)).toEqual([]);
+  });
+  it('リンク切れ数は同プロジェクト内で解決できない発リンクの数', () => {
+    expect(brokenLinkCount(handoff, items)).toBe(1); // nope
+    expect(brokenLinkCount(deploy, items)).toBe(0);
+    expect(brokenLinkCount(wiki, items)).toBe(0); // links 無し
   });
 });
