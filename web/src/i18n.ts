@@ -22,10 +22,10 @@ const en = {
   'sort.updated': 'Recently updated',
   'sort.tokens': 'Token cost',
   'kind.all': 'All',
-  'filter.used': 'Used',
+  'filter.used': 'Recent use',
   'filter.usedTitle':
     'Show only items with recorded use in the transcript retention window (default 30 days)',
-  'filter.unused': 'Unused',
+  'filter.unused': 'No recent use',
   'filter.unusedTitle':
     'Show only items with no recorded use in the transcript retention window (default 30 days)',
 
@@ -69,7 +69,7 @@ const en = {
   'card.noUses': 'No recorded use',
   'card.updated': 'Updated {date}',
   'card.tokens': '~{n} tok',
-  'badge.unused': 'unused',
+  'badge.unused': 'no recent use',
   'badge.unusedTitle':
     'No recorded use within the transcript retention window (default 30 days). Older use is not visible.',
   'badge.warnTitle': 'Description issues:',
@@ -243,9 +243,9 @@ const ja: Record<MsgKey, string> = {
   'sort.updated': '更新日順',
   'sort.tokens': 'トークン量順',
   'kind.all': 'すべて',
-  'filter.used': '使用あり',
+  'filter.used': '直近使用あり',
   'filter.usedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録があるものだけ表示',
-  'filter.unused': '未使用',
+  'filter.unused': '直近使用なし',
   'filter.unusedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録がないものだけ表示',
 
   'ai.button': 'AI要約',
@@ -287,7 +287,7 @@ const ja: Record<MsgKey, string> = {
   'card.noUses': '使用記録なし',
   'card.updated': '{date} 更新',
   'card.tokens': '約{n}tok',
-  'badge.unused': '未使用',
+  'badge.unused': '直近未使用',
   'badge.unusedTitle':
     'トランスクリプト保持期間内(既定30日)に使用記録がありません。それ以前の使用は集計できません',
   'badge.warnTitle': 'description の問題:',
