@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import type { MemorySection, MemoryType, SkillItem } from '../shared/types';
 import { estimateTokens } from './lint';
 import { HOME, firstBodyLine, listProjects, parseFrontmatter } from './scan';
+import { extractSignals } from './memory-signals';
 import { encodeProjectPath } from './usage';
 
 export interface MemoryScanOptions {
@@ -93,7 +94,12 @@ function readIndex(memDir: string): Map<string, string> {
   return map;
 }
 
-function readMemoryFile(fp: string, fileName: string, indexLine: string): SkillItem | null {
+function readMemoryFile(
+  fp: string,
+  fileName: string,
+  indexLine: string,
+  projectPath: string | null,
+): SkillItem | null {
   let raw: string;
   try {
     raw = fs.readFileSync(fp, 'utf8');
@@ -109,9 +115,12 @@ function readMemoryFile(fp: string, fileName: string, indexLine: string): SkillI
   } catch {
     /* mtime が取れなくても一覧には出す */
   }
+  const description = meta.description || firstBodyLine(body);
+  // 鮮度の機械シグナル(テキスト / fs 層)。正規表現と existsSync だけなのでスキャン時に払える
+  const signals = extractSignals(body, description, projectPath);
   return {
     name: meta.name || fileName.replace(/\.md$/, ''),
-    description: meta.description || firstBodyLine(body),
+    description,
     argumentHint: '',
     version: '',
     kind: 'memory',
@@ -124,6 +133,7 @@ function readMemoryFile(fp: string, fileName: string, indexLine: string): SkillI
     ...(type ? { memoryType: type } : {}),
     ...(originSessionId ? { originSessionId } : {}),
     links: extractLinks(body),
+    ...(signals.length ? { signals } : {}),
   };
 }
 
@@ -168,13 +178,13 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
       continue; // memory ディレクトリが無いプロジェクトは単純に除外する
     }
     const index = readIndex(memDir);
+    const projectPath = byEncoded.get(d.name) ?? null;
     const items: SkillItem[] = [];
     for (const f of files) {
-      const item = readMemoryFile(path.join(memDir, f), f, index.get(f) || '');
+      const item = readMemoryFile(path.join(memDir, f), f, index.get(f) || '', projectPath);
       if (item) items.push(item);
     }
     if (!items.length) continue;
-    const projectPath = byEncoded.get(d.name) ?? null;
     sections.push({
       id: d.name,
       projectPath,

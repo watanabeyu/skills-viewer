@@ -45,6 +45,7 @@ describe('parseTriage', () => {
         {
           file: 'a.md',
           verdict: 'to-docs',
+          state: 'current',
           reason: '完了済みの設計文書',
           issues: ['58日更新なし'],
           instruction: 'docs/ へ移し MEMORY.md の索引行を消す',
@@ -55,6 +56,7 @@ describe('parseTriage', () => {
     expect(m.size).toBe(1);
     expect(m.get('a.md')).toEqual({
       verdict: 'to-docs',
+      state: 'current',
       reason: '完了済みの設計文書',
       issues: ['58日更新なし'],
       instruction: '- docs/ へ移し MEMORY.md の索引行を消す',
@@ -63,7 +65,7 @@ describe('parseTriage', () => {
 
   it('コードフェンス付きでも読める', () => {
     const m = parseTriage(
-      '```json\n[{"file":"a.md","verdict":"keep","reason":"r","issues":[],"instruction":""}]\n```',
+      '```json\n[{"file":"a.md","state":"current","verdict":"keep","reason":"r","issues":[],"instruction":""}]\n```',
       files,
     );
     expect(m.get('a.md')?.verdict).toBe('keep');
@@ -72,8 +74,22 @@ describe('parseTriage', () => {
   it('不正な verdict の要素は行き先を出さず「出力不正」として記録する', () => {
     const m = parseTriage(
       JSON.stringify([
-        { file: 'a.md', verdict: 'archive', reason: 'r', issues: [], instruction: 'x' },
-        { file: 'b.md', verdict: 'delete', reason: 'r', issues: [], instruction: 'x' },
+        {
+          file: 'a.md',
+          verdict: 'archive',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: 'x',
+        },
+        {
+          file: 'b.md',
+          verdict: 'delete',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: 'x',
+        },
       ]),
       files,
     );
@@ -88,12 +104,65 @@ describe('parseTriage', () => {
     expect(m.get('b.md')?.verdict).toBe('delete');
   });
 
+  it('state が 4 値以外・欠落の要素も「出力不正」として記録する(鮮度なしの行き先は出さない)', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        { file: 'a.md', state: 'fresh', verdict: 'keep', reason: 'r', issues: [], instruction: '' },
+        { file: 'b.md', verdict: 'keep', reason: 'r', issues: [], instruction: '' },
+      ]),
+      files,
+    );
+    expect(m.get('a.md')?.error).toBe('invalid-output');
+    expect(m.get('b.md')?.error).toBe('invalid-output');
+  });
+
+  it('update を通す(8 値目)。instruction は必須で、索引 ±0 なので試算は出ない', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        {
+          file: 'a.md',
+          state: 'outdated',
+          verdict: 'update',
+          reason: '参照パスが移動している',
+          issues: ['参照パスが存在しない: src/old.ts'],
+          instruction: 'src/old.ts の記述を src/new.ts に直す',
+        },
+        {
+          file: 'b.md',
+          state: 'outdated',
+          verdict: 'update',
+          reason: 'r',
+          issues: [],
+          instruction: '',
+        },
+      ]),
+      files,
+    );
+    expect(m.get('a.md')?.verdict).toBe('update');
+    expect(m.get('a.md')?.state).toBe('outdated');
+    expect(m.get('b.md')?.error).toBe('invalid-output');
+  });
+
   it('file の欠落・対象外は捨てる(記録もしない)', () => {
     const m = parseTriage(
       JSON.stringify([
         { verdict: 'delete', reason: 'r', issues: [], instruction: 'x' },
-        { file: 'other.md', verdict: 'delete', reason: 'r', issues: [], instruction: 'x' },
-        { file: 'a.md', verdict: 'shrink', reason: 'r', issues: [], instruction: 'x' },
+        {
+          file: 'other.md',
+          verdict: 'delete',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: 'x',
+        },
+        {
+          file: 'a.md',
+          verdict: 'shrink',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: 'x',
+        },
       ]),
       files,
     );
@@ -106,6 +175,7 @@ describe('parseTriage', () => {
         {
           file: 'a.md',
           verdict: 'keep',
+          state: 'current',
           reason: 'あ'.repeat(500),
           issues: ['い'.repeat(200), '2', '3', '4', '5', 42],
           instruction: '消してよい',
@@ -113,6 +183,7 @@ describe('parseTriage', () => {
         {
           file: 'b.md',
           verdict: 'delete',
+          state: 'current',
           reason: 'r',
           issues: [],
           instruction: 'う'.repeat(2000),
@@ -134,6 +205,7 @@ describe('parseTriage', () => {
         {
           file: 'a.md',
           verdict: 'to-skill',
+          state: 'current',
           reason: 'pr-create の挙動への好み',
           issues: [],
           instruction: '- pr-create の SKILL.md に 1 行足す',
@@ -147,8 +219,22 @@ describe('parseTriage', () => {
   it('instruction の体裁を「- 」箇条書きに正規化する(番号付き・散文)', () => {
     const m = parseTriage(
       JSON.stringify([
-        { file: 'a.md', verdict: 'delete', reason: 'r', issues: [], instruction: '1. a\n2. b' },
-        { file: 'b.md', verdict: 'delete', reason: 'r', issues: [], instruction: '散文' },
+        {
+          file: 'a.md',
+          verdict: 'delete',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: '1. a\n2. b',
+        },
+        {
+          file: 'b.md',
+          verdict: 'delete',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: '散文',
+        },
       ]),
       files,
     );
@@ -174,8 +260,22 @@ describe('parseTriage', () => {
   it('keep 以外で指示文が空(または記号だけ)の要素は「出力不正」として記録する', () => {
     const m = parseTriage(
       JSON.stringify([
-        { file: 'a.md', verdict: 'delete', reason: 'r', issues: [], instruction: '  \n- ' },
-        { file: 'b.md', verdict: 'keep', reason: 'r', issues: [], instruction: '' },
+        {
+          file: 'a.md',
+          verdict: 'delete',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: '  \n- ',
+        },
+        {
+          file: 'b.md',
+          verdict: 'keep',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: '',
+        },
       ]),
       files,
     );
@@ -188,8 +288,22 @@ describe('parseTriage', () => {
   it('同じ file が重複したら先勝ち', () => {
     const m = parseTriage(
       JSON.stringify([
-        { file: 'a.md', verdict: 'delete', reason: 'first', issues: [], instruction: 'x' },
-        { file: 'a.md', verdict: 'keep', reason: 'second', issues: [], instruction: '' },
+        {
+          file: 'a.md',
+          verdict: 'delete',
+          state: 'current',
+          reason: 'first',
+          issues: [],
+          instruction: 'x',
+        },
+        {
+          file: 'a.md',
+          verdict: 'keep',
+          state: 'current',
+          reason: 'second',
+          issues: [],
+          instruction: '',
+        },
       ]),
       files,
     );
@@ -205,6 +319,7 @@ describe('parseTriage', () => {
 describe('selectStale (差分 call の対象選定)', () => {
   const entry = (over: Partial<TriageStore[string]> = {}): TriageStore[string] => ({
     verdict: 'keep',
+    state: 'current',
     reason: '',
     issues: [],
     instruction: '',
@@ -227,6 +342,16 @@ describe('selectStale (差分 call の対象選定)', () => {
     };
     const stale = selectStale([a, b, c, d], store, 'ja', false);
     expect(stale.map((it) => it.path)).toEqual([b.path, c.path, d.path]);
+  });
+
+  it('state を持たない旧形式のエントリは hash が一致しても対象(出力不正のエントリは除く)', () => {
+    const a = memItem('s-old.md', 'aaa');
+    const b = memItem('s-err.md', 'bbb');
+    const store: TriageStore = {
+      [a.path]: entry({ hash: contentHash(a.path), state: undefined }),
+      [b.path]: entry({ hash: contentHash(b.path), state: undefined, error: 'invalid-output' }),
+    };
+    expect(selectStale([a, b], store, 'ja', false).map((it) => it.path)).toEqual([a.path]);
   });
 
   it('force なら全件が対象', () => {
@@ -315,17 +440,21 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(prompt).toContain('引き継ぎの本文'); // 本文も渡す
   });
 
-  it('ja / en とも索引行の削除に触れ、verdict の 6 値を出力スキーマで縛る', () => {
-    const schema = '"keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project"';
+  it('ja / en とも索引行の削除に触れ、state の 4 値と verdict の 8 値を出力スキーマで縛る', () => {
+    const schema =
+      '"keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update"';
+    const stateSchema = '"current" | "outdated" | "historical" | "obsolete"';
     for (const lang of ['ja', 'en'] as const) {
       const prompt = buildPrompt(targets, ctx, lang);
       // 見出しの MEMORY.md ではなく「索引行を消せ」という指示そのものが要る
       expect(prompt).toContain(
         lang === 'ja' ? 'MEMORY.md の索引行の削除' : 'removing the line from MEMORY.md',
       );
-      // 判定指針テーブルの (to-docs) 等ではなく、出力スキーマ行の 6 値を見る
+      // 判定指針テーブルの (to-docs) 等ではなく、出力スキーマ行の 8 値を見る
       expect(prompt).toContain(schema);
+      expect(prompt).toContain(stateSchema);
       expect(prompt).toContain('|---|---|'); // 判定指針テーブルが崩れていない
+      expect(prompt).toContain('|---|---|---|---|---|'); // type × state の対応表
     }
   });
 
@@ -350,6 +479,31 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     const en = buildPrompt(targets, ctx, 'en');
     expect(en).toContain('## CLAUDE.md headings\n(none)');
     expect(en).toContain('## skill / command / agent\n(none)');
+  });
+
+  it('シグナル(スキャン時 + 診断時)を各件の signals 節に言語別で載せ、無ければ「(なし)」', () => {
+    const withSig = [
+      memItem('p-sig.md', '---\nname: sig\n---\n本文', {
+        signals: [
+          { kind: 'date', value: '2026-06-01', days: 83 },
+          { kind: 'path-missing', value: 'src/old.ts' },
+        ],
+      }),
+      targets[0],
+    ];
+    const extra = (it: SkillItem) =>
+      it.path.endsWith('p-sig.md')
+        ? [...(it.signals || []), { kind: 'branch-merged' as const, value: 'feat/x' }]
+        : [];
+    const ja = buildPrompt(withSig, ctx, 'ja', extra);
+    expect(ja).toContain('- 本文の最新日付 2026-06-01(83 日前)');
+    expect(ja).toContain('- 参照パスが存在しない: src/old.ts');
+    expect(ja).toContain('- ブランチ feat/x はマージ済み');
+    expect(ja).toContain('signals(機械が拾った鮮度の事実):\n(なし)');
+    const en = buildPrompt(withSig, ctx, 'en', extra);
+    expect(en).toContain('- latest date in body: 2026-06-01 (83 days ago)');
+    expect(en).toContain('- branch feat/x is already merged');
+    expect(en).toContain('signals (freshness facts collected mechanically):\n(none)');
   });
 
   it('usageAvailable が false なら計測不能と書き、参照回数は出さない', () => {
@@ -392,6 +546,19 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
       issues: ['58日更新なし'],
       instruction: 'MEMORY.md の索引行を消す',
     });
+  });
+
+  it('state と診断時シグナルもキャッシュから載せる', () => {
+    const it = memItem('at-s.md', 'sss');
+    attachMemoryTriage([section([it])], 'ja', {
+      [it.path]: entry({
+        hash: contentHash(it.path),
+        state: 'historical',
+        signals: [{ kind: 'branch-merged', value: 'feat/x' }],
+      }),
+    });
+    expect(it.aiTriage?.state).toBe('historical');
+    expect(it.aiTriage?.signals).toEqual([{ kind: 'branch-merged', value: 'feat/x' }]);
   });
 
   it('本文が変わっていれば(hash 不一致)付けない', () => {

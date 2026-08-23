@@ -15,12 +15,15 @@ import type {
   AiModel,
   Lang,
   MemorySection,
+  MemorySignal,
+  MemoryState,
   MemoryTriage,
   MemoryVerdict,
   Section,
   SkillItem,
 } from '../shared/types';
 import { pruneMissing } from './cache';
+import { branchSignals, loadBranches } from './memory-signals';
 import { HOME, parseFrontmatter } from './scan';
 import { contentHash, runClaude } from './summary';
 
@@ -34,7 +37,9 @@ const VERDICTS: readonly MemoryVerdict[] = [
   'delete',
   'wrong-project',
   'to-skill',
+  'update',
 ];
+const STATES: readonly MemoryState[] = ['current', 'outdated', 'historical', 'obsolete'];
 
 interface TriageEntry extends MemoryTriage {
   hash: string | null;
@@ -172,8 +177,48 @@ export function collectTriageContext(
   return { rules, skills };
 }
 
+/* シグナルをプロンプト用の 1 行ずつに(言語別)。無ければ「(なし)」で節を落とさない */
+function signalLines(signals: MemorySignal[], lang: Lang): string {
+  if (!signals.length) return lang === 'ja' ? '(なし)' : '(none)';
+  return signals
+    .map((s) => {
+      if (lang === 'ja') {
+        switch (s.kind) {
+          case 'date':
+            return `- 本文の最新日付 ${s.value}(${s.days} 日前)`;
+          case 'path-missing':
+            return `- 参照パスが存在しない: ${s.value}`;
+          case 'done-words':
+            return `- 完了・廃止を表す語: ${s.value}`;
+          case 'branch-merged':
+            return `- ブランチ ${s.value} はマージ済み`;
+          case 'branch-missing':
+            return `- ブランチ ${s.value} はローカルにもリモートにも無い`;
+        }
+      }
+      switch (s.kind) {
+        case 'date':
+          return `- latest date in body: ${s.value} (${s.days} days ago)`;
+        case 'path-missing':
+          return `- referenced path does not exist: ${s.value}`;
+        case 'done-words':
+          return `- completion / deprecation words: ${s.value}`;
+        case 'branch-merged':
+          return `- branch ${s.value} is already merged`;
+        case 'branch-missing':
+          return `- branch ${s.value} exists neither locally nor on the remote`;
+      }
+    })
+    .join('\n');
+}
+
 /* 1 件分の事実 + 本文。本文は diagnose.ts と同じく 12,000 字で切る */
-function itemBlock(it: SkillItem, usageAvailable: boolean, lang: Lang): string {
+function itemBlock(
+  it: SkillItem,
+  usageAvailable: boolean,
+  lang: Lang,
+  signals: MemorySignal[] = it.signals || [],
+): string {
   let body = '';
   try {
     body = parseFrontmatter(fs.readFileSync(it.path, 'utf8')).body.trim().slice(0, 12000);
@@ -192,6 +237,8 @@ function itemBlock(it: SkillItem, usageAvailable: boolean, lang: Lang): string {
       usageAvailable
         ? 'Read: ' + (it.useCount || 0) + '回 / Write・Edit: ' + (it.writeCount || 0) + '回'
         : '参照実績: 計測不能(transcript なし)',
+      'signals(機械が拾った鮮度の事実):',
+      signalLines(signals, lang),
       '本文:',
       body,
     ].join('\n');
@@ -206,6 +253,8 @@ function itemBlock(it: SkillItem, usageAvailable: boolean, lang: Lang): string {
     usageAvailable
       ? 'Read: ' + (it.useCount || 0) + ' / Write-Edit: ' + (it.writeCount || 0)
       : 'usage: not measurable (no transcripts)',
+    'signals (freshness facts collected mechanically):',
+    signalLines(signals, lang),
     'body:',
     body,
   ].join('\n');
@@ -216,8 +265,16 @@ function itemBlock(it: SkillItem, usageAvailable: boolean, lang: Lang): string {
  * 判定指針は「機械が断定できないこと」だけを渡し、Read 0 を異常扱いさせない注意を必ず添える
  * (feedback 型は索引 1 行で機能するので、本文が読まれないのが正常)。
  */
-export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang): string {
-  const blocks = targets.map((it) => itemBlock(it, ctx.usageAvailable, lang)).join('\n\n');
+export function buildPrompt(
+  targets: SkillItem[],
+  ctx: TriageContext,
+  lang: Lang,
+  /* 件ごとの追加シグナル(git 層)。省略時はスキャン時の SkillItem.signals だけ */
+  signalsOf: (it: SkillItem) => MemorySignal[] = (it) => it.signals || [],
+): string {
+  const blocks = targets
+    .map((it) => itemBlock(it, ctx.usageAvailable, lang, signalsOf(it)))
+    .join('\n\n');
   const files = targets.map((it) => path.basename(it.path)).join(', ');
   const standing =
     lang === 'ja'
@@ -243,20 +300,36 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
       'あなたは Claude Code の自動メモリ(~/.claude/projects/<project>/memory/)の棚卸しをします。\n' +
       '自動メモリは二層構造です: MEMORY.md の索引行は全件が毎セッション注入され(常時コスト)、' +
       '各メモリの本文は Read されたときだけ読まれます(従量コスト)。\n' +
-      '各メモリの「行き先」を判定し、Claude Code にそのまま貼れる指示文まで作ってください。\n\n' +
-      '# 判定指針\n' +
-      '| 状態 | 行き先 |\n' +
+      '各メモリについて、まず「まだ正しいか」(state)を事実で判定し、行き先(verdict)は下の対応表から決め、' +
+      'Claude Code にそのまま貼れる指示文まで作ってください。\n\n' +
+      '# 原則\n' +
+      'memory の本来の住人は、長く変わらない好み・関係・方針・ルールです。project 型は「制約」だけを歓迎し、' +
+      '進捗や状態は issue / PR / docs が正です。\n\n' +
+      '# 判定の手順\n' +
+      '## 1. 置き場所の適合(state に関係なく先に決まる)\n' +
+      '| 状況 | 行き先 |\n' +
       '|---|---|\n' +
-      '| project 型で完了済み / 設計文書 | docs/ へ(to-docs) |\n' +
-      '| project 型で作業中の状態メモ | issue / PR へ移し完了時に削除(to-docs) |\n' +
-      '| feedback 型 | 索引 1 行で機能している。本文は縮める(shrink)。強制力が要るなら CLAUDE.md(to-claude-md) |\n' +
-      '| reference 型で Read 実績あり | そのまま。触らない(keep) |\n' +
-      '| reference 型で長期 Read 0 | 削除(delete)か docs/ へ(to-docs) |\n' +
-      '| 別プロジェクトの話 | 移動または削除(wrong-project) |\n' +
+      '| 別プロジェクトの話 | wrong-project |\n' +
       '| 内容が特定の skill / command の手順や挙動に対する好み(例: PR 作成前に止まる、ブランチ名の確認) | ' +
       'その skill の SKILL.md に追記して memory を消す(to-skill)。全プロジェクトで効くようになる |\n' +
-      '| CLAUDE.md や skill に既に同じことが書いてある | 削除(delete) |\n' +
-      '| 一次情報(wiki / issue / PR / docs)が既に外にあり、memory はその目次コピー | 削除(delete)。移す先は無い。to-docs にしない |\n\n' +
+      '| CLAUDE.md や skill に既に同じことが書いてある | delete |\n' +
+      '| 一次情報(wiki / issue / PR / docs)が既に外にあり、memory はその目次コピー | delete(移す先は無い。to-docs にしない) |\n\n' +
+      '## 2. state(鮮度)を事実で判定する\n' +
+      '| state | 意味 |\n' +
+      '|---|---|\n' +
+      '| current | 今も正しい。恒久的 |\n' +
+      '| outdated | 骨子は生きているが一部(日付・パス・手順・type の付け方)が古い。書き直せば使える |\n' +
+      '| historical | 過去の事実としては正しいが現在値ではない。記録としての価値はある |\n' +
+      '| obsolete | 役目を終えた。記録としての価値もない |\n' +
+      '根拠にするもの: 各件の signals(本文の日付・参照パスの実在・ブランチのマージ状況)、最終更新と Read / Write・Edit の新しさ、' +
+      '索引の他の行や CLAUDE.md との関係。signals に挙がった事実はそのまま issues に引用してよい。' +
+      '最終更新が新しく Write・Edit が続いている件は現役の作業メモなので、完了していない限り historical にしないこと。\n\n' +
+      '## 3. verdict は type × state から決める\n' +
+      '| type \\ state | current | outdated | historical | obsolete |\n' +
+      '|---|---|---|---|---|\n' +
+      '| user / feedback | keep(本文が長ければ shrink。強制力が要るなら to-claude-md) | update | delete(方針の履歴を残す意味は薄い) | delete |\n' +
+      '| project | keep(制約のみ。進捗メモは issue / PR へ = to-docs) | update | to-docs | delete |\n' +
+      '| reference | keep(Read あり)/ to-docs(長期 Read 0) | update(参照先の張り替え) | delete | delete |\n\n' +
       '# 注意\n' +
       '- Read 0 は異常ではありません。feedback 型は索引の 1 行だけでエージェントの行動を変えるため、本文が読まれないのが正常です。Read 0 だけを根拠に削除を勧めないこと。\n' +
       '- 「参照実績: 計測不能」の件は、参照回数を根拠に使わないこと。\n' +
@@ -265,15 +338,18 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
       '# 出力\n' +
       '次の JSON 配列だけを出力してください(前置き・コードフェンス不要):\n' +
       '[{"file": "対象のファイル名(入力の file をそのまま)",\n' +
-      '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill",\n' +
-      '  "reason": "そう判断した理由(1〜3文)",\n' +
+      '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
+      '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
+      '  "reason": "そう判断した理由(1〜3文。state の根拠を必ず含める)",\n' +
       '  "issues": ["判断の根拠になった事実(各30字程度、最大4件。無ければ空配列)"],\n' +
       '  "instruction": "Claude Code に貼る指示文(keep のときは空文字)"}]\n\n' +
       '制約:\n' +
       '- 対象ファイル(' +
       files +
       ')それぞれについて 1 要素ずつ、過不足なく出すこと\n' +
-      '- verdict は上記 7 値のみ。それ以外の値は使わない\n' +
+      '- state は上記 4 値、verdict は上記 8 値のみ。それ以外の値は使わない。state を省略しない\n' +
+      '- update の instruction は「どの記述を何に直すか」(日付・パス・手順・type の付け替え)を具体に書く。' +
+      '索引行は消さないが、description が古ければ MEMORY.md の索引行の書き換えも書く\n' +
       '- instruction は各行を「- 」で始める箇条書きで 3〜6 行。改行で区切る(1 行 1 要点)。' +
       '1 行目は「何をどこへ」(意図)、2 行目以降は見落としやすい要点。番号付き(1.)や散文にしない\n' +
       '- 貼る先はこのプロジェクトで動いている Claude Code 本人なので、' +
@@ -299,21 +375,38 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
     'You are triaging Claude Code auto memory (~/.claude/projects/<project>/memory/).\n' +
     'Auto memory has two layers: every line of the MEMORY.md index is injected into every session ' +
     '(always-on cost), while each memory body is read only when it is Read (pay-per-use cost).\n' +
-    'Decide where each memory should go, and write an instruction the user can paste into Claude Code.\n\n' +
-    '# Guidance\n' +
-    '| state | destination |\n' +
+    'For each memory, first decide from facts whether it is still true (state), then derive the destination ' +
+    '(verdict) from the table below, and write an instruction the user can paste into Claude Code.\n\n' +
+    '# Principle\n' +
+    'Memory is meant for durable things: preferences, relationships, policies and rules. For type project, ' +
+    'only constraints belong here; progress and status belong in issues / PRs / docs.\n\n' +
+    '# Procedure\n' +
+    '## 1. Placement fit (decided first, regardless of state)\n' +
+    '| situation | destination |\n' +
     '|---|---|\n' +
-    '| type project, work already finished / design document | move to docs/ (to-docs) |\n' +
-    '| type project, notes on work in progress | move to an issue / PR, delete when done (to-docs) |\n' +
-    '| type feedback | already works from the one index line; shrink the body (shrink), or CLAUDE.md if it must be binding (to-claude-md) |\n' +
-    '| type reference with Read activity | leave it alone (keep) |\n' +
-    '| type reference with no Read for a long time | delete, or move to docs/ (to-docs) |\n' +
-    '| belongs to a different project | move or delete (wrong-project) |\n' +
+    '| belongs to a different project | wrong-project |\n' +
     '| a preference about how a specific skill / command behaves (e.g. stop before creating the PR, ' +
     'confirm the branch name) | add it to that skill SKILL.md and drop the memory (to-skill); ' +
     'it then applies in every project |\n' +
     '| CLAUDE.md or a skill already says the same thing | delete |\n' +
     '| the primary source already lives outside (wiki / issue / PR / docs) and the memory is just an index copy | delete — there is nothing to move; do not use to-docs |\n\n' +
+    '## 2. Judge the state (freshness) from facts\n' +
+    '| state | meaning |\n' +
+    '|---|---|\n' +
+    '| current | still true; durable |\n' +
+    '| outdated | the gist still holds but parts (dates, paths, steps, the type tag) are stale; rewriting makes it usable |\n' +
+    '| historical | true as a record of the past, not as the current value; worth keeping as a record |\n' +
+    '| obsolete | served its purpose; no value even as a record |\n' +
+    'Evidence: the per-memory signals (dates in the body, whether referenced paths exist, branch merge status), ' +
+    'how recent the last update and Read / Write-Edit are, and how it relates to the other index lines and CLAUDE.md. ' +
+    'You may quote the signals verbatim in issues. A memory updated recently with ongoing Write-Edit is a live working ' +
+    'note: never mark it historical unless the work is finished.\n\n' +
+    '## 3. Derive the verdict from type x state\n' +
+    '| type \\ state | current | outdated | historical | obsolete |\n' +
+    '|---|---|---|---|---|\n' +
+    '| user / feedback | keep (shrink if the body is long; to-claude-md if it must be binding) | update | delete (history of a policy has little value) | delete |\n' +
+    '| project | keep (constraints only; progress notes go to an issue / PR = to-docs) | update | to-docs | delete |\n' +
+    '| reference | keep (has Reads) / to-docs (no Read for a long time) | update (re-point the reference) | delete | delete |\n\n' +
     '# Notes\n' +
     '- Read 0 is NOT an anomaly. A feedback memory changes the agent behaviour from its single index ' +
     'line alone, so its body is never read in normal operation. Never recommend deletion on Read 0 alone.\n' +
@@ -324,15 +417,19 @@ export function buildPrompt(targets: SkillItem[], ctx: TriageContext, lang: Lang
     '# Output\n' +
     'Output ONLY this JSON array (no preamble, no code fences):\n' +
     '[{"file": "the target file name, exactly as given",\n' +
-    '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill",\n' +
-    '  "reason": "why (1-3 sentences)",\n' +
+    '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
+    '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
+    '  "reason": "why (1-3 sentences; always include the evidence for the state)",\n' +
     '  "issues": ["facts behind the call (about 10 words each, max 4; empty array if none)"],\n' +
     '  "instruction": "instruction to paste into Claude Code (empty string when verdict is keep)"}]\n\n' +
     'Constraints:\n' +
     '- Emit exactly one element for each target file (' +
     files +
     '), no more, no less.\n' +
-    '- verdict must be one of the seven values above; never invent another value.\n' +
+    '- state must be one of the four values and verdict one of the eight values above; never invent ' +
+    'another value, never omit state.\n' +
+    '- For update, the instruction says concretely which statements change to what (dates, paths, steps, ' +
+    'the type tag). The index line stays, but if the description is stale, also say to rewrite the MEMORY.md line.\n' +
     '- instruction is a bullet list of 3 to 6 lines, every line starting with "- ", one point per line, ' +
     'separated by newlines. The first line says what moves where (the intent); the rest are the ' +
     'easy-to-miss points. Never use numbered lists ("1.") or prose.\n' +
@@ -393,7 +490,7 @@ export const invalidTriage = (): MemoryTriage => ({
 
 /*
  * 出力を検証つきでパース。file 対応が取れない要素(対象外・欠落・重複)は捨て、
- * verdict が 7 値以外・keep 以外で指示文が空の要素は出力不正として記録する
+ * verdict が 8 値以外・state が 4 値以外(欠落含む)・keep 以外で指示文が空の要素は出力不正として記録する
  * (誤った行き先は提示しないが、診断済みであることは残して再 call を防ぐ)。
  */
 export function parseTriage(text: string, allowedFiles: string[]): Map<string, MemoryTriage> {
@@ -409,7 +506,8 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
     const file = typeof e?.file === 'string' ? e.file.trim() : '';
     if (!allowed.has(file) || out.has(file)) continue; // 対象外・欠落・重複(先勝ち)
     const verdict = e?.verdict as MemoryVerdict;
-    if (!VERDICTS.includes(verdict)) {
+    const state = e?.state as MemoryState;
+    if (!VERDICTS.includes(verdict) || !STATES.includes(state)) {
       out.set(file, invalidTriage());
       continue;
     }
@@ -427,6 +525,7 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
     }
     out.set(file, {
       verdict,
+      state,
       reason: String(e?.reason || '')
         .trim()
         .slice(0, 400),
@@ -440,6 +539,8 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
 /*
  * 再診断の対象選定。stale 条件は diagnose.ts と同じく本文 hash + lang のみで、
  * 経過日・Read 実績・他メモリの構成変化ではキャッシュを無効化しない(force で全件)。
+ * 例外: state(鮮度)を持たない旧形式のエントリは stale(次の差分診断で置き換わる)。
+ * 出力不正のエントリは state が無くても stale にしない(同じ出力を繰り返すモデルで無限に呼び直さない)。
  */
 export function selectStale(
   items: SkillItem[],
@@ -450,7 +551,12 @@ export function selectStale(
   if (force) return [...items];
   return items.filter((it) => {
     const cached = store[it.path];
-    return !cached || cached.lang !== lang || cached.hash !== contentHash(it.path);
+    return (
+      !cached ||
+      cached.lang !== lang ||
+      cached.hash !== contentHash(it.path) ||
+      (!cached.state && !cached.error)
+    );
   });
 }
 
@@ -516,14 +622,30 @@ export async function triageProject(
       rules: standing.rules,
       skills: standing.skills,
     };
+    // git 層のシグナル(ブランチのマージ状況)は診断時にだけ集める。プロジェクトごとに git を 1 回
+    const branches = loadBranches(sec.projectPath);
+    const gitSignals = new Map<string, MemorySignal[]>();
+    for (const it of stale) {
+      if (!branches) break;
+      try {
+        const body = parseFrontmatter(fs.readFileSync(it.path, 'utf8')).body;
+        gitSignals.set(it.path, branchSignals(body, branches));
+      } catch {
+        /* 読めない件はシグナル無し */
+      }
+    }
+    const signalsOf = (it: SkillItem) => [
+      ...(it.signals || []),
+      ...(gitSignals.get(it.path) || []),
+    ];
     // ctx(索引全文・常設文脈)はチャンクごとに付け直す(重複・別プロジェクト判定に必ず要る)
     const chunks = chunkByChars(
       stale,
-      (it) => itemBlock(it, ctx.usageAvailable, lang).length,
+      (it) => itemBlock(it, ctx.usageAvailable, lang, signalsOf(it)).length,
       PROMPT_MAX_CHARS,
     );
     for (const chunk of chunks) {
-      const text = await runClaude(buildPrompt(chunk, ctx, lang), model, 600000);
+      const text = await runClaude(buildPrompt(chunk, ctx, lang, signalsOf), model, 600000);
       const parsed = parseTriage(
         text,
         chunk.map((it) => path.basename(it.path)),
@@ -533,7 +655,15 @@ export async function triageProject(
         // AI が返さなかった件も出力不正として hash 付きで残す
         // (未診断のままだと差分診断のたびに再 call され続ける。force で再試行できる)
         const r = parsed.get(path.basename(it.path)) || invalidTriage();
-        store[it.path] = { ...r, hash: contentHash(it.path), lang, model, generatedAt };
+        const git = gitSignals.get(it.path) || [];
+        store[it.path] = {
+          ...r,
+          ...(git.length ? { signals: git } : {}),
+          hash: contentHash(it.path),
+          lang,
+          model,
+          generatedAt,
+        };
       }
       // チャンクごとに保存する(後続チャンクが失敗しても済んだ分の call を無駄にしない)
       saveTriage(store);
@@ -548,9 +678,11 @@ export async function triageProject(
       file: path.basename(it.path),
       path: it.path,
       verdict: e.verdict,
+      ...(e.state ? { state: e.state } : {}),
       reason: e.reason,
       issues: e.issues,
       instruction: e.instruction,
+      ...(e.signals?.length ? { signals: e.signals } : {}),
       ...(e.error ? { error: e.error } : {}),
     });
   }
@@ -576,9 +708,11 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
       ) {
         it.aiTriage = {
           verdict: cached.verdict,
+          ...(cached.state ? { state: cached.state } : {}),
           reason: cached.reason,
           issues: cached.issues,
           instruction: cached.instruction,
+          ...(cached.signals?.length ? { signals: cached.signals } : {}),
           // 出力不正も「診断済み」として載せる(未診断と区別し、再診断を促す)
           ...(cached.error ? { error: cached.error } : {}),
         };

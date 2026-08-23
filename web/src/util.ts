@@ -231,7 +231,7 @@ export const memoryResolver =
 /*
  * 棚卸し診断の削減試算(機械層で算出。AI には数値を出させない)。
  * index = 常時コスト(MEMORY.md の索引行)の増減、always = 毎セッション注入に変わる分。
- * keep(変更なし)と shrink(本文を縮めるだけで索引は ±0)は数値を出さないので null。
+ * keep(変更なし)・shrink(本文を縮める)・update(本文を書き直す)は索引 ±0 なので数値を出さず null。
  */
 export function triageEstimate(it: SkillItem): { index: number; always: number } | null {
   const v = it.aiTriage?.verdict;

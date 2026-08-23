@@ -42,14 +42,47 @@ export type MemoryVerdict =
   | 'delete'
   | 'wrong-project'
   /* 特定の skill / command の挙動への好み。SKILL.md へ書けば全プロジェクトで効き、memory 自体が不要になる */
-  | 'to-skill';
+  | 'to-skill'
+  /* 骨子は生きているが一部(日付・パス・手順・type)が古い。書き直せば使える(索引は ±0) */
+  | 'update';
+
+/*
+ * 鮮度(state)。「何の情報か」(type)とは別の軸で、AI が根拠つきで判定する。
+ * 行き先(verdict)は type × state の対応表から導く(プロンプト側に固定)。
+ *   current    = 今も正しい。恒久的
+ *   outdated   = 骨子は生きているが一部が古い → update
+ *   historical = 過去の事実としては正しいが現在値ではない。記録価値はある → to-docs
+ *   obsolete   = 役目を終えた。記録価値もない → delete
+ */
+export type MemoryState = 'current' | 'outdated' | 'historical' | 'obsolete';
+
+/*
+ * 鮮度の機械シグナル(事実のみ。行き先は決めない)。value は言語非依存の生値で、表示は web が解決する。
+ *   date           = 本文中の最新の絶対日付(value = YYYY-MM-DD、days = 経過日)
+ *   path-missing   = 本文が参照するパスが存在しない(value = そのパス)
+ *   done-words     = 完了・廃止を表す語が本文にある(value = 見つかった語、カンマ区切り)
+ *   branch-merged  = 本文に出るブランチがマージ済み(value = ブランチ名)
+ *   branch-missing = 本文に出るブランチがローカルにもリモートにも無い(value = ブランチ名)
+ * date / path-missing / done-words はスキャン時(SkillItem.signals)、branch-* は診断時(MemoryTriage.signals)
+ */
+export type MemorySignalKind =
+  'date' | 'path-missing' | 'done-words' | 'branch-merged' | 'branch-missing';
+export interface MemorySignal {
+  kind: MemorySignalKind;
+  value: string;
+  days?: number;
+}
 
 /* 1 memory 分の棚卸し診断。instruction は Claude Code に貼る指示文(keep なら空) */
 export interface MemoryTriage {
   verdict: MemoryVerdict;
+  /* 鮮度。出力不正の件と旧形式のキャッシュには無い(旧形式は次の差分診断で置き換わる) */
+  state?: MemoryState;
   reason: string;
   issues: string[];
   instruction: string;
+  /* 診断時に集めた git 層のシグナル(ブランチのマージ状況)。スキャン時の SkillItem.signals とは別 */
+  signals?: MemorySignal[];
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
 }
@@ -125,6 +158,8 @@ export interface SkillItem {
   originSessionId?: string;
   /* Write / Edit の回数(作成・更新)。参照回数は useCount 側。0 回なら省略 */
   writeCount?: number;
+  /* 鮮度の機械シグナル(テキスト / fs 層。スキャン時に算出)。無ければ省略 */
+  signals?: MemorySignal[];
   /* キャッシュ済みの AI 棚卸し診断(未診断なら省略。生成はオンデマンド) */
   aiTriage?: MemoryTriage;
 }

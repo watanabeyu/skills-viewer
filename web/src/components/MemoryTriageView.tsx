@@ -32,10 +32,11 @@ const signed = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n)
 
 /*
  * 削減試算のラベル。機械層で計算する(AI に数値を出させない)。
- * shrink は索引が変わらないので数値でなく文言だけ、keep は空。
+ * shrink / update は索引が変わらないので数値でなく文言だけ、keep は空。
  */
 function estimateLabel(it: SkillItem): string {
   if (it.aiTriage?.verdict === 'shrink') return t('memory.triage.estShrink');
+  if (it.aiTriage?.verdict === 'update') return t('memory.triage.estUpdate');
   const est = triageEstimate(it);
   if (!est) return '';
   if (est.always > 0)

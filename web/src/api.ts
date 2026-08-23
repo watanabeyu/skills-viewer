@@ -10,6 +10,8 @@ export type {
   Invocation,
   Lang,
   MemorySection,
+  MemorySignal,
+  MemoryState,
   MemoryTriage,
   MemoryType,
   MemoryVerdict,

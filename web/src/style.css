@@ -1919,6 +1919,11 @@ button {
   color: #2f7f9a;
   background: #2f7f9a1c;
 }
+/* update は shrink(縮める)と同じ「索引 ±0・本文を直す」系だが区別できる暖色 */
+.vbadge.v-update {
+  color: #9a6b1f;
+  background: #9a6b1f1c;
+}
 .toks {
   margin-left: auto;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
