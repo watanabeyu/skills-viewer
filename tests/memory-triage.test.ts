@@ -8,6 +8,7 @@ import {
   buildPrompt,
   chunkByChars,
   collectTriageContext,
+  extractJsonArray,
   normalizeInstruction,
   parseBodyPlan,
   parseTriage,
@@ -317,6 +318,13 @@ describe('parseTriage', () => {
       files,
     );
     expect(m.get('a.md')?.reason).toBe('first');
+  });
+
+  it('前置き・後書き付きの出力からも JSON 配列を取り出す(弱いモデルの揺れ)', () => {
+    const text =
+      'メモリ 2 件を棚卸しました:\n[{"file":"a.md","state":"current","verdict":"keep","reason":"r","issues":[],"instruction":""}]\n以上です。';
+    expect(parseTriage(text, ['a.md']).get('a.md')?.verdict).toBe('keep');
+    expect(() => extractJsonArray('配列が無い')).toThrow();
   });
 
   it('配列でない出力・壊れた出力は例外', () => {
@@ -637,6 +645,13 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     memItem('p-wiki.md', '---\nname: wiki\n---\nwiki の本文'),
   ];
   const ctx = { projectName: 'alpha', index, usageAvailable: true };
+
+  it('プロジェクトのパスと「別プロジェクトの配下パス → wrong-project」の指示を ja / en とも載せる', () => {
+    const withPath = { ...ctx, projectPath: '/w/alpha' };
+    expect(buildPrompt(targets, withPath, 'ja')).toContain('(パス: /w/alpha)');
+    expect(buildPrompt(targets, withPath, 'en')).toContain('(path: /w/alpha)');
+    expect(buildPrompt(targets, ctx, 'ja')).not.toContain('(パス:'); // 孤児はパス無し
+  });
 
   it('索引の全文と対象全件のファイル名をプロンプトに載せる', () => {
     const prompt = buildPrompt(targets, ctx, 'ja');

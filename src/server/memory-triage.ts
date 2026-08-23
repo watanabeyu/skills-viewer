@@ -98,6 +98,8 @@ function daysAgo(ms?: number): number | null {
 
 export interface TriageContext {
   projectName: string;
+  /* プロジェクトの実パス(孤児は無し)。「このプロジェクト」が何かを AI に示す(別プロジェクト判定の基準) */
+  projectPath?: string | null;
   /* MEMORY.md の全文(無ければ空文字) */
   index: string;
   /* false = そのプロジェクトの transcript が無い = Read / W-E は計測不能 */
@@ -432,7 +434,11 @@ export function buildPrompt(
       '- 出力の文章はすべて日本語で書くこと\n\n' +
       '# プロジェクト: ' +
       ctx.projectName +
-      '\n\n' +
+      (ctx.projectPath ? '(パス: ' + ctx.projectPath + ')' : '') +
+      '\n' +
+      'この memory の持ち主は上のプロジェクトです。signals に「別の登録プロジェクトの配下パス」がある件は、' +
+      'その参照が上のプロジェクトでの作業に必要なもの(例: 連携先の設定ファイル)でない限り wrong-project とし、' +
+      'wrong-project にしない場合は reason にその根拠を書くこと。\n\n' +
       standing +
       '\n# MEMORY.md(索引全文)\n' +
       (ctx.index || '(索引なし)') +
@@ -542,7 +548,11 @@ export function buildPrompt(
     '- Write all prose in English.\n\n' +
     '# Project: ' +
     ctx.projectName +
-    '\n\n' +
+    (ctx.projectPath ? ' (path: ' + ctx.projectPath + ')' : '') +
+    '\n' +
+    'The memories belong to the project above. When signals show paths under another registered project, ' +
+    'the verdict is wrong-project unless that reference is needed for work in the project above (e.g. a config ' +
+    'file of an integration); if you do not choose wrong-project, state the evidence in reason.\n\n' +
     standing +
     '\n# MEMORY.md (full index)\n' +
     (ctx.index || '(no index)') +
@@ -643,17 +653,33 @@ export function parseBodyPlan(raw: unknown, bodyText: string): FeedbackBodyPlan 
   };
 }
 
+/*
+ * 出力から JSON 配列を取り出す。コードフェンスだけでなく、弱いモデルが付ける前置き・後書き
+ * (「メモリ 2 件を棚卸しました: [...]」)も許容する: まず全体を試し、だめなら最初の [ から
+ * 最後の ] までを試す。どちらも失敗なら例外(呼び出し側で 400)。
+ */
+export function extractJsonArray(text: string): unknown {
+  const stripped = text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+    .trim();
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    const start = stripped.indexOf('[');
+    const end = stripped.lastIndexOf(']');
+    if (start < 0 || end <= start) throw new Error('triage output has no JSON array');
+    return JSON.parse(stripped.slice(start, end + 1));
+  }
+}
+
 export function parseTriage(
   text: string,
   allowedFiles: string[],
   /* file → 本文(body の exceptions 検証用。渡さなければ body は付けない) */
   bodies: Map<string, string> = new Map(),
 ): Map<string, MemoryTriage> {
-  const stripped = text
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```\s*$/, '')
-    .trim();
-  const j = JSON.parse(stripped);
+  const j = extractJsonArray(text);
   if (!Array.isArray(j)) throw new Error('triage output is not an array');
   const allowed = new Set(allowedFiles);
   const out = new Map<string, MemoryTriage>();
@@ -796,6 +822,7 @@ export async function triageProject(
     const standing = collectTriageContext(sec, opts.sections?.() || []);
     const ctx: TriageContext = {
       projectName: sec.projectName,
+      projectPath: sec.projectPath,
       index: readIndexText(sec.note),
       usageAvailable: sec.usageAvailable,
       rules: standing.rules,
