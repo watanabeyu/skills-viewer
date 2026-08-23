@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
+  fetchFile,
   toId,
   triageMemory,
   type MemorySection,
@@ -14,12 +15,15 @@ import {
   instructionsOf,
   joinInstructions,
   memoryListSearch,
+  memoryResolver,
   triageEstimate,
   withPreamble,
 } from '../util';
 import { memoryVerdictLabel, t } from '../i18n';
+import { splitFrontmatter } from '../md';
 import { KindBadge } from './GridView';
 import { MemoryTypeBadge, TokFacts } from './MemoryBits';
+import { renderMemoryBody } from './MemoryDetail';
 
 /*
  * memory 棚卸し診断の画面 + 詳細画面に埋めるブロック。
@@ -152,6 +156,105 @@ export function MemoryTriageBox({ it, sec }: { it: SkillItem; sec: MemorySection
   );
 }
 
+/*
+ * 棚卸し行の memory 名クリックで本文を出すモーダル。行き先の判断は本文を読まないと
+ * 決められないことが多いので、画面を離れずに(診断結果と並べたまま)読めるようにする。
+ * [[link]] は詳細と同じ解決で、クリックすると詳細へ遷移(モーダルは閉じる)。
+ */
+function MemoryBodyModal({
+  it,
+  sec,
+  onClose,
+}: {
+  it: SkillItem;
+  sec: MemorySection;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const [raw, setRaw] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const resolve = useMemo(() => memoryResolver(sec.items), [sec]);
+
+  useEffect(() => {
+    let alive = true;
+    setRaw(null);
+    setError('');
+    fetchFile(it.path)
+      .then((content) => {
+        if (alive) setRaw(content);
+      })
+      .catch((e) => {
+        if (alive) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [it.path]);
+
+  // Esc で閉じる(overlay クリックと同じ扱い)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const html = useMemo(
+    () => (raw === null ? '' : renderMemoryBody(splitFrontmatter(raw).body, resolve)),
+    [raw, resolve],
+  );
+  const goDetail = (id: string) => {
+    onClose();
+    navigate({ pathname: '/memory/' + id, search: params.toString() });
+  };
+  const onBodyClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    const a = (e.target as HTMLElement).closest('a[data-mem]');
+    if (!a) return;
+    e.preventDefault();
+    goDetail(a.getAttribute('data-mem') || '');
+  };
+
+  return (
+    <div
+      className="overlay"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="modal mem-modal" role="dialog" aria-label={it.name}>
+        <div className="mem-modal-h">
+          <span className="mem-modal-name">{it.name}</span>
+          <KindBadge it={it} />
+          <MemoryTypeBadge it={it} />
+          <span className="mem-modal-sp" />
+          <button className="pbtn" onClick={() => goDetail(toId(it.path))}>
+            {t('memory.triage.openDetail')}
+          </button>
+          <button className="pbtn" onClick={onClose}>
+            {t('common.close')}
+          </button>
+        </div>
+        {it.description && <p className="mem-modal-desc">{it.description}</p>}
+        <div className="mem-modal-body">
+          {error && <div className="empty">{t('app.loadFailed', { msg: error })}</div>}
+          {!error && raw === null && <div className="empty">{t('common.loading')}</div>}
+          {!error && raw !== null && (
+            /* renderMemoryBody 内で全テキストを HTML エスケープ済み */
+            <div
+              className="md-body"
+              onClick={onBodyClick}
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* プロジェクト 1 件分の棚卸し診断画面(/memory/triage/:project) */
 export function MemoryTriageView({
   data,
@@ -164,6 +267,8 @@ export function MemoryTriageView({
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  // 本文モーダルで開いている memory(パスで持ち、再取得後も同じ行を指せるようにする)
+  const [bodyPath, setBodyPath] = useState<string | null>(null);
 
   const sec = (data.memory || []).find((s) => s.id === project);
   // 存在しないプロジェクト(削除・リネーム後の共有 URL)は memory 一覧へ戻す
@@ -269,16 +374,19 @@ export function MemoryTriageView({
             <CopyButton className="copybtn" text={t('memory.triage.copyPreamble')} />
           </div>
         )}
+        {bodyPath &&
+          (() => {
+            const cur = sec.items.find((x) => x.path === bodyPath);
+            return cur ? (
+              <MemoryBodyModal it={cur} sec={sec} onClose={() => setBodyPath(null)} />
+            ) : null;
+          })()}
         <div className={'triage-rows' + (busy ? ' busy' : '')}>
           {sec.items.map((it) => (
             <div className="triage-row" key={it.path}>
               <div className="nmline">
-                <button
-                  className="nm"
-                  onClick={() =>
-                    navigate({ pathname: '/memory/' + toId(it.path), search: params.toString() })
-                  }
-                >
+                {/* 名前クリックは本文モーダル(詳細へは modal 内のボタンから) */}
+                <button className="nm" onClick={() => setBodyPath(it.path)}>
                   {it.name}
                 </button>
                 <KindBadge it={it} />

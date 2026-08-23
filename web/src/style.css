@@ -1137,6 +1137,42 @@ button {
 .modal .del:hover {
   background: #962f27;
 }
+/* 棚卸し行の本文モーダル: 設定モーダルより広く、本文は内側でスクロール */
+.modal.mem-modal {
+  width: 760px;
+  max-width: 92vw;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 24px 22px;
+}
+.mem-modal-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.mem-modal-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1b1a17;
+  word-break: break-all;
+}
+.mem-modal-sp {
+  flex: 1;
+}
+.mem-modal-desc {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #57534a;
+  margin: 0 0 12px;
+}
+.mem-modal-body {
+  overflow: auto;
+  border-top: 1px solid #ece9e1;
+  padding-top: 12px;
+}
 
 @media (max-width: 900px) {
   .grid {

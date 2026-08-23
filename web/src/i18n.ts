@@ -204,6 +204,7 @@ const en = {
   'memory.triage.verdict.wrong-project': 'Belongs elsewhere',
   'memory.triage.verdict.to-skill': 'Move to skill',
   'memory.triage.verdict.update': 'Rewrite the body',
+  'memory.triage.openDetail': 'Open detail',
   'memory.triage.verdict.error': 'Invalid output — re-run to retry',
   'memory.triage.seen': 'read {n}×',
   'memory.triage.unseen': 'no reads',
@@ -317,6 +318,7 @@ const en = {
   'diff.failed': 'Failed to load diff: {msg}',
   'common.loading': 'Loading…',
   'common.cancel': 'Cancel',
+  'common.close': 'Close',
 
   'alert.copyFailed': 'Copy failed: {msg}',
   'alert.deleteFailed': 'Delete failed: {msg}',
@@ -564,6 +566,7 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.verdict.wrong-project': '別プロジェクトの話',
   'memory.triage.verdict.to-skill': 'skill へ',
   'memory.triage.verdict.update': '本文を書き直す',
+  'memory.triage.openDetail': '詳細を開く',
   'memory.triage.verdict.error': '出力不正 — 再診断で再試行',
   'memory.triage.seen': '{n} 回参照',
   'memory.triage.unseen': '参照なし',
@@ -676,6 +679,7 @@ const ja: Record<MsgKey, string> = {
   'diff.failed': 'diff の取得に失敗しました: {msg}',
   'common.loading': '読み込み中…',
   'common.cancel': 'キャンセル',
+  'common.close': '閉じる',
 
   'alert.copyFailed': 'コピーに失敗: {msg}',
   'alert.deleteFailed': '削除に失敗: {msg}',
