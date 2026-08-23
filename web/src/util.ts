@@ -1,4 +1,4 @@
-import type { Section, SkillGroup, SkillItem, Source } from './api';
+import type { FeedbackBodyPlan, Section, SkillGroup, SkillItem, Source } from './api';
 import { itemKey } from './api';
 import { t } from './i18n';
 
@@ -17,8 +17,11 @@ export const SRC_TINT: Record<Source, string> = {
 
 export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
 
-/* 一覧の表示軸: ソース別(置き場所)/ 用途別(AI グルーピング)/ フラット */
-export type ViewMode = 'source' | 'group' | 'flat';
+/* 一覧の表示軸: ソース別(置き場所)/ 用途別(AI グルーピング)/ メモリ(自動メモリのみ)/ フラット */
+export type ViewMode = 'source' | 'group' | 'memory' | 'flat';
+
+/* memory セクションのアクセント色(skill の SRC_COLOR に相当。AI マークと同系色) */
+export const MEM_COLOR = '#b0836a';
 
 export interface FlatItem extends SkillItem {
   key: string;
@@ -55,9 +58,9 @@ export function flatten(sections: Section[]): FlatItem[] {
   );
 }
 
-/* 呼び出し例。agent は @メンション、hook は起動形が無いので空 */
+/* 呼び出し例。agent は @メンション、hook / memory は起動形が無いので空 */
 export const usageLine = (it: SkillItem) => {
-  if (it.kind === 'hook') return '';
+  if (it.kind === 'hook' || it.kind === 'memory') return '';
   if (it.kind === 'agent') return '@' + it.name;
   return '/' + it.name + (it.argumentHint ? ' ' + it.argumentHint : '');
 };
@@ -66,6 +69,7 @@ export const KIND_LABEL: Partial<Record<SkillItem['kind'], string>> = {
   command: 'command',
   agent: 'agent',
   hook: 'hook',
+  memory: 'memory',
 };
 
 export type KindFilter = 'all' | SkillItem['kind'];
@@ -149,6 +153,165 @@ export const fmtDate = (ms?: number) => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+
+/*
+ * 経過日ラベル(memory の「どれだけ更新されていないか」用)。日付そのものより鮮度が重要なので相対表記。
+ */
+export function relDaysLabel(ms?: number): string {
+  if (!ms) return '';
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  return days <= 0 ? t('memory.today') : t('memory.stale', { n: days });
+}
+
+/* M/D 表記(カードの「最終 8/14」用。年は鮮度判断に不要なので省く) */
+export const fmtMD = (ms?: number) => {
+  if (!ms) return '';
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+};
+
+/* memory 軸の並び順。既定は索引トークン(常時コスト)が多い順 = 減らす価値が高い順 */
+export type MemorySortKey = 'index' | 'body' | 'updated' | 'name';
+
+export function sortMemory<T extends SkillItem>(items: T[], sort: MemorySortKey): T[] {
+  const arr = [...items];
+  const byName = (a: T, b: T) => a.name.localeCompare(b.name);
+  if (sort === 'index')
+    arr.sort((a, b) => (b.indexTokens || 0) - (a.indexTokens || 0) || byName(a, b));
+  else if (sort === 'body')
+    arr.sort((a, b) => (b.bodyTokens || 0) - (a.bodyTokens || 0) || byName(a, b));
+  // 更新が古い順(棚卸し候補が先頭に来る)。更新日不明は末尾。
+  // サーバーは stat 失敗時に updatedAt: 0 を載せるので、?? ではなく falsy で不明扱いにする
+  else if (sort === 'updated')
+    arr.sort((a, b) => (a.updatedAt || Infinity) - (b.updatedAt || Infinity) || byName(a, b));
+  else arr.sort(byName);
+  return arr;
+}
+
+/*
+ * 参照フィルタ(本文が Read されたか)。トランスクリプトが無いプロジェクトは「未参照」ではなく
+ * 判定不能なので、read / unread のどちらにも含めない(all だけが通す)。
+ */
+export type RefFilter = 'all' | 'read' | 'unread';
+
+export const refMatches = (it: SkillItem, f: RefFilter, usageAvailable: boolean) => {
+  if (f === 'read') return usageAvailable && !!it.useCount;
+  if (f === 'unread') return usageAvailable && !it.useCount;
+  return true;
+};
+
+/* 被リンク: 同プロジェクトの他 memory の [[x]] がこの memory を name かファイル名で指しているもの */
+export function backlinksOf<T extends SkillItem>(it: T, items: T[]): T[] {
+  const base = fileBase(it.path);
+  return items.filter(
+    (o) => o.path !== it.path && (o.links || []).some((n) => n === it.name || n === base),
+  );
+}
+
+/* リンク切れ数: 発リンクのうち同プロジェクト内で解決できないもの(解決規則は memoryResolver と同一) */
+export function brokenLinkCount(it: SkillItem, items: SkillItem[]): number {
+  const resolve = memoryResolver(items);
+  return (it.links || []).filter((n) => !resolve(n)).length;
+}
+
+/* memory の実パスからファイル名を取る(API の files 指定・[[link]] 解決で使う) */
+export const fileName = (p: string) => p.split(/[\\/]/).pop() || '';
+/* 拡張子なしのファイル名。[[x]] は frontmatter name とファイル名の両方で書かれ得る */
+export const fileBase = (p: string) => fileName(p).replace(/\.md$/, '');
+
+/*
+ * [[x]] の解決器。本文レンダリング・リンク切れ数えの両方が同じ規則で解決するよう 1 箇所に置く
+ * (name 一致とファイル名一致のどちらでも解決する)。
+ */
+export const memoryResolver =
+  (items: SkillItem[]) =>
+  (name: string): SkillItem | undefined =>
+    items.find((m) => m.name === name || fileBase(m.path) === name);
+
+/*
+ * 棚卸し診断の削減試算(機械層で算出。AI には数値を出させない)。
+ * index = 常時コスト(MEMORY.md の索引行)の増減、always = 毎セッション注入に変わる分。
+ * keep(変更なし)・shrink(本文を縮める)・update(本文を書き直す)は索引 ±0 なので数値を出さず null。
+ */
+export function triageEstimate(it: SkillItem): { index: number; always: number } | null {
+  const v = it.aiTriage?.verdict;
+  const index = it.indexTokens || 0;
+  // to-skill は SKILL.md 側(元から常時注入されている description ではなく本文)へ移すので、
+  // memory 側は索引が消えるだけ = to-docs と同じ試算になる
+  if (v === 'delete' || v === 'to-docs' || v === 'wrong-project' || v === 'to-skill')
+    return { index: -index, always: 0 };
+  // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)
+  if (v === 'to-claude-md') return { index: -index, always: it.bodyTokens || 0 };
+  return null;
+}
+
+/*
+ * feedback 本文の分類(body)から指示文を決定的に組む。AI の散文ではなくテンプレートなので、
+ * モデルが haiku でも opus でも体裁と網羅性が同じになる。ルール行は description(索引の文言)で示す。
+ */
+export function buildFeedbackInstruction(it: SkillItem, plan: FeedbackBodyPlan): string {
+  const file = fileName(it.path);
+  const lines = [
+    t('memory.triage.tpl.replace', { file }),
+    t('memory.triage.tpl.rule', { rule: it.description }),
+  ];
+  if (plan.why === 'keep') lines.push(t('memory.triage.tpl.whyKeep'));
+  else if (plan.why === 'generalize')
+    lines.push(t('memory.triage.tpl.whyGeneralize', { text: plan.whyRewrite || '' }));
+  else lines.push(t('memory.triage.tpl.whyDrop'));
+  if (plan.how === 'keep') lines.push(t('memory.triage.tpl.howKeep'));
+  else if (plan.how === 'keep-lines-only')
+    lines.push(
+      t('memory.triage.tpl.howLines', {
+        list: plan.keepLines.map((x) => '「' + x + '」').join(' / '),
+      }),
+    );
+  else lines.push(t('memory.triage.tpl.howDrop'));
+  // 索引行は毎セッション注入される側。description が本文と食い違うときだけ書き換えを指示する
+  if (plan.index === 'rewrite')
+    lines.push(t('memory.triage.tpl.indexRewrite', { text: plan.indexRewrite || '' }));
+  else if (plan.index === 'align') lines.push(t('memory.triage.tpl.indexAlign'));
+  else lines.push(t('memory.triage.tpl.index'));
+  return lines.join('\n');
+}
+
+/* 表示・コピーに使う指示文。分類(body)があればテンプレート、無ければ AI の散文 */
+export function effectiveInstruction(it: SkillItem): string {
+  const tri = it.aiTriage;
+  if (!tri || tri.error || tri.verdict === 'keep') return '';
+  if (tri.body && (tri.verdict === 'shrink' || tri.verdict === 'update'))
+    return buildFeedbackInstruction(it, tri.body);
+  return tri.instruction;
+}
+
+/* 提案(指示文)のある memory だけ。サマリ・まとめコピーが同じ母集団を見るよう 1 箇所に置く */
+export const instructionsOf = (items: SkillItem[]) =>
+  items.filter((it) => effectiveInstruction(it));
+
+/*
+ * コピーする指示文には「まず確認してから実行」の前置きを付ける。貼り先の Claude Code に
+ * dry run(読み取り → 作業内容の提示 → 承認)を求めるためで、毎回手で書き足さなくて済むようにする。
+ */
+export const withPreamble = (body: string) => t('memory.triage.copyPreamble') + '\n\n' + body;
+
+/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用)。前置きは先頭に 1 回だけ */
+export const joinInstructions = (items: SkillItem[]) =>
+  withPreamble(
+    instructionsOf(items)
+      .map((it) => '## ' + it.name + '\n\n' + effectiveInstruction(it))
+      .join('\n\n'),
+  );
+
+/* memory 一覧(view=memory)へ戻る URL。詳細のタブ状態は持ち越さない(次のカードが本文タブで開くのを防ぐ) */
+export function memoryListSearch(params: URLSearchParams): string {
+  const next = new URLSearchParams(params);
+  next.set('view', 'memory');
+  next.delete('tab');
+  return next.toString();
+}
+
+/* クリップボードコピー(指示文の貼り付け用。失敗はボタン側で握り潰さず呼び出し元へ) */
+export const copyText = (text: string): Promise<void> => navigator.clipboard.writeText(text);
 
 export const matches = (it: SkillItem, q: string) =>
   !q ||

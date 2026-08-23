@@ -20,6 +20,7 @@ import type {
   SkillAnalysis,
   SummaryJob,
 } from '../shared/types';
+import { pruneMissing } from './cache';
 import { srvMsg } from './locale';
 
 const CACHE_DIR = path.join(os.homedir(), '.cache', 'skills-viewer');
@@ -77,7 +78,8 @@ export function loadSummaries(): SummaryStore {
 }
 function saveSummaries(s: SummaryStore): void {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  fs.writeFileSync(SUMMARY_FILE, JSON.stringify(s, null, 1));
+  // 保存のついでに死にエントリを掃除する(GET では書き込まないので掃除もしない)
+  fs.writeFileSync(SUMMARY_FILE, JSON.stringify(pruneMissing(s), null, 1));
 }
 export function contentHash(fp: string): string | null {
   try {

@@ -11,7 +11,19 @@ export const HOME = os.homedir();
 /* スキャン中だけ本文を保持する内部型(refs 抽出後に破棄) */
 type ScanItem = SkillItem & { _body?: string };
 
-/* ---------- frontmatter parsing (minimal YAML: scalars + block scalars) ---------- */
+/* ---------- frontmatter parsing (minimal YAML: scalars + block scalars + 1段ネスト) ---------- */
+
+/* スカラー値のクォート剥がし(double-quote は edit.ts の書き込みと対になる JSON 互換) */
+function scalarValue(value: string): string {
+  if (/^".*"$/.test(value)) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value.slice(1, -1);
+    }
+  }
+  return value.replace(/^'|'$/g, '');
+}
 
 export function parseFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
   const meta: Record<string, string> = {};
@@ -37,17 +49,19 @@ export function parseFrontmatter(raw: string): { meta: Record<string, string>; b
           i++;
         }
         value = block.join('\n').trim();
-      } else {
-        if (/^".*"$/.test(value)) {
-          // double-quote は JSON 互換エスケープ(\" 等)を解釈する(edit.ts の書き込みと対)
-          try {
-            value = JSON.parse(value);
-          } catch {
-            value = value.slice(1, -1);
-          }
-        } else {
-          value = value.replace(/^'|'$/g, '');
+      } else if (value === '' && /^\s+\S/.test(lines[i + 1] || '')) {
+        // 値なし行 + インデント行 = 1段ネストのマップ(memory の `metadata:` 配下)。
+        // 親キーは従来どおり空文字で残し、子は `metadata.type` のドット key で持たせる
+        meta[key] = value;
+        i++;
+        while (i < lines.length && /^\s+\S/.test(lines[i])) {
+          const child = lines[i].match(/^\s+([A-Za-z0-9_-]+):\s*(.*)$/);
+          if (child) meta[key + '.' + child[1]] = scalarValue(child[2].trim());
+          i++;
         }
+        continue;
+      } else {
+        value = scalarValue(value);
         i++;
       }
       meta[key] = value;
@@ -56,7 +70,7 @@ export function parseFrontmatter(raw: string): { meta: Record<string, string>; b
   return { meta, body };
 }
 
-function firstBodyLine(body: string): string {
+export function firstBodyLine(body: string): string {
   for (const line of body.split(/\r?\n/)) {
     const t = line.replace(/^#+\s*/, '').trim();
     if (t) return t;

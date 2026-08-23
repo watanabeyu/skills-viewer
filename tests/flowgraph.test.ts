@@ -34,10 +34,7 @@ describe('buildFlowGraph (抽出データ → フローチャート)', () => {
     };
     const g = buildFlowGraph(flow, L);
     const decs = g.rows.filter((r) => r.node.kind === 'dec').map((r) => r.node);
-    expect(decs.map((d) => (d.kind === 'dec' ? d.when : ''))).toEqual([
-      '欠落あり?',
-      '承認された?',
-    ]);
+    expect(decs.map((d) => (d.kind === 'dec' ? d.when : ''))).toEqual(['欠落あり?', '承認された?']);
   });
 
   it('to なしの分岐は右レーンの中断カプセル + exit エッジ(はい)', () => {

@@ -4,12 +4,18 @@
  * テスト(Node 環境)からも import されるため、ブラウザ API へのアクセスは必ずガードする。
  */
 
-import type { Lang, LintCode, RelationType } from '../../src/shared/types';
+import type {
+  Lang,
+  LintCode,
+  MemoryType,
+  MemoryVerdict,
+  RelationType,
+} from '../../src/shared/types';
 
 export type { Lang };
 
 const en = {
-  'app.subtitle': 'skills · commands · agents · hooks — installed on this machine',
+  'app.subtitle': 'skills · commands · agents · hooks · memory — installed on this machine',
   'app.count': '{shown} / {total} items',
   'app.searchPlaceholder': 'Search by name or description…',
   'app.settings': 'Settings',
@@ -21,11 +27,14 @@ const en = {
   'sort.recent': 'Recently used',
   'sort.updated': 'Recently updated',
   'sort.tokens': 'Token cost',
+  'sort.memIndex': 'Index tokens (high → low)',
+  'sort.memBody': 'Body tokens (high → low)',
+  'sort.memStale': 'Oldest update first',
   'kind.all': 'All',
-  'filter.used': 'Used',
+  'filter.used': 'Recent use',
   'filter.usedTitle':
     'Show only items with recorded use in the transcript retention window (default 30 days)',
-  'filter.unused': 'Unused',
+  'filter.unused': 'No recent use',
   'filter.unusedTitle':
     'Show only items with no recorded use in the transcript retention window (default 30 days)',
 
@@ -42,10 +51,16 @@ const en = {
 
   'view.source': 'By source',
   'view.group': 'By purpose',
+  'view.memory': 'Memory',
   'view.flat': 'Flat',
-  'view.title': 'View: where items live / when to use them / one flat list',
+  'view.title': 'View: where items live / when to use them / auto memory / one flat list',
   'filter.kindPrefix': 'Kind: {v}',
   'filter.usePrefix': 'Use: {v}',
+  'filter.refPrefix': 'Reads: {v}',
+  'filter.refRead': 'Read',
+  'filter.refUnread': 'Not read',
+  'filter.refTitle':
+    'Whether the body was Read within the transcript retention window (default 30 days). Projects without transcripts are excluded from both',
   'ai.menu': '✦ AI',
   'ai.menuTitle': 'AI actions: summaries and purpose grouping (claude CLI)',
   'group.other': 'Other',
@@ -69,7 +84,7 @@ const en = {
   'card.noUses': 'No recorded use',
   'card.updated': 'Updated {date}',
   'card.tokens': '~{n} tok',
-  'badge.unused': 'unused',
+  'badge.unused': 'no recent use',
   'badge.unusedTitle':
     'No recorded use within the transcript retention window (default 30 days). Older use is not visible.',
   'badge.warnTitle': 'Description issues:',
@@ -77,6 +92,163 @@ const en = {
   'app.tokens': '≈{n} tokens/session',
   'app.tokensTitle':
     'Approx. tokens injected into every session in the current project (name + description of built-ins, plugins, user scope and the current project)',
+
+  'memory.searchPlaceholder': 'Search memory…',
+  'memory.secLabel': 'MEMORY — {name}',
+  'memory.orphan': 'unknown project',
+  'memory.orphanTitle':
+    'No matching project — it may have been deleted, moved or renamed (the encoded directory name cannot be decoded back into a path)',
+  'memory.type.user': 'About you',
+  'memory.type.feedback': 'Guidance',
+  'memory.type.project': 'Project',
+  'memory.type.reference': 'Reference',
+  'memory.today': 'updated today',
+  'memory.stale': '{n}d without update',
+  'memory.secTokensTitle':
+    'Approx. tokens of this project’s MEMORY.md index lines. The index lists every memory and is injected into every session, whether or not the bodies are read.',
+  'memory.idx': 'index',
+  'memory.body': 'body',
+  'memory.indexTokTitle':
+    'Always-on cost: this memory’s line in MEMORY.md, injected into every session (0 = not listed in the index)',
+  'memory.bodyTokTitle': 'Pay-per-use cost: the whole body, charged only when it is Read',
+  'memory.readsTitle':
+    'Times this memory was Read within the transcript retention window (default 30 days). 0 does not mean it has never been read.',
+  'memory.writesTitle':
+    'Times this memory was created or updated (Write / Edit) within the transcript retention window',
+  'memory.unread': 'no recent reads',
+  'memory.unreadTitle':
+    'The body was not Read within the transcript retention window (default 30 days). Not an anomaly: index-line-only memories work without being read.',
+  'memory.linkBrokenTitle': 'No memory with this name in this project',
+  'memory.brokenBadgeTitle': '[[link]] targets with no matching memory in this project: {n}',
+
+  /* コストバー: 常時(索引)と従量(本文)を分けて見せる。減らせる変数は件数だけ */
+  'memory.cost.indexK': 'Index — every session',
+  'memory.cost.indexNote':
+    'Index lines for {n} memories are\ninjected unconditionally every session',
+  'memory.cost.bodyK': 'Bodies — only when read',
+  'memory.cost.bodyNote': 'Costs nothing unless read.\n{k} / {n} read within the retention window',
+  'memory.cost.bodyNoteNA': 'Costs nothing unless read.\nReads cannot be measured (no transcripts)',
+  'memory.cost.perK': 'Per memory',
+  'memory.cost.perNote':
+    'Only the count can be reduced.\nShortening a body does not change the index',
+  'memory.cost.unit': 'tok',
+  'memory.cmp.memory': 'memory index',
+  'memory.cmp.plugin': 'plugin',
+  'memory.cmp.user': 'user skill',
+  'memory.cmpTitle':
+    'Per-session injection compared with other always-on sources in this environment (plugin / user skills: name + description totals)',
+
+  /* カード・詳細の参照実績。Read 0 は異常ではないので言い切らない */
+  'memory.card.reads': 'Body read {n}× · last {date}',
+  'memory.card.noReads': 'No recorded body reads',
+  'memory.card.noReadsFeedback': 'No recorded body reads — works from its index line alone',
+  'memory.card.na': 'Reads cannot be measured',
+
+  'memory.back': '← List',
+  'memory.tab.body': 'Body',
+  'memory.warnline': 'Broken links ({n}): {names}',
+  'memory.sec.cost': 'Context cost',
+  'memory.sec.reads': 'Read activity',
+  'memory.sec.links': 'Links',
+  'memory.sec.frontmatter': 'frontmatter',
+  'memory.cbox.indexK': 'Index line — every session',
+  'memory.cbox.indexNote':
+    'Injected unconditionally as one line of MEMORY.md whenever you work in this project.',
+  'memory.cbox.bodyRead': 'Charged only when read. Read {n}× within the retention window.',
+  'memory.cbox.bodyUnread':
+    'Charged only when read. No reads recorded within the retention window.',
+  'memory.cbox.bodyNA': 'Charged only when read. Reads cannot be measured (no transcripts).',
+  'memory.f.reads': 'Body reads',
+  'memory.f.writes': 'Created / updated',
+  'memory.f.origin': 'Origin session',
+  'memory.f.times': '{n}×',
+  'memory.f.last': ' — last {date}',
+  'memory.f.none': 'None',
+  'memory.f.noneNote': ' — within the transcript retention window',
+  'memory.f.na': 'Not measurable',
+  'memory.linkDead': '{name} (broken)',
+
+  /* 棚卸し診断: AI は行き先の仮説と指示文までを出し、実行は貼り先の Claude Code に委ねる */
+  'memory.triage.section': '✦ Triage',
+  'memory.triage.sectionTitle':
+    'Ask the model where each memory of this project should go, and get an instruction to paste into Claude Code',
+  'memory.triage.heading': 'Memory triage',
+  'memory.triage.back': '← Memory list',
+  'memory.triage.title': 'Triage — {project}',
+  'memory.triage.sub':
+    '✦ This tool does not act. For each proposal it prepares an instruction to paste into Claude Code',
+  'memory.triage.run': 'Run triage',
+  'memory.triage.running': 'Triaging…',
+  'memory.triage.rerun': 'Re-run triage',
+  'memory.triage.runTitle':
+    'One claude CLI call reads every memory body and proposes a destination (cached per memory; only changed ones are re-asked)',
+  'memory.triage.rerunTitle':
+    'Re-ask for every memory, ignoring the cache (claude CLI is called once, or a few times for very large projects)',
+  'memory.triage.summary': '{n} triaged — {p} proposals, {k} keep as is',
+  'memory.triage.summaryWithErrors':
+    '{n} triaged — {p} proposals, {k} keep as is, {e} with invalid output',
+  'memory.triage.summaryPending': '{u} of {n} not triaged yet',
+  'memory.triage.ctaTitle': 'Not triaged yet',
+  'memory.triage.ctaBody':
+    'Nothing has been asked of the AI yet — the rows below are facts only. Run triage to read all {n} bodies with the claude CLI (one call; split into a few for very large projects) and get a destination + a paste-ready instruction for each (usually 1–2 minutes).',
+  'memory.triage.ctaPartial':
+    '{u} of {n} memories changed since the last triage. Run triage to re-ask only those with the claude CLI.',
+  'memory.triage.busyTitle': 'Triaging…',
+  'memory.triage.busyBody':
+    'Reading {n} memory bodies with the claude CLI (one call; split into a few for very large projects). This usually takes 1–2 minutes; the page updates when it finishes.',
+  'memory.triage.verdict.keep': 'Keep as is',
+  'memory.triage.verdict.shrink': 'Shrink the body',
+  'memory.triage.verdict.to-claude-md': 'Move to CLAUDE.md',
+  'memory.triage.verdict.to-docs': 'Move to docs/',
+  'memory.triage.verdict.delete': 'Delete',
+  'memory.triage.verdict.wrong-project': 'Belongs elsewhere',
+  'memory.triage.verdict.to-skill': 'Move to skill',
+  'memory.triage.verdict.update': 'Rewrite the body',
+  'memory.triage.openDetail': 'Open detail',
+  'memory.triage.tpl.replace':
+    '- Replace the body of {file} with the following (leave the index line as is)',
+  'memory.triage.tpl.rule': '- Keep the first line (the rule) as is: "{rule}"',
+  'memory.triage.tpl.whyKeep': '- Keep Why as is',
+  'memory.triage.tpl.whyGeneralize':
+    '- Rewrite Why as this one sentence (drop names and dates): "{text}"',
+  'memory.triage.tpl.whyDrop': '- Delete Why (no value as a record of where the rule came from)',
+  'memory.triage.tpl.howKeep': '- Keep How to apply as is',
+  'memory.triage.tpl.howLines': '- In How to apply keep only the exceptions / boundaries: {list}',
+  'memory.triage.tpl.howDrop': '- Delete How to apply (it restates the description)',
+  'memory.triage.tpl.index': '- Do not change the MEMORY.md index line',
+  'memory.triage.tpl.indexRewrite':
+    '- Rewrite the description in the MEMORY.md index line to: "{text}" (it says something different from the body)',
+  'memory.triage.tpl.indexAlign':
+    '- The MEMORY.md index line and the body say different things: check which one is right and align them',
+  'memory.signal.index-mismatch': 'Index line and body disagree',
+  'memory.signal.other-project': 'Points at another project: {value}',
+  'memory.triage.verdict.error': 'Invalid output — re-run to retry',
+  'memory.triage.seen': 'read {n}×',
+  'memory.triage.unseen': 'no reads',
+  'memory.triage.estApply': 'applied: index {n} tok/session',
+  'memory.triage.estApplyClaude': 'applied: index {n} · always-on +{m} tok',
+  'memory.triage.estShrink': 'applied: index ±0 · proposes shrinking the body',
+  'memory.triage.estUpdate': 'applied: index ±0 · proposes rewriting the body',
+  'memory.triage.instruction': 'Instruction to paste into Claude Code',
+  'memory.triage.copy': 'Copy',
+  'memory.triage.copied': 'Copied',
+  'memory.triage.copyAll': 'Copy all {n} instructions',
+  'memory.triage.footProposals': 'Proposals',
+  'memory.triage.footProposalsUnit': 'items',
+  'memory.triage.footApplied': 'If all applied',
+  'memory.triage.footTokUnit': 'tok/session',
+  'memory.triage.footDiff': 'Delta',
+  'memory.triage.footDiffVal': '{n} tok',
+  'memory.triage.footNote':
+    'Copied instructions start with a "check first, then execute" preamble and include the destination path, removing the MEMORY.md index line and rewriting [[link]]s. To do only part of it, say so in the conversation you paste into.',
+  'memory.triage.preambleLabel': 'Preamble for pasting (the copy buttons add it automatically)',
+  'memory.triage.copyPreamble':
+    'The following is a proposal from the skills-viewer memory triage. First inspect the current state read-only and present the exact work you would do. Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. Execute only after I approve.',
+  'memory.triage.whole': 'Triage the whole project →',
+  'memory.triage.menu': 'Memory triage (current project)',
+  'memory.triage.menuTitle':
+    'Triage the auto memory of the current project: destination, reason and a pasteable instruction',
+  'alert.triageFailed': 'Triage failed: {msg}',
 
   'detail.back': '← Back to list',
   'detail.lastUpdated': 'Last updated {date}',
@@ -163,6 +335,7 @@ const en = {
   'diff.failed': 'Failed to load diff: {msg}',
   'common.loading': 'Loading…',
   'common.cancel': 'Cancel',
+  'common.close': 'Close',
 
   'alert.copyFailed': 'Copy failed: {msg}',
   'alert.deleteFailed': 'Delete failed: {msg}',
@@ -230,7 +403,7 @@ const en = {
 export type MsgKey = keyof typeof en;
 
 const ja: Record<MsgKey, string> = {
-  'app.subtitle': 'skills · commands · agents · hooks — このPCにインストール済み',
+  'app.subtitle': 'skills · commands · agents · hooks · memory — このPCにインストール済み',
   'app.count': '{shown} / {total} 件',
   'app.searchPlaceholder': 'スキル名や説明で検索…',
   'app.settings': '設定',
@@ -242,10 +415,13 @@ const ja: Record<MsgKey, string> = {
   'sort.recent': '最近使った順',
   'sort.updated': '更新日順',
   'sort.tokens': 'トークン量順',
+  'sort.memIndex': '索引トークンが多い順',
+  'sort.memBody': '本文トークンが多い順',
+  'sort.memStale': '更新が古い順',
   'kind.all': 'すべて',
-  'filter.used': '使用あり',
+  'filter.used': '直近使用あり',
   'filter.usedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録があるものだけ表示',
-  'filter.unused': '未使用',
+  'filter.unused': '直近使用なし',
   'filter.unusedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録がないものだけ表示',
 
   'ai.button': 'AI要約',
@@ -261,10 +437,16 @@ const ja: Record<MsgKey, string> = {
 
   'view.source': 'ソース別',
   'view.group': '用途別',
+  'view.memory': 'メモリ',
   'view.flat': 'フラット',
-  'view.title': '表示軸: 置き場所別 / 使いどき別 / 1つのリスト',
+  'view.title': '表示軸: 置き場所別 / 使いどき別 / 自動メモリ / 1つのリスト',
   'filter.kindPrefix': '種類: {v}',
   'filter.usePrefix': '使用: {v}',
+  'filter.refPrefix': '参照: {v}',
+  'filter.refRead': '参照あり',
+  'filter.refUnread': '参照なし',
+  'filter.refTitle':
+    'トランスクリプト保持期間内(既定30日)に本文が Read されたか。トランスクリプトが無いプロジェクトはどちらにも含めません',
   'ai.menu': '✦ AI',
   'ai.menuTitle': 'AI 操作: 要約と用途グルーピング(claude CLI)',
   'group.other': 'その他',
@@ -287,7 +469,7 @@ const ja: Record<MsgKey, string> = {
   'card.noUses': '使用記録なし',
   'card.updated': '{date} 更新',
   'card.tokens': '約{n}tok',
-  'badge.unused': '未使用',
+  'badge.unused': '直近未使用',
   'badge.unusedTitle':
     'トランスクリプト保持期間内(既定30日)に使用記録がありません。それ以前の使用は集計できません',
   'badge.warnTitle': 'description の問題:',
@@ -295,6 +477,156 @@ const ja: Record<MsgKey, string> = {
   'app.tokens': '≈{n}トークン/セッション',
   'app.tokensTitle':
     '現在のプロジェクトでのセッションごとに注入されるトークンの概算(built-in・plugin・user・現在プロジェクトの name + description)',
+
+  'memory.searchPlaceholder': 'memory を検索…',
+  'memory.secLabel': 'MEMORY — {name}',
+  'memory.orphan': 'プロジェクト不明',
+  'memory.orphanTitle':
+    '対応するプロジェクトが見つかりません(削除・移動・リネームの可能性。エンコードされたディレクトリ名から元のパスは復元できません)',
+  'memory.type.user': '人物像',
+  'memory.type.feedback': '指示・方針',
+  'memory.type.project': '進行状況',
+  'memory.type.reference': '参照先',
+  'memory.today': '今日 更新',
+  'memory.stale': '{n}日 更新なし',
+  'memory.secTokensTitle':
+    'このプロジェクトの MEMORY.md の索引行の概算トークン。索引は全メモリ分が、本文を読むかどうかに関わらず毎セッション注入されます',
+  'memory.idx': '索引',
+  'memory.body': '本文',
+  'memory.indexTokTitle':
+    '常時コスト: このメモリの MEMORY.md 上の索引行。毎セッション注入されます(0 = 索引に載っていない)',
+  'memory.bodyTokTitle': '従量コスト: 本文全体。Read されたときだけかかります',
+  'memory.readsTitle':
+    'トランスクリプト保持期間内(既定30日)にこのメモリが Read された回数。0 でも「一度も読まれていない」ことは意味しません',
+  'memory.writesTitle':
+    'トランスクリプト保持期間内にこのメモリが作成・更新された回数(Write / Edit)',
+  'memory.unread': '直近未参照',
+  'memory.unreadTitle':
+    'トランスクリプト保持期間内(既定30日)に本文が Read されていません。索引行だけで機能するメモリでは正常な状態です',
+  'memory.linkBrokenTitle': 'このプロジェクトに同名のメモリがありません',
+  'memory.brokenBadgeTitle': 'このプロジェクトに解決先が無い [[link]]: {n} 件',
+
+  'memory.cost.indexK': '索引 — 毎セッション',
+  'memory.cost.indexNote': '{n} 件ぶんの索引行が\n無条件で毎回注入される',
+  'memory.cost.bodyK': '本文 — 参照時のみ',
+  'memory.cost.bodyNote': '読まれない限り 0 コスト。\n保持期間内に参照 {k} / {n} 件',
+  'memory.cost.bodyNoteNA': '読まれない限り 0 コスト。\n参照実績は計測不能(transcript なし)',
+  'memory.cost.perK': '1 件あたり',
+  'memory.cost.perNote': '減らせるのは件数のみ。\n本文を短くしても索引は変わらない',
+  'memory.cost.unit': 'tok',
+  'memory.cmp.memory': 'memory 索引',
+  'memory.cmp.plugin': 'plugin',
+  'memory.cmp.user': 'user skill',
+  'memory.cmpTitle':
+    'この環境の他の常時注入元との比較(plugin / user skill は name + description の合計)',
+
+  'memory.card.reads': '本文 {n} 回参照 · 最終 {date}',
+  'memory.card.noReads': '本文の参照記録なし',
+  'memory.card.noReadsFeedback': '本文の参照記録なし — 索引行だけで機能している',
+  'memory.card.na': '参照実績は計測不能',
+
+  'memory.back': '← 一覧',
+  'memory.tab.body': '本文',
+  'memory.warnline': 'リンク切れ {n} 件: {names}',
+  'memory.sec.cost': 'コンテキストコスト',
+  'memory.sec.reads': '参照実績',
+  'memory.sec.links': 'リンク',
+  'memory.sec.frontmatter': 'frontmatter',
+  'memory.cbox.indexK': '索引行 — 毎セッション',
+  'memory.cbox.indexNote':
+    'MEMORY.md の 1 行として、このプロジェクトで作業するたび無条件に注入されます。',
+  'memory.cbox.bodyRead': '読まれたときだけ課金。保持期間内に {n} 回参照。',
+  'memory.cbox.bodyUnread': '読まれたときだけ課金。保持期間内の参照記録はありません。',
+  'memory.cbox.bodyNA': '読まれたときだけ課金。参照実績は計測不能(transcript なし)。',
+  'memory.f.reads': '本文の参照',
+  'memory.f.writes': '作成・更新',
+  'memory.f.origin': '生成元セッション',
+  'memory.f.times': '{n} 回',
+  'memory.f.last': ' — 最終 {date}',
+  'memory.f.none': 'なし',
+  'memory.f.noneNote': ' — トランスクリプト保持期間内',
+  'memory.f.na': '計測不能',
+  'memory.linkDead': '{name}(リンク切れ)',
+
+  'memory.triage.section': '✦ 棚卸し診断',
+  'memory.triage.sectionTitle':
+    'このプロジェクトのメモリの行き先を AI に診断させ、Claude Code に貼れる指示文を作ります',
+  'memory.triage.heading': '棚卸し診断',
+  'memory.triage.back': '← Memory 一覧',
+  'memory.triage.title': '棚卸し診断 — {project}',
+  'memory.triage.sub':
+    '✦ このツールは実行しません。提案ごとに、Claude Code に貼る指示文を用意します',
+  'memory.triage.run': '診断を実行',
+  'memory.triage.running': '診断中…',
+  'memory.triage.rerun': '再診断',
+  'memory.triage.runTitle':
+    '全メモリの本文を 1 回の claude 呼び出しで読み、行き先を提案します(件単位キャッシュ。変更された件だけ再診断)',
+  'memory.triage.rerunTitle':
+    'キャッシュを無視して全件を診断し直します(claude を呼びます。通常 1 回、件数が非常に多いときは数回)',
+  'memory.triage.summary': '{n} 件を診断 — {p} 件に提案、{k} 件は現状維持',
+  'memory.triage.summaryWithErrors':
+    '{n} 件を診断 — {p} 件に提案、{k} 件は現状維持、{e} 件は出力不正',
+  'memory.triage.summaryPending': '{n} 件中 {u} 件が未診断',
+  'memory.triage.ctaTitle': 'まだ診断していません',
+  'memory.triage.ctaBody':
+    'AI はまだ何も読んでいません(下の行は事実の表示だけ)。「診断を実行」で {n} 件の本文を claude で読み(通常 1 回、件数が非常に多いときは数回に分割)、1 件ごとに行き先と貼れる指示文を出します(通常 1〜2 分)。',
+  'memory.triage.ctaPartial':
+    '前回の診断から {n} 件中 {u} 件が変更されています。「診断を実行」でその {u} 件だけを claude で診断し直します。',
+  'memory.triage.busyTitle': '診断中…',
+  'memory.triage.busyBody':
+    '{n} 件の本文を claude で読んでいます(通常 1 回、件数が非常に多いときは数回に分割)。通常 1〜2 分かかります。終わると画面が更新されます。',
+  'memory.triage.verdict.keep': 'このまま',
+  'memory.triage.verdict.shrink': '本文を縮める',
+  'memory.triage.verdict.to-claude-md': 'CLAUDE.md へ',
+  'memory.triage.verdict.to-docs': 'docs/ へ',
+  'memory.triage.verdict.delete': '削除',
+  'memory.triage.verdict.wrong-project': '別プロジェクトの話',
+  'memory.triage.verdict.to-skill': 'skill へ',
+  'memory.triage.verdict.update': '本文を書き直す',
+  'memory.triage.openDetail': '詳細を開く',
+  'memory.triage.tpl.replace': '- {file} の本文を次の構成に置き換える(索引行は変更しない)',
+  'memory.triage.tpl.rule': '- 1 行目(ルール)はそのまま残す: 「{rule}」',
+  'memory.triage.tpl.whyKeep': '- Why はそのまま残す',
+  'memory.triage.tpl.whyGeneralize':
+    '- Why を次の 1 文に書き換える(固有名詞・日付を落とす): 「{text}」',
+  'memory.triage.tpl.whyDrop': '- Why は削除する(出自の記録としての価値が無い)',
+  'memory.triage.tpl.howKeep': '- How to apply はそのまま残す',
+  'memory.triage.tpl.howLines': '- How to apply は例外・境界の行だけ残す: {list}',
+  'memory.triage.tpl.howDrop': '- How to apply は description の再掲なので削除する',
+  'memory.triage.tpl.index': '- MEMORY.md の索引行は変更しない',
+  'memory.triage.tpl.indexRewrite':
+    '- MEMORY.md の索引行の description を「{text}」に書き換える(本文と異なる境界を言っているため)',
+  'memory.triage.tpl.indexAlign':
+    '- MEMORY.md の索引行と本文が違うことを言っている。どちらが正しいか確認して揃える',
+  'memory.signal.index-mismatch': '索引行と本文が食い違っています',
+  'memory.signal.other-project': '別プロジェクト「{value}」の話です',
+  'memory.triage.verdict.error': '出力不正 — 再診断で再試行',
+  'memory.triage.seen': '{n} 回参照',
+  'memory.triage.unseen': '参照なし',
+  'memory.triage.estApply': '適用で 索引 {n} tok/セッション',
+  'memory.triage.estApplyClaude': '適用で 索引 {n} · 常時 +{m} tok',
+  'memory.triage.estShrink': '適用で 索引 ±0 · 本文を縮める提案',
+  'memory.triage.estUpdate': '適用で 索引 ±0 · 本文を書き直す提案',
+  'memory.triage.instruction': 'Claude Code への指示文',
+  'memory.triage.copy': 'コピー',
+  'memory.triage.copied': 'コピーしました',
+  'memory.triage.copyAll': '{n} 件分の指示文をまとめてコピー',
+  'memory.triage.footProposals': '提案',
+  'memory.triage.footProposalsUnit': '件',
+  'memory.triage.footApplied': '全て適用したとき',
+  'memory.triage.footTokUnit': 'tok/セッション',
+  'memory.triage.footDiff': '差分',
+  'memory.triage.footDiffVal': '{n} tok',
+  'memory.triage.footNote':
+    'コピーした指示文には「まず確認してから実行」の前置きが付き、移動先パス・MEMORY.md の索引行の削除・[[link]] の張り替えまで含まれます。一部だけやりたいときは、貼った先の会話でそう伝えてください。',
+  'memory.triage.preambleLabel': '貼るときの前置き(コピーボタンでは自動で付きます)',
+  'memory.triage.copyPreamble':
+    '以下は skills-viewer の memory 棚卸し診断からの提案です。まず読み取りだけで現状を確認し、実行する作業内容を提示してください。判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認してください。実行は承認を得てからにしてください。',
+  'memory.triage.whole': 'プロジェクト全体を棚卸し →',
+  'memory.triage.menu': 'memory 棚卸し(現在のプロジェクト)',
+  'memory.triage.menuTitle':
+    '現在のプロジェクトの自動メモリを棚卸しし、行き先・理由・貼れる指示文を出します',
+  'alert.triageFailed': '棚卸し診断に失敗: {msg}',
 
   'detail.back': '← 一覧に戻る',
   'detail.lastUpdated': '最終更新 {date}',
@@ -380,6 +712,7 @@ const ja: Record<MsgKey, string> = {
   'diff.failed': 'diff の取得に失敗しました: {msg}',
   'common.loading': '読み込み中…',
   'common.cancel': 'キャンセル',
+  'common.close': '閉じる',
 
   'alert.copyFailed': 'コピーに失敗: {msg}',
   'alert.deleteFailed': '削除に失敗: {msg}',
@@ -490,6 +823,13 @@ export function t(key: MsgKey, params?: Record<string, string | number>): string
 export const relTypeLabel = (type: RelationType): string => t(`rel.${type}`);
 
 export const lintLabel = (code: LintCode): string => t(`lint.${code}`);
+
+/* memory の type は「スコープ」と誤読されやすいので、内容分類として意訳したラベルを引く */
+export const memoryTypeLabel = (type: MemoryType): string => t(`memory.type.${type}`);
+
+/* 棚卸し診断の行き先ラベル(verdict は言語非依存キー) */
+export const memoryVerdictLabel = (verdict: MemoryVerdict): string =>
+  t(`memory.triage.verdict.${verdict}`);
 
 /* API エラー {error: code, detail} を表示文言に変換。未知コードは code: detail をそのまま出す */
 export function apiErrorMessage(body: unknown, status: number): string {

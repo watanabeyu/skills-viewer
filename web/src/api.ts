@@ -6,9 +6,16 @@ import { loadAiModel } from './settings';
 
 export type {
   ChangeEntry,
+  FeedbackBodyPlan,
   ItemKind,
   Invocation,
   Lang,
+  MemorySection,
+  MemorySignal,
+  MemoryState,
+  MemoryTriage,
+  MemoryType,
+  MemoryVerdict,
   RelationType,
   SkillDiagnosis,
   SkillFlow,
@@ -72,6 +79,13 @@ export const summarizeSkill = (src: string, name: string) =>
 export const summarizeAll = (force = false) => mutate<SummaryJob>('/api/summarize-all', { force });
 /* 用途グループの生成/再生成(環境全体で 1 回の haiku 呼び出し。完了までブロック) */
 export const generateGroups = () => mutate<{ ok: true }>('/api/group-generate', {});
+/*
+ * memory の棚卸し診断(project = MemorySection.id)。未診断の件だけをまとめて 1 回の
+ * claude 呼び出しで診断する(files 指定で 1 件だけ / force で全件再診断)。
+ * 結果はサーバー側の件単位キャッシュに載るので、呼び出し側は再取得して aiTriage を読む。
+ */
+export const triageMemory = (project: string, files?: string[], force = false) =>
+  mutate<{ ok: true }>('/api/memory-triage', { project, files, force });
 /* What's Changed の「既読にする」: 現在の状態を次回比較の基準として保存 */
 export const ackChanges = () => mutate<{ ok: true }>('/api/changes-ack', {});
 export const saveFile = (src: string, content: string, baseMtime: number) =>

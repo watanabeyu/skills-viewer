@@ -2,8 +2,9 @@ import { useEffect, useRef } from 'react';
 import { t } from '../i18n';
 
 /*
- * ヘッダーの「✦ AI」ドロップダウン。AI 要約(summarize-all)と用途グルーピングの
- * 2 操作を集約する(CopyMenu と同じ開閉パターン)。行を選ぶとメニューを閉じて実行する。
+ * ヘッダーの「✦ AI」ドロップダウン。AI 要約(summarize-all)・用途グルーピング・
+ * memory 棚卸しを集約する(CopyMenu と同じ開閉パターン)。行を選ぶとメニューを閉じて実行する。
+ * 棚卸しは現在のプロジェクトに memory がある場合だけ出す(無ければ項目ごと出さない)。
  */
 export function AiMenu({
   summaryLabel,
@@ -13,6 +14,8 @@ export function AiMenu({
   groupBusy,
   groupStale,
   onGroups,
+  memoryCurrentId,
+  onTriage,
   onClose,
 }: {
   summaryLabel: string;
@@ -22,6 +25,9 @@ export function AiMenu({
   groupBusy: boolean;
   groupStale: boolean;
   onGroups: () => void;
+  /* 現在プロジェクトの MemorySection.id。memory が無いプロジェクトでは undefined */
+  memoryCurrentId?: string;
+  onTriage: (id: string) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -55,6 +61,12 @@ export function AiMenu({
         </div>
         <div className="l2">{groupStale ? t('group.stale') : t('group.generateTitle')}</div>
       </button>
+      {memoryCurrentId && (
+        <button className="di" onClick={() => pick(() => onTriage(memoryCurrentId))}>
+          <div className="l1">{t('memory.triage.menu')}</div>
+          <div className="l2">{t('memory.triage.menuTitle')}</div>
+        </button>
+      )}
     </div>
   );
 }

@@ -10,9 +10,10 @@ import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 
-import type { Lang, Section, SkillsData } from '../shared/types';
+import type { Lang, MemorySection, Section, SkillsData } from '../shared/types';
 import { scanSections, listProjects, HOME } from './scan';
-import { scanUsageByDir, encodeProjectPath } from './usage';
+import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, hasTranscripts } from './usage';
+import { scanMemory } from './memory';
 import {
   loadSummaries,
   contentHash,
@@ -28,6 +29,7 @@ import { doApplyDescription, doSave } from './edit';
 import { attachDiagnoses, diagnoseOne } from './diagnose';
 import { attachFlows, flowOne } from './flow';
 import { attachGroups, generateGroups } from './groups';
+import { attachMemoryTriage, triageProject } from './memory-triage';
 import { ackChanges, computeChanges } from './snapshot';
 import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
@@ -110,6 +112,40 @@ function attributeUsage(sections: Section[]): boolean {
   return Object.keys(byDir).length > 0;
 }
 
+/*
+ * memory の Read(参照)/ Write・Edit(作成・更新)実績を付与する。
+ * skill と違って帰属先の解決は不要で、Read の file_path がそのまま実ファイルを指す。
+ * usageAvailable は「そのプロジェクトのトランスクリプトがあるか」= エンコード名で始まる
+ * ディレクトリ(worktree 分を含む)に jsonl が 1 件以上あるか。false なら Read 列は出さない。
+ */
+function attributeMemoryUsage(memory: MemorySection[]): void {
+  if (!memory.length) return;
+  const { byPath, dirsWithTranscripts } = scanMemoryUsage();
+  for (const sec of memory) {
+    sec.usageAvailable = hasTranscripts(dirsWithTranscripts, sec.id);
+    for (const it of sec.items) {
+      const u = byPath[it.path];
+      if (!u) continue;
+      if (u.reads > 0) {
+        it.useCount = u.reads;
+        it.lastUsed = u.lastRead;
+        it.dailyUse = u.daily;
+      }
+      if (u.writes > 0) it.writeCount = u.writes;
+    }
+  }
+}
+
+/*
+ * 実績付きの memory セクション一覧。/api/skills だけでなく /api/memory-triage からも
+ * 同じ事実(Read / W-E / usageAvailable)をプロンプトに載せる必要があるので共通化する。
+ */
+function memorySections(cwd: string): MemorySection[] {
+  const memory = scanMemory(cwd);
+  attributeMemoryUsage(memory);
+  return memory;
+}
+
 function collect(cwd: string, lang: Lang): SkillsData {
   const sections = scanSections(cwd, lang);
   const usageAvailable = attributeUsage(sections);
@@ -139,6 +175,9 @@ function collect(cwd: string, lang: Lang): SkillsData {
   attachFlows(sections, lang);
   const grp = attachGroups(sections, lang);
   const aiStale = staleItems(sections, lang).length;
+  // memory は「呼び出す」ものではないので sections には混ぜず、別配列で同乗させる
+  const memory = memorySections(cwd);
+  attachMemoryTriage(memory, lang);
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
     ...listProjects(cwd)
@@ -155,6 +194,7 @@ function collect(cwd: string, lang: Lang): SkillsData {
     changes: computeChanges(sections),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
+    ...(memory.length ? { memory } : {}),
   };
 }
 
@@ -264,6 +304,25 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
           .catch((e) => send(400, toErrorBody(e)));
         return;
       }
+      if (url.pathname === '/api/memory-triage') {
+        // 1 プロジェクト分をまとめて 1 回の claude 呼び出しで棚卸しする(結果は再取得で反映)
+        const project = String(data.project || '');
+        const sec = memorySections(cwd).find((s) => s.id === project);
+        if (!sec) throw new ApiError('not-found', project);
+        const files = Array.isArray(data.files)
+          ? data.files.filter((f: unknown): f is string => typeof f === 'string')
+          : undefined;
+        // sections は「CLAUDE.md / skill に既に書いてある」「skill へ昇格」を判定させる文脈。
+        // AI を呼ぶときだけ要るので、フルスキャンは関数で渡して遅延させる
+        triageProject(sec, lang, model, {
+          force: !!data.force,
+          files,
+          sections: () => scanSections(cwd, lang),
+        })
+          .then((results) => send(200, { ok: true, results }))
+          .catch((e) => send(400, toErrorBody(e)));
+        return;
+      }
       if (url.pathname === '/api/summarize') {
         const real = assertReadableMd(data.src);
         // refs(関係候補)はスキャン結果から復元する
@@ -309,7 +368,7 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
 
 /*
  * 起動時の1〜2行サマリー(--no-open 運用でも価値が出るように)。
- * 前回からの差分 + セッション注入トークン概算 + 未使用件数。失敗しても起動は止めない。
+ * 前回からの差分 + セッション注入トークン概算 + 直近未使用の件数。失敗しても起動は止めない。
  */
 function printStartupSummary(cwd: string): void {
   try {
@@ -334,9 +393,9 @@ function printStartupSummary(cwd: string): void {
     console.log(
       srvMsg(
         `スキル定義のセッション注入 ≈${sessionTokens.toLocaleString()}tok` +
-          (unused !== null ? ` / 未使用 ${unused} 件` : ''),
+          (unused !== null ? ` / 直近未使用 ${unused} 件` : ''),
         `Skill definitions inject ≈${sessionTokens.toLocaleString()} tok/session` +
-          (unused !== null ? ` / ${unused} unused` : ''),
+          (unused !== null ? ` / ${unused} with no recent use` : ''),
       ),
     );
   } catch {

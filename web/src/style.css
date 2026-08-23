@@ -956,7 +956,7 @@ button {
 
 /* SKILL.md rendering */
 .fm-box {
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 10.5px;
   color: #8a8579;
   background: #faf9f7;
@@ -1136,6 +1136,42 @@ button {
 }
 .modal .del:hover {
   background: #962f27;
+}
+/* 棚卸し行の本文モーダル: 設定モーダルより広く、本文は内側でスクロール */
+.modal.mem-modal {
+  width: 760px;
+  max-width: 92vw;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 24px 22px;
+}
+.mem-modal-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.mem-modal-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1b1a17;
+  word-break: break-all;
+}
+.mem-modal-sp {
+  flex: 1;
+}
+.mem-modal-desc {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #57534a;
+  margin: 0 0 12px;
+}
+.mem-modal-body {
+  overflow: auto;
+  border-top: 1px solid #ece9e1;
+  padding-top: 12px;
 }
 
 @media (max-width: 900px) {
@@ -1422,4 +1458,667 @@ button {
   background: #faf7ef;
   border-radius: 8px;
   padding: 10px 12px;
+}
+
+/* ---- memory (plan 10): 値は docs/plans/design/{Main,Detail,Triage}.dc.html の <style> から実測転記 ----
+ * 非採用: モックの `.card .meta .tok i`(本文 tok の淡色表示)は切替条件が特定できないため入れていない。
+ * `.sec-t` は skill 詳細と共有のため既存値を維持し、memory 画面は `.sec-t.mem` でモック値に上書きする。
+ */
+/* 見出し(Detail / Triage の <style> 実測値: letter-spacing 0.08em / color #a39d90) */
+.sec-t.mem {
+  letter-spacing: 0.08em;
+  color: #a39d90;
+}
+.orphan-badge {
+  font-size: 10px;
+  color: #8a6d3b;
+  background: #f7efdf;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+/* frontmatter type バッジ(Main .tbadge / .t-*)。user はモックに無いので既存の紫系 */
+.tbadge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2.5px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex: none;
+}
+.t-project {
+  color: #6b6558;
+  background: rgba(107, 101, 88, 0.11);
+}
+.t-feedback {
+  color: #8a5a3c;
+  background: rgba(138, 90, 60, 0.11);
+}
+.t-reference {
+  color: #1f8a5b;
+  background: rgba(31, 138, 91, 0.11);
+}
+.t-user {
+  color: #7b5bd6;
+  background: rgba(123, 91, 214, 0.1);
+}
+/* 「直近未参照」(Main .unread-badge。値は .unused-badge と同一) */
+.unread-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2.5px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex: none;
+  color: #5b7285;
+  background: rgba(91, 114, 133, 0.12);
+}
+
+/* コストバー(Main .costbar) */
+.costbar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: #fff;
+  border: 1px solid #e8e4dc;
+  border-radius: 10px;
+  padding: 14px 20px;
+  margin: 4px 0 16px;
+}
+.costbar .cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-right: 28px;
+}
+.costbar .cell + .cell {
+  border-left: 1px solid #eeeae2;
+  padding-left: 28px;
+}
+.costbar .k {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a39d90;
+}
+.costbar .v {
+  font-size: 19px;
+  font-weight: 700;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: -0.01em;
+}
+.costbar .v.dim {
+  color: #8a8579;
+}
+.costbar .u {
+  font-size: 11px;
+  color: #8a8579;
+  font-weight: 400;
+}
+/* モックの <br> 位置は i18n 文字列の改行で再現する */
+.costbar .note {
+  font-size: 11px;
+  color: #8a8579;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+.costbar .spacer {
+  flex: 1;
+}
+.costbar .act {
+  display: flex;
+  align-items: center;
+  padding-right: 24px;
+}
+.costbar .act .chip {
+  white-space: nowrap;
+}
+.costbar .cmp {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 268px;
+  cursor: help;
+}
+.costbar .cmp .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #6b6558;
+}
+.costbar .cmp .row .lab {
+  width: 74px;
+  flex: none;
+  color: #8a8579;
+}
+.costbar .cmp .row .bar {
+  height: 7px;
+  border-radius: 3px;
+  flex: none;
+}
+.costbar .cmp .row .num {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  color: #8a8579;
+}
+/* memory カードの meta 行(Main .card .meta: align-items center / .meta-r gap 10px / .tok b) */
+.mem-card .meta {
+  align-items: center;
+}
+.mem-card .meta .meta-r {
+  gap: 10px;
+}
+.card .meta .tok b {
+  font-weight: 700;
+  color: #57534a;
+}
+
+/* 詳細(Detail): 左カラムの ccard(.cn / .cd / .cm) */
+.ccard .cn {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1b1a17;
+  word-break: break-all;
+}
+.ccard .cd {
+  font-size: 11px;
+  color: #8a8579;
+  line-height: 1.5;
+}
+.ccard .cm {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  color: #a39d90;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  margin-top: 2px;
+}
+.pane-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pane-top .push {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 8px;
+}
+/* d-name にバッジを並べる(Detail .d-name: flex / gap 9px) */
+.d-name.mem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.d-name.mem .kbadge {
+  margin-left: 0;
+  vertical-align: 0;
+}
+.full-desc.mem {
+  margin-top: 18px;
+}
+.warnline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: #b0432f;
+  background: rgba(200, 72, 48, 0.07);
+  border-radius: 8px;
+  padding: 10px 13px;
+  margin-top: 12px;
+}
+.cost2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.cbox {
+  background: #fff;
+  border: 1px solid #e8e4dc;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cbox .k {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a39d90;
+}
+.cbox .v {
+  font-size: 21px;
+  font-weight: 700;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: -0.01em;
+}
+.cbox .v small {
+  font-size: 11px;
+  font-weight: 400;
+  color: #8a8579;
+}
+.cbox .n {
+  font-size: 11.5px;
+  color: #8a8579;
+  line-height: 1.6;
+}
+.cbox.dim .v {
+  color: #8a8579;
+}
+/* 参照実績の行(Detail .f-row: 9px 4px / 12.5px / .rk 148px) */
+.f-row.mem {
+  padding: 9px 4px;
+  font-size: 12.5px;
+  color: #57534a;
+}
+.f-row .rk {
+  width: 148px;
+  flex: none;
+  color: #8a8579;
+  font-size: 11.5px;
+}
+.f-row .mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+}
+.f-row .dim {
+  color: #a39d90;
+}
+.linkrow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.lchip {
+  background: #fff;
+  border: 1px solid #ddd8ce;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #6b6558;
+  padding: 6px 13px;
+  cursor: pointer;
+}
+.lchip:hover {
+  background: #f4f1ea;
+}
+.lchip .arrow {
+  color: #b9b2a3;
+  margin-right: 5px;
+}
+.lchip.dead {
+  color: #b0432f;
+  border-color: #e4ccc7;
+  background: #fbf1ef;
+  cursor: help;
+}
+.fm-box.mem {
+  margin: 12px 0 0;
+  line-height: 1.7;
+}
+/* 本文中の [[link]] — 解決済みは遷移リンク、未解決はリンク切れとして装飾 */
+.mem-link {
+  color: #2a6fdb;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(42, 111, 219, 0.35);
+  cursor: pointer;
+}
+.mem-link:hover {
+  border-bottom-color: #2a6fdb;
+}
+.mem-link.broken {
+  color: #b0392e;
+  border-bottom: 1px dashed rgba(176, 57, 46, 0.5);
+  cursor: help;
+}
+
+/* 棚卸し診断(Triage)— 機械層の事実 + AI の行き先仮説 + 貼る指示文(操作はコピーのみ) */
+.triage-view {
+  padding-bottom: 28px;
+}
+.triage-view .t-row .pbtn.push-r {
+  margin-left: auto;
+}
+.triage-pad {
+  padding: 0 32px;
+}
+.sec-t.tri {
+  margin: 22px 0 10px;
+}
+/* 未診断 / 診断中の案内。「棚卸し診断」は遷移だけで AI は走らないので、状態を行の上で明示する */
+.triage-cta {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  /* 行カード(白)と区別するため、指示文ボックスと同じ暖色ティントにする */
+  background: #f4f1ea;
+  border: 1px solid #e0dbd0;
+  border-radius: 10px;
+  padding: 16px 22px;
+  margin: 0 0 14px;
+}
+.triage-cta .txt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.triage-cta .ttl {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1b1a17;
+}
+.triage-cta .bd {
+  font-size: 12px;
+  line-height: 1.65;
+  color: #57534a;
+}
+.triage-cta .apply {
+  margin-left: auto;
+  background: #1b1a17;
+  border: 1px solid #1b1a17;
+  color: #fff;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 9px 20px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.triage-cta .apply:hover {
+  background: #3a372f;
+  border-color: #3a372f;
+}
+.triage-cta.busy {
+  border-color: #b9b2a3;
+  background: #efece5;
+}
+.triage-cta.busy .ttl::before {
+  content: '✦ ';
+}
+.triage-rows.busy {
+  opacity: 0.55;
+  pointer-events: none;
+}
+/* 貼るときの前置き(1 回だけ表示。コピーボタンはこれを自動で付ける) */
+.triage-preamble {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  border: 1px dashed #ddd8ce;
+  border-radius: 10px;
+  padding: 10px 16px;
+  margin: 0 0 12px;
+}
+.triage-preamble .txt {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.triage-preamble .lbl {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a39d90;
+}
+.triage-preamble .bd {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #8a8579;
+}
+.triage-preamble .copybtn {
+  margin-left: auto;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid #ddd8ce;
+  background: #fff;
+  color: #6b6558;
+  cursor: pointer;
+}
+.triage-row {
+  background: #fff;
+  border: 1px solid #e8e4dc;
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nmline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nmline .kbadge {
+  margin-left: 0;
+  vertical-align: 0;
+}
+.triage-row .nm {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #1b1a17;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  word-break: break-all;
+}
+.triage-row .nm:hover {
+  text-decoration: underline;
+}
+/* verdict バッジ。色は hue、背景は hue + 1c(モックの verdictStyle と同じ) */
+.vbadge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2.5px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.vbadge.v-to-docs {
+  color: #5b7285;
+  background: #5b72851c;
+}
+.vbadge.v-shrink {
+  color: #b0836a;
+  background: #b0836a1c;
+}
+/* v-error は「AI 出力が不正」= 内容を出せない状態。注意色は delete 系と共有する */
+.vbadge.v-wrong-project,
+.vbadge.v-delete,
+.vbadge.v-error {
+  color: #b0432f;
+  background: #b0432f1c;
+}
+.vbadge.v-keep {
+  color: #1f8a5b;
+  background: #1f8a5b1c;
+}
+.vbadge.v-to-claude-md {
+  color: #7b5bd6;
+  background: #7b5bd61c;
+}
+.vbadge.v-to-skill {
+  color: #2f7f9a;
+  background: #2f7f9a1c;
+}
+/* 行き先に関わらず出す事実(置き場所の誤り・索引と本文の食い違い)は注意色 */
+.issue.warn {
+  color: #b0432f;
+  background: #b0432f14;
+  font-weight: 600;
+}
+/* update は shrink(縮める)と同じ「索引 ±0・本文を直す」系だが区別できる暖色 */
+.vbadge.v-update {
+  color: #9a6b1f;
+  background: #9a6b1f1c;
+}
+.toks {
+  margin-left: auto;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  color: #8a8579;
+  display: inline-flex;
+  gap: 12px;
+}
+.toks b {
+  color: #57534a;
+}
+.reason {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #57534a;
+  margin: 0;
+}
+.issues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.issue {
+  font-size: 11px;
+  color: #8a8579;
+  background: #f4f1ea;
+  border-radius: 6px;
+  padding: 4px 9px;
+}
+.instr {
+  background: #f4f1ea;
+  border-radius: 8px;
+  padding: 10px 13px;
+  margin-top: 3px;
+}
+.instr-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.instr-t {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a39d90;
+}
+.instr-d {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  color: #57534a;
+  margin-left: auto;
+}
+.copybtn {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid #ddd8ce;
+  background: #fff;
+  color: #6b6558;
+  cursor: pointer;
+}
+.copybtn:hover {
+  background: #f4f1ea;
+}
+/* 指示文は折りたたまず全文を出す(貼るかどうかの判断がここで完結するように) */
+.instr-body {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: #57534a;
+  white-space: pre-line;
+  margin-top: 7px;
+}
+/* 集計フッター。スクロールしても見えるよう sticky */
+.foot {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  border: 1px solid #ddd8ce;
+  border-radius: 10px;
+  padding: 16px 22px;
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+}
+.foot .k {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a39d90;
+}
+.foot .v {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: -0.01em;
+}
+.foot .v.neg {
+  color: #1f8a5b;
+}
+.foot .u {
+  font-size: 11px;
+  font-weight: 400;
+  color: #8a8579;
+}
+.foot .cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.foot .note {
+  font-size: 11.5px;
+  color: #8a8579;
+  line-height: 1.6;
+  max-width: 400px;
+}
+.foot .apply {
+  margin-left: auto;
+  background: #1b1a17;
+  border: 1px solid #1b1a17;
+  color: #fff;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 9px 20px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.foot .apply:hover {
+  background: #3a372f;
+  border-color: #3a372f;
+}
+/* 詳細の概要タブに埋める 1 件分の診断ブロック(diag-box の枠 + 棚卸しの部品) */
+.triage-box {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.triage-whole {
+  align-self: flex-start;
+  font-size: 11.5px;
+  color: #2a6fdb;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.triage-whole:hover {
+  text-decoration: underline;
 }

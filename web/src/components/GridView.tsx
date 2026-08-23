@@ -214,6 +214,10 @@ function SkillCard({
   );
 }
 
+/*
+ * skill / command / agent / hook の一覧本体(表示軸・フィルタの対象)。
+ * memory は別の軸(view=memory → MemoryGrid)で、ここには一切出さない。
+ */
 export function GridView({
   data,
   q,
