@@ -11,7 +11,14 @@ import {
 } from '../util';
 import { t } from '../i18n';
 import { KindBadge } from './GridView';
-import { MemoryHeading, MemoryTypeBadge, TokFacts, UnreadBadge, readsLine } from './MemoryBits';
+import {
+  MemoryHeading,
+  MemoryTypeBadge,
+  TokFacts,
+  UnreadBadge,
+  readsLine,
+  SignalChips,
+} from './MemoryBits';
 
 /* 比較バーの最大幅(モック実測)。最大値のバーをこの幅にして他を比例させる */
 const CMP_MAX_PX = 122;
@@ -153,6 +160,8 @@ function MemoryCard({
       </div>
       <p className="desc">{it.description}</p>
       <div className="usage">{readsLine(it, sec.usageAvailable)}</div>
+      {/* 一覧の入口として、注意系を優先して最大 2 個 */}
+      <SignalChips signals={it.signals || []} max={2} />
       <div className="meta">
         <span>{relDaysLabel(it.updatedAt)}</span>
         <span className="meta-r">
