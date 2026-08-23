@@ -64,7 +64,9 @@ function scanLine(line: string, out: ScanResult): void {
   const isCmd = line.includes('<command-name>');
   const isSkill = line.includes('"name":"Skill"');
   const isAgent = line.includes('"subagent_type"');
-  const isFile = line.includes('"file_path"');
+  // memory 本文への Read / Write / Edit だけが対象なので、/memory/ を含まない行は正規表現にかけない
+  // (file_path を持つ行は transcript の大半を占めるため、この前置きが起動時間に効く)
+  const isFile = line.includes('"file_path"') && line.includes('/memory/');
   if (!isCmd && !isSkill && !isAgent && !isFile) return;
   const tm = line.match(/"timestamp":"([^"]+)"/);
   const ts = tm ? Date.parse(tm[1]) || 0 : 0;
