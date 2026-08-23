@@ -66,7 +66,22 @@ export type MemoryState = 'current' | 'outdated' | 'historical' | 'obsolete';
  * date / path-missing / done-words はスキャン時(SkillItem.signals)、branch-* は診断時(MemoryTriage.signals)
  */
 export type MemorySignalKind =
-  'date' | 'path-missing' | 'done-words' | 'branch-merged' | 'branch-missing';
+  | 'date'
+  | 'path-missing'
+  | 'done-words'
+  | 'branch-merged'
+  | 'branch-missing'
+  /* ---- feedback / user 型の本文構造(1 行目 / **Why:** / **How to apply:**)から拾う事実 ---- */
+  /* How to apply が description の再掲(value = 2-gram Dice 類似度 %) */
+  | 'how-restates'
+  /* Why にブランチ名 / #番号 / 日付 / 「ユーザーが指摘」などエピソード固有の語(value = その語) */
+  | 'why-episodic'
+  /* 本文に例外・但し書きがある(value = その行の冒頭) */
+  | 'has-exception'
+  /* 本文 1 行目が description の再掲(value = 類似度 %。正常な形) */
+  | 'first-line-restates'
+  /* feedback として本文が長い(value = tok) */
+  | 'body-over';
 export interface MemorySignal {
   kind: MemorySignalKind;
   value: string;
@@ -83,8 +98,28 @@ export interface MemoryTriage {
   instruction: string;
   /* 診断時に集めた git 層のシグナル(ブランチのマージ状況)。スキャン時の SkillItem.signals とは別 */
   signals?: MemorySignal[];
+  /*
+   * feedback / user 型で verdict が shrink / update のときの「残す / 削る」分類。
+   * 散文の instruction の代わりに web がテンプレートで指示文を組む(モデル非依存)。無ければ instruction にフォールバック
+   */
+  body?: FeedbackBodyPlan;
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
+}
+
+/*
+ * feedback 本文の分類。ルール行(1 行目)は常に残すのでフィールドを持たない。
+ *   why: keep = そのまま / generalize = 固有名詞・日付を落とした 1 文(whyRewrite)に / drop = 削除
+ *   how: keep = そのまま / keep-exceptions-only = 例外(exceptions)だけ残す / drop = description の再掲なので削除
+ *   exceptions: 本文からの抜粋(生成ではない。server で実在を検証済み)
+ */
+export type FeedbackWhyPlan = 'keep' | 'generalize' | 'drop';
+export type FeedbackHowPlan = 'keep' | 'keep-exceptions-only' | 'drop';
+export interface FeedbackBodyPlan {
+  why: FeedbackWhyPlan;
+  whyRewrite?: string;
+  how: FeedbackHowPlan;
+  exceptions: string[];
 }
 
 /* AI グルーピングの1グループ。id は言語非依存スラッグ、label は表示言語で生成 */

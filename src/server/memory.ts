@@ -117,7 +117,8 @@ function readMemoryFile(
   }
   const description = meta.description || firstBodyLine(body);
   // 鮮度の機械シグナル(テキスト / fs 層)。正規表現と existsSync だけなのでスキャン時に払える
-  const signals = extractSignals(body, description, projectPath);
+  const bodyTokens = estimateTokens(raw);
+  const signals = extractSignals(body, description, projectPath, { memoryType: type, bodyTokens });
   return {
     name: meta.name || fileName.replace(/\.md$/, ''),
     description,
@@ -129,7 +130,7 @@ function readMemoryFile(
     files: [],
     // 索引行だけが毎セッション注入される。本文は Read されたときだけのコストなので分けて持つ
     indexTokens: indexLine ? estimateTokens(indexLine) : 0,
-    bodyTokens: estimateTokens(raw),
+    bodyTokens,
     ...(type ? { memoryType: type } : {}),
     ...(originSessionId ? { originSessionId } : {}),
     links: extractLinks(body),

@@ -11,7 +11,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { MemorySignal } from '../shared/types';
+import type { MemorySignal, MemoryType } from '../shared/types';
 import { HOME } from './scan';
 
 export interface SignalOptions {
@@ -19,6 +19,10 @@ export interface SignalOptions {
   now?: number;
   /* `~/` の展開先(テストで差し替える) */
   home?: string;
+  /* feedback / user 型なら本文構造のシグナルも出す */
+  memoryType?: MemoryType;
+  /* 本文の概算 tok(body-over の判定用) */
+  bodyTokens?: number;
 }
 
 const MAX_MISSING_PATHS = 3;
@@ -105,6 +109,111 @@ export function extractSignals(
     out.push({ kind: 'path-missing', value: p });
   const words = doneWords(description + '\n' + body);
   if (words.length) out.push({ kind: 'done-words', value: words.join(', ') });
+  if (opts.memoryType === 'feedback' || opts.memoryType === 'user') {
+    out.push(...feedbackSignals(body, description, opts.bodyTokens ?? 0));
+  }
+  return out;
+}
+
+/* ---- feedback / user 型の本文構造 ---- */
+
+export interface FeedbackParts {
+  /* 1 行目(ルール)。Why より前の最初の非空行 */
+  rule: string;
+  why: string;
+  how: string;
+}
+
+const WHY_RE = /^\s*(?:\*\*)?Why:?(?:\*\*)?:?\s*/im;
+const HOW_RE = /^\s*(?:\*\*)?How to apply:?(?:\*\*)?:?\s*/im;
+
+/*
+ * Claude Code が feedback を書くときの定型(1 行目 / **Why:** / **How to apply:**)に分解する。
+ * 見出しが無ければ該当部分は空文字(テンプレートは「無い部分には触れない」)。
+ */
+export function parseFeedbackParts(body: string): FeedbackParts {
+  const whyAt = body.search(WHY_RE);
+  const howAt = body.search(HOW_RE);
+  const head = body.slice(0, Math.min(...[whyAt, howAt].filter((i) => i >= 0), body.length));
+  const rule =
+    head
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) || '';
+  let why = '';
+  let how = '';
+  if (whyAt >= 0) {
+    const end = howAt > whyAt ? howAt : body.length;
+    why = body.slice(whyAt, end).replace(WHY_RE, '').trim();
+  }
+  if (howAt >= 0) {
+    const end = whyAt > howAt ? whyAt : body.length;
+    how = body.slice(howAt, end).replace(HOW_RE, '').trim();
+  }
+  return { rule, why, how };
+}
+
+/* 文字 2-gram の Dice 係数(0〜1)。空白・記号を落として比べる。日本語の言い換え検出に十分な粗さ */
+export function dice2gram(a: string, b: string): number {
+  const grams = (s: string) => {
+    const t = s.toLowerCase().replace(/[\s\p{P}]/gu, '');
+    const set = new Set<string>();
+    for (let i = 0; i + 1 < t.length; i++) set.add(t.slice(i, i + 2));
+    return set;
+  };
+  const ga = grams(a);
+  const gb = grams(b);
+  if (!ga.size || !gb.size) return 0;
+  let hit = 0;
+  for (const g of ga) if (gb.has(g)) hit++;
+  return (2 * hit) / (ga.size + gb.size);
+}
+
+const RESTATE_THRESHOLD = 0.3;
+// 実測: 索引 1 行で機能する feedback の本文は 150〜300 tok が多数派。opus が「短い」と評した 166 tok を超えない閾値にする
+const FEEDBACK_BODY_MAX_TOKENS = 200;
+const EXCEPTION_RE = /ただし|例外|除く|除き|unless|except(?!ion)/i;
+const EPISODIC_USER_RE =
+  /ユーザー(?:が|の|から)?\s*(?:指摘|言|依頼|要望)|user (?:said|pointed out|asked)/i;
+const EPISODIC_ISSUE_RE = /#\d{2,}/;
+
+/* エピソード固有の語(ブランチ名 / #番号 / 日付 / 「ユーザーが指摘」)。why-episodic と whyRewrite の検証で共用 */
+export function episodicTokens(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(BRANCH_RE)) out.push(m[1]);
+  const issue = text.match(EPISODIC_ISSUE_RE);
+  if (issue) out.push(issue[0]);
+  const date = text.match(/20\d{2}[-/年]\d{1,2}[-/月]\d{1,2}日?/);
+  if (date) out.push(date[0]);
+  const user = text.match(EPISODIC_USER_RE);
+  if (user) out.push(user[0]);
+  return [...new Set(out)].slice(0, 4);
+}
+
+export function feedbackSignals(
+  body: string,
+  description: string,
+  bodyTokens: number,
+): MemorySignal[] {
+  const out: MemorySignal[] = [];
+  const parts = parseFeedbackParts(body);
+  const pct = (x: number) => Math.round(x * 100) + '%';
+  if (parts.rule && description) {
+    const sim = dice2gram(parts.rule, description);
+    if (sim >= RESTATE_THRESHOLD) out.push({ kind: 'first-line-restates', value: pct(sim) });
+  }
+  if (parts.how && description) {
+    const sim = dice2gram(parts.how, description);
+    if (sim >= RESTATE_THRESHOLD) out.push({ kind: 'how-restates', value: pct(sim) });
+  }
+  if (parts.why) {
+    const ep = episodicTokens(parts.why);
+    if (ep.length) out.push({ kind: 'why-episodic', value: ep.join(', ') });
+  }
+  const exLine = body.split('\n').find((l) => EXCEPTION_RE.test(l));
+  if (exLine) out.push({ kind: 'has-exception', value: exLine.trim().slice(0, 40) });
+  if (bodyTokens > FEEDBACK_BODY_MAX_TOKENS)
+    out.push({ kind: 'body-over', value: String(bodyTokens) });
   return out;
 }
 

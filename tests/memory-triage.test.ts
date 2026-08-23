@@ -8,6 +8,7 @@ import {
   chunkByChars,
   collectTriageContext,
   normalizeInstruction,
+  parseBodyPlan,
   parseTriage,
   selectStale,
   type TriageStore,
@@ -313,6 +314,69 @@ describe('parseTriage', () => {
   it('配列でない出力・壊れた出力は例外', () => {
     expect(() => parseTriage('{"file":"a.md"}', files)).toThrow();
     expect(() => parseTriage('not json', files)).toThrow();
+  });
+});
+
+describe('parseBodyPlan (feedback の残す / 削る分類の検証)', () => {
+  const body =
+    'ルール\n\n**Why:** ユーザーが feat/695 で指摘。\n\n**How to apply:** 直接作業する。ただし hotfix は除く。';
+
+  it('enum と抜粋の検証を通った分類だけ返す', () => {
+    expect(
+      parseBodyPlan(
+        {
+          why: 'generalize',
+          why_rewrite: 'レビュー対応は同じ PR の続きなので別ブランチに分けると対応が切れる',
+          how: 'keep-exceptions-only',
+          exceptions: ['ただし hotfix は除く。', '本文に無い文'],
+        },
+        body,
+      ),
+    ).toEqual({
+      why: 'generalize',
+      whyRewrite: 'レビュー対応は同じ PR の続きなので別ブランチに分けると対応が切れる',
+      how: 'keep-exceptions-only',
+      exceptions: ['ただし hotfix は除く。'],
+    });
+  });
+
+  it('enum 以外・例外だけ残すのに抜粋が無い・一般化できていない why_rewrite は null(散文にフォールバック)', () => {
+    expect(parseBodyPlan({ why: 'maybe', how: 'drop', exceptions: [] }, body)).toBeNull();
+    expect(
+      parseBodyPlan({ why: 'keep', how: 'keep-exceptions-only', exceptions: ['捏造'] }, body),
+    ).toBeNull();
+    expect(
+      parseBodyPlan(
+        { why: 'generalize', why_rewrite: 'feat/695 の件', how: 'drop', exceptions: [] },
+        body,
+      ),
+    ).toBeNull();
+    expect(parseBodyPlan({ why: 'generalize', why_rewrite: '', how: 'drop' }, body)).toBeNull();
+    expect(parseBodyPlan(null, body)).toBeNull();
+  });
+
+  it('parseTriage は shrink / update かつ本文が渡された要素にだけ body を付ける', () => {
+    const files = ['a.md', 'b.md'];
+    const el = (file: string, verdict: string) => ({
+      file,
+      state: 'outdated',
+      verdict,
+      reason: 'r',
+      issues: [],
+      instruction: 'x',
+      body: { why: 'drop', how: 'drop', exceptions: [] },
+    });
+    const m = parseTriage(
+      JSON.stringify([el('a.md', 'update'), el('b.md', 'to-docs')]),
+      files,
+      new Map([['a.md', body]]),
+    );
+    expect(m.get('a.md')?.body).toEqual({ why: 'drop', how: 'drop', exceptions: [] });
+    expect(m.get('b.md')?.body).toBeUndefined();
+    // 本文を渡さなければ付けない(旧呼び出し互換)
+    expect(
+      parseTriage(JSON.stringify([el('a.md', 'update')]), files).get('a.md')?.body,
+    ).toBeUndefined();
   });
 });
 

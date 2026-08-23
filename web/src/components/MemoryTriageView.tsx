@@ -11,6 +11,7 @@ import {
 } from '../api';
 import {
   copyText,
+  effectiveInstruction,
   fileName,
   instructionsOf,
   joinInstructions,
@@ -101,6 +102,8 @@ function TriageResult({ it }: { it: SkillItem }) {
   const tri = it.aiTriage;
   // 出力不正の件は理由・根拠・指示文・試算のいずれも信用できないので何も出さない
   if (!tri || tri.error) return null;
+  // 分類(body)があればテンプレートの指示文、無ければ AI の散文
+  const instruction = effectiveInstruction(it);
   return (
     <>
       {tri.reason && <p className="reason">{tri.reason}</p>}
@@ -114,14 +117,14 @@ function TriageResult({ it }: { it: SkillItem }) {
           ))}
         </div>
       )}
-      {tri.instruction && (
+      {instruction && (
         <div className="instr">
           <div className="instr-h">
             <span className="instr-t">{t('memory.triage.instruction')}</span>
             <span className="instr-d">{estimateLabel(it)}</span>
-            <CopyButton className="copybtn" text={withPreamble(tri.instruction)} />
+            <CopyButton className="copybtn" text={withPreamble(instruction)} />
           </div>
-          <div className="instr-body">{tri.instruction}</div>
+          <div className="instr-body">{instruction}</div>
         </div>
       )}
     </>

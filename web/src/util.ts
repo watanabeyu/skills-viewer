@@ -1,4 +1,4 @@
-import type { Section, SkillGroup, SkillItem, Source } from './api';
+import type { FeedbackBodyPlan, Section, SkillGroup, SkillItem, Source } from './api';
 import { itemKey } from './api';
 import { t } from './i18n';
 
@@ -245,9 +245,44 @@ export function triageEstimate(it: SkillItem): { index: number; always: number }
   return null;
 }
 
+/*
+ * feedback 本文の分類(body)から指示文を決定的に組む。AI の散文ではなくテンプレートなので、
+ * モデルが haiku でも opus でも体裁と網羅性が同じになる。ルール行は description(索引の文言)で示す。
+ */
+export function buildFeedbackInstruction(it: SkillItem, plan: FeedbackBodyPlan): string {
+  const file = fileName(it.path);
+  const lines = [
+    t('memory.triage.tpl.replace', { file }),
+    t('memory.triage.tpl.rule', { rule: it.description }),
+  ];
+  if (plan.why === 'keep') lines.push(t('memory.triage.tpl.whyKeep'));
+  else if (plan.why === 'generalize')
+    lines.push(t('memory.triage.tpl.whyGeneralize', { text: plan.whyRewrite || '' }));
+  else lines.push(t('memory.triage.tpl.whyDrop'));
+  if (plan.how === 'keep') lines.push(t('memory.triage.tpl.howKeep'));
+  else if (plan.how === 'keep-exceptions-only')
+    lines.push(
+      t('memory.triage.tpl.howExceptions', {
+        list: plan.exceptions.map((x) => '「' + x + '」').join(' / '),
+      }),
+    );
+  else lines.push(t('memory.triage.tpl.howDrop'));
+  lines.push(t('memory.triage.tpl.index'));
+  return lines.join('\n');
+}
+
+/* 表示・コピーに使う指示文。分類(body)があればテンプレート、無ければ AI の散文 */
+export function effectiveInstruction(it: SkillItem): string {
+  const tri = it.aiTriage;
+  if (!tri || tri.error || tri.verdict === 'keep') return '';
+  if (tri.body && (tri.verdict === 'shrink' || tri.verdict === 'update'))
+    return buildFeedbackInstruction(it, tri.body);
+  return tri.instruction;
+}
+
 /* 提案(指示文)のある memory だけ。サマリ・まとめコピーが同じ母集団を見るよう 1 箇所に置く */
 export const instructionsOf = (items: SkillItem[]) =>
-  items.filter((it) => it.aiTriage && it.aiTriage.instruction);
+  items.filter((it) => effectiveInstruction(it));
 
 /*
  * コピーする指示文には「まず確認してから実行」の前置きを付ける。貼り先の Claude Code に
@@ -259,7 +294,7 @@ export const withPreamble = (body: string) => t('memory.triage.copyPreamble') + 
 export const joinInstructions = (items: SkillItem[]) =>
   withPreamble(
     instructionsOf(items)
-      .map((it) => '## ' + it.name + '\n\n' + it.aiTriage!.instruction)
+      .map((it) => '## ' + it.name + '\n\n' + effectiveInstruction(it))
       .join('\n\n'),
   );
 

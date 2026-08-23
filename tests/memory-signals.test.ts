@@ -4,10 +4,14 @@ import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   branchSignals,
+  dice2gram,
   doneWords,
+  episodicTokens,
   extractSignals,
+  feedbackSignals,
   latestDate,
   missingPaths,
+  parseFeedbackParts,
   type BranchInfo,
 } from '../src/server/memory-signals';
 import { scanMemory } from '../src/server/memory';
@@ -141,5 +145,86 @@ describe('branchSignals (git 層)', () => {
     expect(branchSignals('main と feat/done と feat/done', info)).toEqual([
       { kind: 'branch-merged', value: 'feat/done' },
     ]);
+  });
+});
+
+/* 実データ(weall の feedback_worktree_reuse)と同じ構造のフィクスチャ */
+const WORKTREE_DESC =
+  'レビューコメント対応時は新しいworktreeを作らず、既存のブランチで直接作業する';
+const WORKTREE_BODY = [
+  'レビューコメントの修正対応では、新しいworktreeやブランチを作る必要はない。元のブランチで直接追加コミットすればよい。',
+  '',
+  '**Why:** ユーザーが「feat/695で作業すればいいんじゃないんですか？」と指摘。レビュー対応は同じPRのブランチに追加コミットするのが自然。',
+  '',
+  '**How to apply:** PRレビューコメントへの修正対応時は、そのPRのブランチ上で直接作業してコミット・pushする。新しいブランチやworktreeは作らない。',
+].join('\n');
+
+describe('parseFeedbackParts (feedback 本文の定型分解)', () => {
+  it('1 行目 / Why / How to apply に分ける', () => {
+    const p = parseFeedbackParts(WORKTREE_BODY);
+    expect(p.rule).toMatch(/^レビューコメントの修正対応では/);
+    expect(p.why).toMatch(/^ユーザーが「feat\/695/);
+    expect(p.how).toMatch(/^PRレビューコメントへの修正対応時は/);
+  });
+
+  it('見出しが無い部分は空文字。Why だけ・順序逆でも壊れない', () => {
+    expect(parseFeedbackParts('ルールだけ')).toEqual({ rule: 'ルールだけ', why: '', how: '' });
+    const p = parseFeedbackParts('rule\n\n**How to apply:** h\n\n**Why:** w');
+    expect(p).toEqual({ rule: 'rule', why: 'w', how: 'h' });
+  });
+});
+
+describe('dice2gram (文字 2-gram の類似度)', () => {
+  it('同文は 1、無関係は 0 付近、言い換えは中間', () => {
+    expect(dice2gram('abcdef', 'abcdef')).toBe(1);
+    expect(dice2gram('あいうえお', 'かきくけこ')).toBe(0);
+    expect(dice2gram(WORKTREE_DESC, parseFeedbackParts(WORKTREE_BODY).how)).toBeGreaterThan(0.3);
+    expect(dice2gram('', 'x')).toBe(0);
+  });
+});
+
+describe('episodicTokens (エピソード固有の語)', () => {
+  it('ブランチ名 / #番号 / 日付 / ユーザーが指摘 を拾い、一般的な理由文からは拾わない', () => {
+    expect(episodicTokens('feat/695 で 2026-05-22 に #865 をユーザーが指摘')).toEqual([
+      'feat/695',
+      '#865',
+      '2026-05-22',
+      'ユーザーが指摘',
+    ]);
+    expect(
+      episodicTokens('レビュー対応は同じ PR の続きなので別ブランチに分けると対応が切れる'),
+    ).toEqual([]);
+  });
+});
+
+describe('feedbackSignals (feedback 本文構造のシグナル)', () => {
+  it('worktree_reuse 型: How は再掲・Why はエピソード・例外なし・1 行目は再掲', () => {
+    const kinds = feedbackSignals(WORKTREE_BODY, WORKTREE_DESC, 166).map((s) => s.kind);
+    expect(kinds).toEqual(['first-line-restates', 'how-restates', 'why-episodic']);
+  });
+
+  it('例外があれば has-exception、長ければ body-over。Why が一般的なら why-episodic は出ない', () => {
+    const body =
+      'ルール\n\n**Why:** 型検査が無いため。\n\n**How to apply:** 全く別の手順を毎回実行する。ただし hotfix のときは除く。';
+    const sig = feedbackSignals(body, '無関係な説明文', 400);
+    expect(sig.map((s) => s.kind)).toEqual(['has-exception', 'body-over']);
+    expect(sig[0].value).toContain('ただし');
+    expect(sig[1].value).toBe('400');
+  });
+
+  it('extractSignals は feedback / user 型のときだけ本文構造を見る', () => {
+    const proj = path.join(tmp, 'proj3');
+    fs.mkdirSync(proj, { recursive: true });
+    const opts = { now: NOW, home: tmp, bodyTokens: 166 };
+    expect(
+      extractSignals(WORKTREE_BODY, WORKTREE_DESC, proj, { ...opts, memoryType: 'feedback' }).map(
+        (s) => s.kind,
+      ),
+    ).toEqual(['first-line-restates', 'how-restates', 'why-episodic']);
+    expect(
+      extractSignals(WORKTREE_BODY, WORKTREE_DESC, proj, { ...opts, memoryType: 'project' }).map(
+        (s) => s.kind,
+      ),
+    ).toEqual([]);
   });
 });

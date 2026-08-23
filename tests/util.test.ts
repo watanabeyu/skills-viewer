@@ -15,8 +15,11 @@ import {
   usageLine,
   usageMatches,
   withPreamble,
+  buildFeedbackInstruction,
+  effectiveInstruction,
 } from '../web/src/util';
-import { t } from '../web/src/i18n';
+import { setLang, t } from '../web/src/i18n';
+import type { FeedbackBodyPlan } from '../src/shared/types';
 
 const base = (over: Partial<SkillItem> = {}): SkillItem => ({
   name: 'foo',
@@ -257,5 +260,84 @@ describe('memoryListSearch (memory 一覧へ戻る URL)', () => {
     const params = new URLSearchParams('tab=body');
     memoryListSearch(params);
     expect(params.get('tab')).toBe('body');
+  });
+});
+
+describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指示文)', () => {
+  const base = {
+    name: 'worktree-reuse',
+    description: 'レビュー対応は元ブランチで直接作業',
+    argumentHint: '',
+    version: '',
+    kind: 'memory' as const,
+    path: '/m/feedback_worktree_reuse.md',
+    files: [],
+    memoryType: 'feedback' as const,
+  };
+  const withPlan = (plan: FeedbackBodyPlan, verdict: 'shrink' | 'update' | 'keep' = 'update') => ({
+    ...base,
+    aiTriage: {
+      verdict,
+      state: 'outdated' as const,
+      reason: '',
+      issues: [],
+      instruction: '- 散文',
+      body: plan,
+    },
+  });
+
+  it('ja: 分類からモデル非依存の 5 行を組む', () => {
+    setLang('ja');
+    const text = buildFeedbackInstruction(base, {
+      why: 'generalize',
+      whyRewrite: 'レビュー対応は同じ PR の続きだから',
+      how: 'drop',
+      exceptions: [],
+    });
+    expect(text.split('\n')).toEqual([
+      '- feedback_worktree_reuse.md の本文を次の構成に置き換える(索引行は変更しない)',
+      '- 1 行目(ルール)はそのまま残す: 「レビュー対応は元ブランチで直接作業」',
+      '- Why を次の 1 文に書き換える(固有名詞・日付を落とす): 「レビュー対応は同じ PR の続きだから」',
+      '- How to apply は description の再掲なので削除する',
+      '- MEMORY.md の索引行は変更しない',
+    ]);
+    setLang('en');
+  });
+
+  it('en: 例外だけ残す分類は抜粋を列挙する', () => {
+    const text = buildFeedbackInstruction(base, {
+      why: 'keep',
+      how: 'keep-exceptions-only',
+      exceptions: ['unless hotfix', 'except CI'],
+    });
+    expect(text).toContain('- Keep Why as is');
+    expect(text).toContain(
+      '- In How to apply keep only the exceptions: 「unless hotfix」 / 「except CI」',
+    );
+    expect(text).toContain('- Do not change the MEMORY.md index line');
+  });
+
+  it('effectiveInstruction: body があればテンプレート、無ければ AI の散文、keep や出力不正は空', () => {
+    const plan: FeedbackBodyPlan = { why: 'drop', how: 'drop', exceptions: [] };
+    expect(effectiveInstruction(withPlan(plan))).toContain('Replace the body of');
+    expect(effectiveInstruction(withPlan(plan, 'keep'))).toBe('');
+    expect(
+      effectiveInstruction({
+        ...base,
+        aiTriage: { verdict: 'to-docs', reason: '', issues: [], instruction: '- 散文' },
+      }),
+    ).toBe('- 散文');
+    expect(
+      effectiveInstruction({
+        ...base,
+        aiTriage: {
+          verdict: 'keep',
+          reason: '',
+          issues: [],
+          instruction: '',
+          error: 'invalid-output',
+        },
+      }),
+    ).toBe('');
   });
 });

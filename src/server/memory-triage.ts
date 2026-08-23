@@ -13,6 +13,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type {
   AiModel,
+  FeedbackBodyPlan,
+  FeedbackHowPlan,
+  FeedbackWhyPlan,
   Lang,
   MemorySection,
   MemorySignal,
@@ -23,7 +26,7 @@ import type {
   SkillItem,
 } from '../shared/types';
 import { pruneMissing } from './cache';
-import { branchSignals, loadBranches } from './memory-signals';
+import { branchSignals, episodicTokens, loadBranches } from './memory-signals';
 import { HOME, parseFrontmatter } from './scan';
 import { contentHash, runClaude } from './summary';
 
@@ -40,6 +43,8 @@ const VERDICTS: readonly MemoryVerdict[] = [
   'update',
 ];
 const STATES: readonly MemoryState[] = ['current', 'outdated', 'historical', 'obsolete'];
+const WHY_PLANS: readonly FeedbackWhyPlan[] = ['keep', 'generalize', 'drop'];
+const HOW_PLANS: readonly FeedbackHowPlan[] = ['keep', 'keep-exceptions-only', 'drop'];
 
 interface TriageEntry extends MemoryTriage {
   hash: string | null;
@@ -194,6 +199,16 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
             return `- ブランチ ${s.value} はマージ済み`;
           case 'branch-missing':
             return `- ブランチ ${s.value} はローカルにもリモートにも無い`;
+          case 'how-restates':
+            return `- How to apply は description の再掲(類似度 ${s.value})`;
+          case 'why-episodic':
+            return `- Why にエピソード固有の語: ${s.value}`;
+          case 'has-exception':
+            return `- 本文に例外・但し書きあり: 「${s.value}」`;
+          case 'first-line-restates':
+            return `- 1 行目は description の再掲(類似度 ${s.value}。正常な形)`;
+          case 'body-over':
+            return `- feedback として本文が長い(${s.value} tok)`;
         }
       }
       switch (s.kind) {
@@ -207,6 +222,16 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
           return `- branch ${s.value} is already merged`;
         case 'branch-missing':
           return `- branch ${s.value} exists neither locally nor on the remote`;
+        case 'how-restates':
+          return `- How to apply restates the description (similarity ${s.value})`;
+        case 'why-episodic':
+          return `- Why contains episode-specific tokens: ${s.value}`;
+        case 'has-exception':
+          return `- the body has an exception / caveat: "${s.value}"`;
+        case 'first-line-restates':
+          return `- the first line restates the description (similarity ${s.value}; this is the normal shape)`;
+        case 'body-over':
+          return `- long for a feedback memory (${s.value} tok)`;
       }
     })
     .join('\n');
@@ -337,6 +362,17 @@ export function buildPrompt(
       '- 「参照実績: 計測不能」の件は、参照回数を根拠に使わないこと。\n' +
       '- 索引行を消さない限り常時コストは 1 tok も減りません。指示文では必ず MEMORY.md の索引行の削除に触れること。\n' +
       '- CLAUDE.md 行きは索引 1 行が全文注入に変わるため、多くの場合コストは増えます。\n\n' +
+      '# feedback / user 型の本文(verdict が shrink / update のとき)\n' +
+      '本文は「1 行目(ルール)/ **Why:** / **How to apply:**」の定型です。散文で何を残すか書く代わりに、' +
+      '次の表で分類して "body" を返してください(1 行目は常に残すので選択肢にありません):\n' +
+      '| signals | 分類 |\n' +
+      '|---|---|\n' +
+      '| How to apply は description の再掲、かつ例外なし | how = drop |\n' +
+      '| 本文に例外・但し書きあり | how = keep-exceptions-only(exceptions に本文からそのまま抜粋。生成しない)。例外以外に固有の手順があるなら keep |\n' +
+      '| Why にエピソード固有の語(ブランチ名 / #番号 / 日付 / ユーザーが指摘) | why = generalize(why_rewrite に固有名詞・日付・人名を含まない 1 文) |\n' +
+      '| Why が「ユーザーが指摘した」だけで理由が無い | why = drop |\n' +
+      '| Why が時間に依存しない理由を書いている | why = keep |\n' +
+      '迷ったら残す側(keep)に倒すこと。\n\n' +
       '# 出力\n' +
       '次の JSON 配列だけを出力してください(前置き・コードフェンス不要):\n' +
       '[{"file": "対象のファイル名(入力の file をそのまま)",\n' +
@@ -344,7 +380,10 @@ export function buildPrompt(
       '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
       '  "reason": "そう判断した理由(1〜3文。state の根拠を必ず含める)",\n' +
       '  "issues": ["判断の根拠になった事実(各30字程度、最大4件。無ければ空配列)"],\n' +
-      '  "instruction": "Claude Code に貼る指示文(keep のときは空文字)"}]\n\n' +
+      '  "instruction": "Claude Code に貼る指示文(keep のときは空文字)",\n' +
+      '  "body": {"why": "keep" | "generalize" | "drop", "why_rewrite": "generalize のときの 1 文(それ以外は空文字)",\n' +
+      '           "how": "keep" | "keep-exceptions-only" | "drop", "exceptions": ["本文からの抜粋"]}\n' +
+      '          (feedback / user 型で verdict が shrink / update のときだけ。それ以外は省略)}]\n\n' +
       '制約:\n' +
       '- 対象ファイル(' +
       files +
@@ -421,6 +460,18 @@ export function buildPrompt(
     '- Nothing is saved from the always-on cost unless the index line is removed. Every instruction ' +
     'MUST mention removing the line from MEMORY.md.\n' +
     '- Moving to CLAUDE.md turns one index line into a full-body injection, so it usually costs MORE.\n\n' +
+    '# Bodies of type feedback / user (when the verdict is shrink / update)\n' +
+    'The body follows a fixed shape: first line (the rule) / **Why:** / **How to apply:**. Instead of ' +
+    'describing in prose what to keep, classify with this table and return "body" (the first line is always kept, ' +
+    'so it is not a choice):\n' +
+    '| signals | classification |\n' +
+    '|---|---|\n' +
+    '| How to apply restates the description and there is no exception | how = drop |\n' +
+    '| the body has an exception / caveat | how = keep-exceptions-only (quote the exception verbatim in exceptions; never invent). keep if there are other specific steps |\n' +
+    '| Why contains episode-specific tokens (branch, #number, date, "the user pointed out") | why = generalize (why_rewrite: one sentence with no names, dates or people) |\n' +
+    '| Why is only "the user pointed it out" with no reason | why = drop |\n' +
+    '| Why states a reason that does not depend on time | why = keep |\n' +
+    'When in doubt, lean to keep.\n\n' +
     '# Output\n' +
     'Output ONLY this JSON array (no preamble, no code fences):\n' +
     '[{"file": "the target file name, exactly as given",\n' +
@@ -428,7 +479,10 @@ export function buildPrompt(
     '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
     '  "reason": "why (1-3 sentences; always include the evidence for the state)",\n' +
     '  "issues": ["facts behind the call (about 10 words each, max 4; empty array if none)"],\n' +
-    '  "instruction": "instruction to paste into Claude Code (empty string when verdict is keep)"}]\n\n' +
+    '  "instruction": "instruction to paste into Claude Code (empty string when verdict is keep)",\n' +
+    '  "body": {"why": "keep" | "generalize" | "drop", "why_rewrite": "one sentence when generalize (else empty)",\n' +
+    '           "how": "keep" | "keep-exceptions-only" | "drop", "exceptions": ["verbatim quotes from the body"]}\n' +
+    '          (only for type feedback / user with verdict shrink / update; omit otherwise)}]\n\n' +
     'Constraints:\n' +
     '- Emit exactly one element for each target file (' +
     files +
@@ -500,7 +554,42 @@ export const invalidTriage = (): MemoryTriage => ({
  * verdict が 8 値以外・state が 4 値以外(欠落含む)・keep 以外で指示文が空の要素は出力不正として記録する
  * (誤った行き先は提示しないが、診断済みであることは残して再 call を防ぐ)。
  */
-export function parseTriage(text: string, allowedFiles: string[]): Map<string, MemoryTriage> {
+/*
+ * "body"(feedback の残す / 削る分類)の検証。要素自体は捨てず、不正なら body だけを落として
+ * 散文 instruction にフォールバックさせる。exceptions は本文に実在する抜粋だけ残し(捏造を弾く)、
+ * why_rewrite にエピソード固有の語が残っていれば「一般化できていない」ので body ごと落とす。
+ */
+export function parseBodyPlan(raw: unknown, bodyText: string): FeedbackBodyPlan | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Record<string, unknown>;
+  const why = e.why as FeedbackWhyPlan;
+  const how = e.how as FeedbackHowPlan;
+  if (!WHY_PLANS.includes(why) || !HOW_PLANS.includes(how)) return null;
+  const norm = (x: string) => x.replace(/\s+/g, '');
+  const bodyNorm = norm(bodyText);
+  const exceptions = (Array.isArray(e.exceptions) ? e.exceptions : [])
+    .filter((x: unknown): x is string => typeof x === 'string')
+    .map((x: string) => x.trim().slice(0, 200))
+    .filter((x: string) => x && bodyNorm.includes(norm(x)))
+    .slice(0, 4);
+  // 例外だけ残す指示なのに本文に実在する例外が 1 つも無ければ、指示として成立しない
+  if (how === 'keep-exceptions-only' && !exceptions.length) return null;
+  let whyRewrite = '';
+  if (why === 'generalize') {
+    whyRewrite = String(e.why_rewrite || '')
+      .trim()
+      .slice(0, 200);
+    if (!whyRewrite || episodicTokens(whyRewrite).length) return null;
+  }
+  return { why, ...(whyRewrite ? { whyRewrite } : {}), how, exceptions };
+}
+
+export function parseTriage(
+  text: string,
+  allowedFiles: string[],
+  /* file → 本文(body の exceptions 検証用。渡さなければ body は付けない) */
+  bodies: Map<string, string> = new Map(),
+): Map<string, MemoryTriage> {
   const stripped = text
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/```\s*$/, '')
@@ -530,6 +619,11 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
       out.set(file, invalidTriage());
       continue;
     }
+    const bodyText = bodies.get(file);
+    const body =
+      bodyText !== undefined && (verdict === 'shrink' || verdict === 'update')
+        ? parseBodyPlan(e?.body, bodyText)
+        : null;
     out.set(file, {
       verdict,
       state,
@@ -538,6 +632,7 @@ export function parseTriage(text: string, allowedFiles: string[]): Map<string, M
         .slice(0, 400),
       issues,
       instruction: instruction.slice(0, 1200),
+      ...(body ? { body } : {}),
     });
   }
   return out;
@@ -645,6 +740,16 @@ export async function triageProject(
       ...(it.signals || []),
       ...(gitSignals.get(it.path) || []),
     ];
+    // body(残す / 削る分類)の検証には本文が要る。対象は feedback / user 型だけ
+    const bodies = new Map<string, string>();
+    for (const it of stale) {
+      if (it.memoryType !== 'feedback' && it.memoryType !== 'user') continue;
+      try {
+        bodies.set(path.basename(it.path), parseFrontmatter(fs.readFileSync(it.path, 'utf8')).body);
+      } catch {
+        /* 読めない件は body 無し(散文にフォールバック) */
+      }
+    }
     // ctx(索引全文・常設文脈)はチャンクごとに付け直す(重複・別プロジェクト判定に必ず要る)
     const chunks = chunkByChars(
       stale,
@@ -656,6 +761,7 @@ export async function triageProject(
       const parsed = parseTriage(
         text,
         chunk.map((it) => path.basename(it.path)),
+        bodies,
       );
       const generatedAt = new Date().toISOString();
       for (const it of chunk) {
@@ -690,6 +796,7 @@ export async function triageProject(
       issues: e.issues,
       instruction: e.instruction,
       ...(e.signals?.length ? { signals: e.signals } : {}),
+      ...(e.body ? { body: e.body } : {}),
       ...(e.error ? { error: e.error } : {}),
     });
   }
@@ -720,6 +827,7 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
           issues: cached.issues,
           instruction: cached.instruction,
           ...(cached.signals?.length ? { signals: cached.signals } : {}),
+          ...(cached.body ? { body: cached.body } : {}),
           // 出力不正も「診断済み」として載せる(未診断と区別し、再診断を促す)
           ...(cached.error ? { error: cached.error } : {}),
         };
