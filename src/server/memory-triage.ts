@@ -332,6 +332,8 @@ export function buildPrompt(
       '| reference | keep(Read あり)/ to-docs(長期 Read 0) | update(参照先の張り替え) | delete | delete |\n\n' +
       '# 注意\n' +
       '- Read 0 は異常ではありません。feedback 型は索引の 1 行だけでエージェントの行動を変えるため、本文が読まれないのが正常です。Read 0 だけを根拠に削除を勧めないこと。\n' +
+      '- project 型の進捗メモの扱い: 最終更新が新しく Write・Edit が続き、本文に未完了の次アクションが残る件は**現役の作業状態**なので current / keep(issue / PR への転記は完了時。reason に「完了時に <転記先> へ」と一言添える)。' +
+      '本文自身が完了を記録している(残タスクが merge のみ、loop 終了、push 済み等)なら historical で、外に無い知見だけを転記して削除(to-docs)。索引と本文の食い違いや参照パスの欠損だけなら outdated / update。\n' +
       '- 「参照実績: 計測不能」の件は、参照回数を根拠に使わないこと。\n' +
       '- 索引行を消さない限り常時コストは 1 tok も減りません。指示文では必ず MEMORY.md の索引行の削除に触れること。\n' +
       '- CLAUDE.md 行きは索引 1 行が全文注入に変わるため、多くの場合コストは増えます。\n\n' +
@@ -410,6 +412,11 @@ export function buildPrompt(
     '# Notes\n' +
     '- Read 0 is NOT an anomaly. A feedback memory changes the agent behaviour from its single index ' +
     'line alone, so its body is never read in normal operation. Never recommend deletion on Read 0 alone.\n' +
+    '- Progress notes of type project: when the last update is recent, Write-Edit continues and the body still ' +
+    'lists unfinished next actions, it is LIVE working state: current / keep (the move to an issue / PR happens ' +
+    'when the work is done; add "move to <target> when done" to the reason). When the body itself records ' +
+    'completion (only the merge left, loop finished, pushed), it is historical: move only what is not already ' +
+    'outside and delete (to-docs). A mismatch between index and body, or missing referenced paths alone, is outdated / update.\n' +
     '- When usage is "not measurable", do not use read counts as evidence.\n' +
     '- Nothing is saved from the always-on cost unless the index line is removed. Every instruction ' +
     'MUST mention removing the line from MEMORY.md.\n' +

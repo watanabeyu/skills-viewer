@@ -455,6 +455,8 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
       expect(prompt).toContain(stateSchema);
       expect(prompt).toContain('|---|---|'); // 判定指針テーブルが崩れていない
       expect(prompt).toContain('|---|---|---|---|---|'); // type × state の対応表
+      // 現役の進捗メモを「完了まで keep」と明示する注意(round 2 で to-docs に揺れた境界を潰す)
+      expect(prompt).toContain(lang === 'ja' ? '現役の作業状態' : 'LIVE working state');
     }
   });
 
