@@ -132,6 +132,11 @@ describe('branchSignals (git 層)', () => {
     ]);
   });
 
+  it('ディレクトリ名(docs/ test/ や末尾 /)はブランチとして拾わない', () => {
+    const body = 'docs/projects-design/ と test/contract を見る。feat/wip/ は末尾がスラッシュ';
+    expect(branchSignals(body, info)).toEqual([]);
+  });
+
   it('既定ブランチと重複は出さない', () => {
     expect(branchSignals('main と feat/done と feat/done', info)).toEqual([
       { kind: 'branch-merged', value: 'feat/done' },

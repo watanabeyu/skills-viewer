@@ -162,9 +162,14 @@ export function loadBranches(projectPath: string | null): BranchInfo | null {
   }
 }
 
-/* 本文に出るブランチ名らしきトークン(接頭辞 feat/ fix/ 等)。ブランチ名は ASCII 前提 */
+/*
+ * 本文に出るブランチ名らしきトークン(接頭辞 feat/ fix/ 等)。ブランチ名は ASCII 前提。
+ * docs/ test/ style/ はディレクトリ名として頻出し(docs/projects-design/、test/contract)、
+ * 実測で誤検出になったので接頭辞から外す。末尾が / のものはディレクトリなので拾わない
+ * (否定先読みはトークン文字全体を対象にし、短い一致へのバックトラックを防ぐ)
+ */
 const BRANCH_RE =
-  /\b((?:feat|feature|fix|bugfix|hotfix|chore|docs|refactor|release|test|ci|perf|style)\/[A-Za-z0-9._/-]+)/g;
+  /\b((?:feat|feature|fix|bugfix|hotfix|chore|refactor|release|ci|perf)\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)(?![A-Za-z0-9._/-])/g;
 
 export function branchSignals(body: string, info: BranchInfo): MemorySignal[] {
   const out: MemorySignal[] = [];
