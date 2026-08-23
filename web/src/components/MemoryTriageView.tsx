@@ -104,9 +104,22 @@ function TriageResult({ it }: { it: SkillItem }) {
   if (!tri || tri.error) return null;
   // 分類(body)があればテンプレートの指示文、無ければ AI の散文
   const instruction = effectiveInstruction(it);
+  // 行き先に関わらず必ず見せる事実(置き場所の誤り・索引と本文の食い違い)。verdict が keep でも消えない
+  const warns = [...(it.signals || []), ...(tri.signals || [])].filter(
+    (s) => s.kind === 'other-project' || s.kind === 'index-mismatch',
+  );
   return (
     <>
       {tri.reason && <p className="reason">{tri.reason}</p>}
+      {!!warns.length && (
+        <div className="issues">
+          {warns.map((s, i) => (
+            <span className="issue warn" key={'w' + i}>
+              ⚠ {t(`memory.signal.${s.kind}` as 'memory.signal.other-project', { value: s.value })}
+            </span>
+          ))}
+        </div>
+      )}
       {!!tri.issues.length && (
         <div className="issues">
           {/* 同じ文言が 2 件返り得るので key は index(並びは AI 出力のまま固定) */}

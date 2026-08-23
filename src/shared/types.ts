@@ -81,7 +81,11 @@ export type MemorySignalKind =
   /* 本文 1 行目が description の再掲(value = 類似度 %。正常な形) */
   | 'first-line-restates'
   /* feedback として本文が長い(value = tok) */
-  | 'body-over';
+  | 'body-over'
+  /* 本文が別の登録プロジェクトの配下パスを指す(value = そのプロジェクト名)。置き場所の誤りの機械的な根拠 */
+  | 'other-project'
+  /* AI が「索引行と本文が違うことを言っている」と答えた(診断時。value = description の冒頭) */
+  | 'index-mismatch';
 export interface MemorySignal {
   kind: MemorySignalKind;
   value: string;
@@ -103,6 +107,8 @@ export interface MemoryTriage {
    * 散文の instruction の代わりに web がテンプレートで指示文を組む(モデル非依存)。無ければ instruction にフォールバック
    */
   body?: FeedbackBodyPlan;
+  /* 索引行(description)と本文が同じことを言っているか(全件で AI に答えさせる。欠落は undefined) */
+  indexMatchesBody?: boolean;
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
 }
@@ -116,7 +122,8 @@ export interface MemoryTriage {
  */
 export type FeedbackWhyPlan = 'keep' | 'generalize' | 'drop';
 export type FeedbackHowPlan = 'keep' | 'keep-lines-only' | 'drop';
-export type FeedbackIndexPlan = 'keep' | 'rewrite';
+/* align = AI が索引と本文の食い違いを認めたのに書き換え案を出さなかった。どちらが正しいか確認して揃える(server が付ける) */
+export type FeedbackIndexPlan = 'keep' | 'rewrite' | 'align';
 export interface FeedbackBodyPlan {
   why: FeedbackWhyPlan;
   whyRewrite?: string;
@@ -189,6 +196,8 @@ export interface SkillItem {
   memoryType?: MemoryType;
   /* MEMORY.md の索引行の概算トークン(毎セッション注入される分)。索引に無ければ 0 */
   indexTokens?: number;
+  /* MEMORY.md の索引行そのもの(診断キャッシュの hash に含める。索引に無ければ省略) */
+  indexLine?: string;
   /* 本文全体の概算トークン(Read されたときだけかかる分) */
   bodyTokens?: number;
   /* 本文中の [[x]] 参照(重複排除。解決は web 側で行う) */

@@ -11,6 +11,7 @@ import {
   feedbackSignals,
   latestDate,
   missingPaths,
+  otherProjectRefs,
   parseFeedbackParts,
   type BranchInfo,
 } from '../src/server/memory-signals';
@@ -226,5 +227,44 @@ describe('feedbackSignals (feedback 本文構造のシグナル)', () => {
         (s) => s.kind,
       ),
     ).toEqual([]);
+  });
+});
+
+describe('otherProjectRefs / other-project (別プロジェクトの配下パス)', () => {
+  const home = path.join(tmp, 'home2');
+  const weall = path.join(home, 'work', 'weall', 'monorepo');
+  const viewer = path.join(home, 'work', 'skills-viewer');
+  const others = [viewer, path.join(home, 'work', 'cheap-trick')];
+
+  it('絶対パス・~/ の両方で、登録プロジェクトの配下を指していれば basename を返す(重複なし・最大 2)', () => {
+    const body = `このツールは ~/work/skills-viewer/ で開発。実体は ${viewer}/src/cli.ts。関係ない ${weall}/apps は自分`;
+    expect(otherProjectRefs(body, home, others)).toEqual(['skills-viewer']);
+    expect(
+      otherProjectRefs('~/work/skills-viewer-2/x と ~/.cache/skills-viewer/', home, others),
+    ).toEqual([]);
+    expect(otherProjectRefs('何もない', home, others)).toEqual([]);
+    expect(otherProjectRefs('~/work/skills-viewer/a', home, [])).toEqual([]);
+  });
+
+  it('scanMemory は自分自身と worktree 関係のプロジェクトを候補から外す', () => {
+    const root = path.join(tmp, 'projects2');
+    const main = path.join(tmp, 'work2', 'mono');
+    const wt = path.join(tmp, 'work2', 'mono-feature-x');
+    const other = path.join(tmp, 'work2', 'other');
+    for (const d of [main, wt, other]) fs.mkdirSync(d, { recursive: true });
+    // wt を main の linked worktree に見せる(.git ファイルの gitdir が main/.git/worktrees/<name>)
+    fs.mkdirSync(path.join(main, '.git', 'worktrees', 'x'), { recursive: true });
+    fs.writeFileSync(
+      path.join(wt, '.git'),
+      'gitdir: ' + path.join(main, '.git', 'worktrees', 'x') + '\n',
+    );
+    const dir = path.join(root, encodeProjectPath(main), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'a.md'),
+      `---\nname: a\n---\n${wt}/apps は自分の worktree、${other}/src は別プロジェクト`,
+    );
+    const [sec] = scanMemory(main, { root, projects: [main, wt, other] });
+    expect(sec.items[0].signals).toEqual([{ kind: 'other-project', value: 'other' }]);
   });
 });

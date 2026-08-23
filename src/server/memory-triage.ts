@@ -30,6 +30,17 @@ import { pruneMissing } from './cache';
 import { branchSignals, episodicTokens, loadBranches } from './memory-signals';
 import { HOME, parseFrontmatter } from './scan';
 import { contentHash, runClaude } from './summary';
+import * as crypto from 'node:crypto';
+
+/*
+ * 診断キャッシュの鍵。本文だけでなく MEMORY.md の索引行も含める
+ * (索引行だけ直したときに「索引を書き換えよ」という古い診断が残らないように)。索引行が無ければ従来の contentHash
+ */
+export function triageHash(it: SkillItem): string | null {
+  const base = contentHash(it.path);
+  if (base === null || !it.indexLine) return base;
+  return base + ':' + crypto.createHash('sha256').update(it.indexLine).digest('hex').slice(0, 8);
+}
 
 const TRIAGE_FILE = path.join(os.homedir(), '.cache', 'skills-viewer', 'memory-triage.json');
 
@@ -46,7 +57,7 @@ const VERDICTS: readonly MemoryVerdict[] = [
 const STATES: readonly MemoryState[] = ['current', 'outdated', 'historical', 'obsolete'];
 const WHY_PLANS: readonly FeedbackWhyPlan[] = ['keep', 'generalize', 'drop'];
 const HOW_PLANS: readonly FeedbackHowPlan[] = ['keep', 'keep-lines-only', 'drop'];
-const INDEX_PLANS: readonly FeedbackIndexPlan[] = ['keep', 'rewrite'];
+const INDEX_PLANS: readonly FeedbackIndexPlan[] = ['keep', 'rewrite', 'align'];
 
 interface TriageEntry extends MemoryTriage {
   hash: string | null;
@@ -211,6 +222,10 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
             return `- 1 行目は description の再掲(類似度 ${s.value}。正常な形)`;
           case 'body-over':
             return `- feedback として本文が長い(${s.value} tok)`;
+          case 'other-project':
+            return `- 本文が別の登録プロジェクト「${s.value}」の配下パスを指している`;
+          case 'index-mismatch':
+            return `- 索引行と本文が違うことを言っている`;
         }
       }
       switch (s.kind) {
@@ -234,6 +249,10 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
           return `- the first line restates the description (similarity ${s.value}; this is the normal shape)`;
         case 'body-over':
           return `- long for a feedback memory (${s.value} tok)`;
+        case 'other-project':
+          return `- the body points at paths under another registered project "${s.value}"`;
+        case 'index-mismatch':
+          return `- the index line and the body say different things`;
       }
     })
     .join('\n');
@@ -336,7 +355,7 @@ export function buildPrompt(
       '## 1. 置き場所の適合(state に関係なく先に決まる)\n' +
       '| 状況 | 行き先 |\n' +
       '|---|---|\n' +
-      '| 別プロジェクトの話 | wrong-project |\n' +
+      '| 別プロジェクトの話(signals に「別の登録プロジェクトの配下パス」があり、本文の主題がそのプロジェクトなら確定) | wrong-project |\n' +
       '| 内容が特定の skill / command の手順や挙動に対する好み(例: PR 作成前に止まる、ブランチ名の確認) | ' +
       'その skill の SKILL.md に追記して memory を消す(to-skill)。全プロジェクトで効くようになる |\n' +
       '| CLAUDE.md や skill に既に同じことが書いてある | delete |\n' +
@@ -384,6 +403,7 @@ export function buildPrompt(
       '次の JSON 配列だけを出力してください(前置き・コードフェンス不要):\n' +
       '[{"file": "対象のファイル名(入力の file をそのまま)",\n' +
       '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
+      '  "index_matches_body": true | false(索引行の description と本文が同じ境界・段階・内容を言っていれば true、違うことを言っていれば false。全件必須),\n' +
       '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
       '  "reason": "そう判断した理由(1〜3文。state の根拠を必ず含める)",\n' +
       '  "issues": ["判断の根拠になった事実(各30字程度、最大4件。無ければ空配列)"],\n' +
@@ -433,7 +453,7 @@ export function buildPrompt(
     '## 1. Placement fit (decided first, regardless of state)\n' +
     '| situation | destination |\n' +
     '|---|---|\n' +
-    '| belongs to a different project | wrong-project |\n' +
+    '| belongs to a different project (certain when signals show paths under another registered project and the body is about that project) | wrong-project |\n' +
     '| a preference about how a specific skill / command behaves (e.g. stop before creating the PR, ' +
     'confirm the branch name) | add it to that skill SKILL.md and drop the memory (to-skill); ' +
     'it then applies in every project |\n' +
@@ -490,6 +510,7 @@ export function buildPrompt(
     'Output ONLY this JSON array (no preamble, no code fences):\n' +
     '[{"file": "the target file name, exactly as given",\n' +
     '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
+    '  "index_matches_body": true | false (true when the description in the index line says the same boundary / stage / content as the body, false when they differ; required for every element),\n' +
     '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
     '  "reason": "why (1-3 sentences; always include the evidence for the state)",\n' +
     '  "issues": ["facts behind the call (about 10 words each, max 4; empty array if none)"],\n' +
@@ -671,9 +692,27 @@ export function parseTriage(
       issues,
       instruction: instruction.slice(0, 1200),
       ...(body ? { body } : {}),
+      // 欠落・非 boolean は undefined(シグナルを出さない)。モデルが省略しても要素は捨てない
+      ...(typeof e?.index_matches_body === 'boolean'
+        ? { indexMatchesBody: e.index_matches_body }
+        : {}),
     });
   }
   return out;
+}
+
+/*
+ * 「索引と本文が食い違う」という AI の回答を機械的に結果へ反映する(行き先は上書きしない):
+ *   - index-mismatch シグナルを付ける(verdict が keep でも UI に出る = 埋もれない)
+ *   - feedback の分類で index = keep のままなら align(どちらが正しいか確認して揃える)に差し替える
+ */
+export function applyIndexMismatch(r: MemoryTriage, it: SkillItem): MemoryTriage {
+  if (r.error || r.indexMatchesBody !== false) return r;
+  const signals = [...(r.signals || [])];
+  if (!signals.some((s) => s.kind === 'index-mismatch'))
+    signals.push({ kind: 'index-mismatch', value: it.description.slice(0, 40) });
+  const body = r.body && r.body.index === 'keep' ? { ...r.body, index: 'align' as const } : r.body;
+  return { ...r, signals, ...(body ? { body } : {}) };
 }
 
 /*
@@ -694,7 +733,7 @@ export function selectStale(
     return (
       !cached ||
       cached.lang !== lang ||
-      cached.hash !== contentHash(it.path) ||
+      cached.hash !== triageHash(it) ||
       (!cached.state && !cached.error)
     );
   });
@@ -805,12 +844,12 @@ export async function triageProject(
       for (const it of chunk) {
         // AI が返さなかった件も出力不正として hash 付きで残す
         // (未診断のままだと差分診断のたびに再 call され続ける。force で再試行できる)
-        const r = parsed.get(path.basename(it.path)) || invalidTriage();
+        const raw = parsed.get(path.basename(it.path)) || invalidTriage();
         const git = gitSignals.get(it.path) || [];
+        const r = applyIndexMismatch({ ...raw, ...(git.length ? { signals: git } : {}) }, it);
         store[it.path] = {
           ...r,
-          ...(git.length ? { signals: git } : {}),
-          hash: contentHash(it.path),
+          hash: triageHash(it),
           lang,
           model,
           generatedAt,
@@ -835,6 +874,7 @@ export async function triageProject(
       instruction: e.instruction,
       ...(e.signals?.length ? { signals: e.signals } : {}),
       ...(e.body ? { body: e.body } : {}),
+      ...(e.indexMatchesBody !== undefined ? { indexMatchesBody: e.indexMatchesBody } : {}),
       ...(e.error ? { error: e.error } : {}),
     });
   }
@@ -856,7 +896,7 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
         cached &&
         cached.lang === lang &&
         fs.existsSync(it.path) &&
-        cached.hash === contentHash(it.path)
+        cached.hash === triageHash(it)
       ) {
         it.aiTriage = {
           verdict: cached.verdict,
@@ -866,6 +906,9 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
           instruction: cached.instruction,
           ...(cached.signals?.length ? { signals: cached.signals } : {}),
           ...(cached.body ? { body: cached.body } : {}),
+          ...(cached.indexMatchesBody !== undefined
+            ? { indexMatchesBody: cached.indexMatchesBody }
+            : {}),
           // 出力不正も「診断済み」として載せる(未診断と区別し、再診断を促す)
           ...(cached.error ? { error: cached.error } : {}),
         };

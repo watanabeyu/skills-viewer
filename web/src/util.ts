@@ -270,6 +270,7 @@ export function buildFeedbackInstruction(it: SkillItem, plan: FeedbackBodyPlan):
   // 索引行は毎セッション注入される側。description が本文と食い違うときだけ書き換えを指示する
   if (plan.index === 'rewrite')
     lines.push(t('memory.triage.tpl.indexRewrite', { text: plan.indexRewrite || '' }));
+  else if (plan.index === 'align') lines.push(t('memory.triage.tpl.indexAlign'));
   else lines.push(t('memory.triage.tpl.index'));
   return lines.join('\n');
 }

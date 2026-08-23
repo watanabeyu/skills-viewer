@@ -318,6 +318,10 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
       '- In How to apply keep only the exceptions / boundaries: 「unless hotfix」 / 「except CI」',
     );
     expect(text).toContain('- Do not change the MEMORY.md index line');
+    // server が align に差し替えた場合は「確認して揃える」の行になる
+    expect(
+      buildFeedbackInstruction(base, { why: 'keep', how: 'keep', keepLines: [], index: 'align' }),
+    ).toContain('- The MEMORY.md index line and the body say different things');
   });
 
   it('effectiveInstruction: body があればテンプレート、無ければ AI の散文、keep や出力不正は空', () => {

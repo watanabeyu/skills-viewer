@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  applyIndexMismatch,
   attachMemoryTriage,
   buildPrompt,
   chunkByChars,
@@ -11,12 +12,19 @@ import {
   parseBodyPlan,
   parseTriage,
   selectStale,
+  triageHash,
   type TriageStore,
   headingLines,
 } from '../src/server/memory-triage';
 import { contentHash } from '../src/server/summary';
 import { instructionsOf, triageEstimate } from '../web/src/util';
-import type { MemorySection, MemoryVerdict, Section, SkillItem } from '../src/shared/types';
+import type {
+  MemorySection,
+  MemoryTriage,
+  MemoryVerdict,
+  Section,
+  SkillItem,
+} from '../src/shared/types';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-triage-'));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -404,6 +412,113 @@ describe('parseBodyPlan (feedback の残す / 削る分類の検証)', () => {
     expect(
       parseTriage(JSON.stringify([el('a.md', 'update')]), files).get('a.md')?.body,
     ).toBeUndefined();
+  });
+});
+
+describe('index_matches_body → applyIndexMismatch(索引と本文の食い違いを機械で反映)', () => {
+  const it0 = memItem('im-a.md', 'aaa', { description: 'コミット段階で止める' });
+  const base = (over: Partial<MemoryTriage> = {}): MemoryTriage => ({
+    verdict: 'keep',
+    state: 'current',
+    reason: '',
+    issues: [],
+    instruction: '',
+    ...over,
+  });
+
+  it('parseTriage は index_matches_body を boolean のときだけ拾う', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        {
+          file: 'a.md',
+          state: 'current',
+          verdict: 'keep',
+          index_matches_body: false,
+          reason: '',
+          issues: [],
+          instruction: '',
+        },
+        {
+          file: 'b.md',
+          state: 'current',
+          verdict: 'keep',
+          index_matches_body: 'no',
+          reason: '',
+          issues: [],
+          instruction: '',
+        },
+      ]),
+      ['a.md', 'b.md'],
+    );
+    expect(m.get('a.md')?.indexMatchesBody).toBe(false);
+    expect(m.get('b.md')?.indexMatchesBody).toBeUndefined();
+  });
+
+  it('false なら verdict が keep でも index-mismatch シグナルが付く(行き先は変えない)', () => {
+    const r = applyIndexMismatch(base({ indexMatchesBody: false }), it0);
+    expect(r.verdict).toBe('keep');
+    expect(r.signals).toEqual([{ kind: 'index-mismatch', value: 'コミット段階で止める' }]);
+    // 既存の git シグナルは残り、二重には付かない
+    const r2 = applyIndexMismatch(
+      base({ indexMatchesBody: false, signals: [{ kind: 'branch-merged', value: 'feat/x' }] }),
+      it0,
+    );
+    expect(r2.signals?.map((s) => s.kind)).toEqual(['branch-merged', 'index-mismatch']);
+    expect(applyIndexMismatch(r2, it0).signals).toHaveLength(2);
+  });
+
+  it('feedback の分類が index = keep のままなら align に差し替える(rewrite はそのまま)', () => {
+    const plan = {
+      why: 'keep' as const,
+      how: 'drop' as const,
+      keepLines: [],
+      index: 'keep' as const,
+    };
+    expect(applyIndexMismatch(base({ indexMatchesBody: false, body: plan }), it0).body?.index).toBe(
+      'align',
+    );
+    expect(
+      applyIndexMismatch(
+        base({ indexMatchesBody: false, body: { ...plan, index: 'rewrite', indexRewrite: '新' } }),
+        it0,
+      ).body?.index,
+    ).toBe('rewrite');
+  });
+
+  it('true / 欠落 / 出力不正なら何もしない', () => {
+    expect(applyIndexMismatch(base({ indexMatchesBody: true }), it0).signals).toBeUndefined();
+    expect(applyIndexMismatch(base(), it0).signals).toBeUndefined();
+    expect(
+      applyIndexMismatch(base({ indexMatchesBody: false, error: 'invalid-output' }), it0).signals,
+    ).toBeUndefined();
+  });
+});
+
+describe('triageHash (本文 + 索引行)', () => {
+  it('索引行が無ければ contentHash と同じ。索引行が変わると hash も変わる', () => {
+    const it1 = memItem('h-a.md', 'aaa');
+    expect(triageHash(it1)).toBe(contentHash(it1.path));
+    const withIndex = { ...it1, indexLine: '- [a](h-a.md) — 旧' };
+    const h1 = triageHash(withIndex);
+    expect(h1).not.toBe(contentHash(it1.path));
+    expect(triageHash({ ...it1, indexLine: '- [a](h-a.md) — 新' })).not.toBe(h1);
+    // 索引行だけ直した memory は再診断の対象になる
+    const store: TriageStore = {
+      [it1.path]: {
+        verdict: 'keep',
+        state: 'current',
+        reason: '',
+        issues: [],
+        instruction: '',
+        hash: h1,
+        lang: 'ja',
+        generatedAt: '',
+      },
+    };
+    expect(
+      selectStale([{ ...it1, indexLine: '- [a](h-a.md) — 新' }], store, 'ja', false),
+    ).toHaveLength(1);
+    expect(selectStale([withIndex], store, 'ja', false)).toHaveLength(0);
   });
 });
 

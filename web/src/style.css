@@ -1955,6 +1955,12 @@ button {
   color: #2f7f9a;
   background: #2f7f9a1c;
 }
+/* 行き先に関わらず出す事実(置き場所の誤り・索引と本文の食い違い)は注意色 */
+.issue.warn {
+  color: #b0432f;
+  background: #b0432f14;
+  font-weight: 600;
+}
 /* update は shrink(縮める)と同じ「索引 ±0・本文を直す」系だが区別できる暖色 */
 .vbadge.v-update {
   color: #9a6b1f;

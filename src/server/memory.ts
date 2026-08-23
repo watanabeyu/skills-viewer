@@ -99,6 +99,7 @@ function readMemoryFile(
   fileName: string,
   indexLine: string,
   projectPath: string | null,
+  otherProjects: string[],
 ): SkillItem | null {
   let raw: string;
   try {
@@ -118,7 +119,11 @@ function readMemoryFile(
   const description = meta.description || firstBodyLine(body);
   // 鮮度の機械シグナル(テキスト / fs 層)。正規表現と existsSync だけなのでスキャン時に払える
   const bodyTokens = estimateTokens(raw);
-  const signals = extractSignals(body, description, projectPath, { memoryType: type, bodyTokens });
+  const signals = extractSignals(body, description, projectPath, {
+    memoryType: type,
+    bodyTokens,
+    otherProjects,
+  });
   return {
     name: meta.name || fileName.replace(/\.md$/, ''),
     description,
@@ -130,6 +135,7 @@ function readMemoryFile(
     files: [],
     // 索引行だけが毎セッション注入される。本文は Read されたときだけのコストなので分けて持つ
     indexTokens: indexLine ? estimateTokens(indexLine) : 0,
+    ...(indexLine ? { indexLine } : {}),
     bodyTokens,
     ...(type ? { memoryType: type } : {}),
     ...(originSessionId ? { originSessionId } : {}),
@@ -156,6 +162,13 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
   const byEncoded = new Map<string, string>();
   for (const p of projects) byEncoded.set(encodeProjectPath(p), p);
   const currentPaths = new Set([cwdResolved, ...(main ? [main] : [])]);
+  // 登録プロジェクトごとのメインワークツリー(.git を見るだけ)。other-project の除外判定で使い回す
+  const mainCache = new Map<string, string | null>();
+  const mainOf = (p: string): string | null => {
+    if (!mainCache.has(p))
+      mainCache.set(p, opts.mainWorktree !== undefined ? null : mainWorktreeOf(p));
+    return mainCache.get(p) ?? null;
+  };
   /* 並び順の優先度: cwd 完全一致 → メインワークツリー → その他(名前順) */
   const rankOf = (p: string | null): number => (p === cwdResolved ? 0 : main && p === main ? 1 : 2);
 
@@ -180,9 +193,21 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
     }
     const index = readIndex(memDir);
     const projectPath = byEncoded.get(d.name) ?? null;
+    // 「別プロジェクトのパス」の候補。自分自身と、自分の worktree / 自分が worktree である親は除く
+    const otherProjects = projects.filter(
+      (p) =>
+        p !== projectPath &&
+        (!projectPath || (mainOf(p) !== projectPath && mainOf(projectPath) !== p)),
+    );
     const items: SkillItem[] = [];
     for (const f of files) {
-      const item = readMemoryFile(path.join(memDir, f), f, index.get(f) || '', projectPath);
+      const item = readMemoryFile(
+        path.join(memDir, f),
+        f,
+        index.get(f) || '',
+        projectPath,
+        otherProjects,
+      );
       if (item) items.push(item);
     }
     if (!items.length) continue;

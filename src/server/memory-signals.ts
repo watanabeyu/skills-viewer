@@ -23,6 +23,8 @@ export interface SignalOptions {
   memoryType?: MemoryType;
   /* 本文の概算 tok(body-over の判定用) */
   bodyTokens?: number;
+  /* この memory のプロジェクト以外の登録プロジェクト(worktree 関係は除外済み)。other-project の判定用 */
+  otherProjects?: string[];
 }
 
 const MAX_MISSING_PATHS = 3;
@@ -112,7 +114,27 @@ export function extractSignals(
   if (opts.memoryType === 'feedback' || opts.memoryType === 'user') {
     out.push(...feedbackSignals(body, description, opts.bodyTokens ?? 0));
   }
+  for (const p of otherProjectRefs(body, home, opts.otherProjects || []))
+    out.push({ kind: 'other-project', value: p });
   return out;
+}
+
+/*
+ * 本文が別の登録プロジェクトの配下パス(絶対 / ~/)を指しているか。
+ * 「別プロジェクトの話が混入した memory」の機械的な根拠で、置き場所(wrong-project)の判断材料になる。
+ * 呼び出し側で自分自身と worktree 関係のプロジェクトは除いて渡す。
+ */
+export function otherProjectRefs(body: string, home: string, others: string[]): string[] {
+  if (!others.length) return [];
+  const hit = new Set<string>();
+  for (const m of body.matchAll(/(~\/[^\s)）」'"`<>]+|\/[\w.@-]+(?:\/[\w.@-]+)+)/g)) {
+    const raw = m[1].replace(/[/.,:;。、)）」]+$/, '');
+    const resolved = raw.startsWith('~/') ? path.join(home, raw.slice(2)) : raw;
+    for (const p of others) {
+      if (resolved === p || resolved.startsWith(p + path.sep)) hit.add(path.basename(p));
+    }
+  }
+  return [...hit].slice(0, 2);
 }
 
 /* ---- feedback / user 型の本文構造 ---- */

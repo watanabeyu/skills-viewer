@@ -218,6 +218,10 @@ const en = {
   'memory.triage.tpl.index': '- Do not change the MEMORY.md index line',
   'memory.triage.tpl.indexRewrite':
     '- Rewrite the description in the MEMORY.md index line to: "{text}" (it says something different from the body)',
+  'memory.triage.tpl.indexAlign':
+    '- The MEMORY.md index line and the body say different things: check which one is right and align them',
+  'memory.signal.index-mismatch': 'Index line and body disagree',
+  'memory.signal.other-project': 'Points at another project: {value}',
   'memory.triage.verdict.error': 'Invalid output — re-run to retry',
   'memory.triage.seen': 'read {n}×',
   'memory.triage.unseen': 'no reads',
@@ -592,6 +596,10 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.tpl.index': '- MEMORY.md の索引行は変更しない',
   'memory.triage.tpl.indexRewrite':
     '- MEMORY.md の索引行の description を「{text}」に書き換える(本文と異なる境界を言っているため)',
+  'memory.triage.tpl.indexAlign':
+    '- MEMORY.md の索引行と本文が違うことを言っている。どちらが正しいか確認して揃える',
+  'memory.signal.index-mismatch': '索引行と本文が食い違っています',
+  'memory.signal.other-project': '別プロジェクト「{value}」の話です',
   'memory.triage.verdict.error': '出力不正 — 再診断で再試行',
   'memory.triage.seen': '{n} 回参照',
   'memory.triage.unseen': '参照なし',
