@@ -1971,14 +1971,7 @@ button {
   margin: 2px 0 4px;
 }
 .mem-card .sigs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
   margin: 6px 0 2px;
-}
-.mem-card .sigs .issue {
-  font-size: 10.5px;
-  padding: 3px 8px;
 }
 /* 鮮度(state)バッジ。色は対応する verdict と揃える(current=keep / outdated=update / historical=to-docs / obsolete=delete) */
 .sbadge {
