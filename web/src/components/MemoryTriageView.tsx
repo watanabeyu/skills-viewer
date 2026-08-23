@@ -23,7 +23,7 @@ import {
 import { memoryVerdictLabel, t } from '../i18n';
 import { splitFrontmatter } from '../md';
 import { KindBadge } from './GridView';
-import { MemoryStateBadge, MemoryTypeBadge, SignalChips, TokFacts } from './MemoryBits';
+import { MemoryTypeBadge, TokFacts } from './MemoryBits';
 import { renderMemoryBody } from './MemoryDetail';
 
 /*
@@ -104,11 +104,22 @@ function TriageResult({ it }: { it: SkillItem }) {
   if (!tri || tri.error) return null;
   // 分類(body)があればテンプレートの指示文、無ければ AI の散文
   const instruction = effectiveInstruction(it);
+  // 行き先に関わらず必ず見せる事実(置き場所の誤り・索引と本文の食い違い)。verdict が keep でも消えない
+  const warns = [...(it.signals || []), ...(tri.signals || [])].filter(
+    (s) => s.kind === 'other-project' || s.kind === 'index-mismatch',
+  );
   return (
     <>
       {tri.reason && <p className="reason">{tri.reason}</p>}
-      {/* 機械の事実(スキャン時 + 診断時)。注意系は verdict が keep でも消えない。AI の issues より前 */}
-      <SignalChips signals={[...(it.signals || []), ...(tri.signals || [])]} />
+      {!!warns.length && (
+        <div className="issues">
+          {warns.map((s, i) => (
+            <span className="issue warn" key={'w' + i}>
+              ⚠ {t(`memory.signal.${s.kind}` as 'memory.signal.other-project', { value: s.value })}
+            </span>
+          ))}
+        </div>
+      )}
       {!!tri.issues.length && (
         <div className="issues">
           {/* 同じ文言が 2 件返り得るので key は index(並びは AI 出力のまま固定) */}
@@ -146,7 +157,6 @@ export function MemoryTriageBox({ it, sec }: { it: SkillItem; sec: MemorySection
   return (
     <div className="diag-box triage-box">
       <div className="nmline">
-        <MemoryStateBadge tri={tri} />
         <VerdictBadge tri={tri} />
       </div>
       <TriageResult it={it} />
@@ -398,12 +408,7 @@ export function MemoryTriageView({
                 <KindBadge it={it} />
                 <MemoryTypeBadge it={it} />
                 {/* 未診断の行は verdict 無しで事実だけを出す */}
-                {it.aiTriage && (
-                  <>
-                    <MemoryStateBadge tri={it.aiTriage} />
-                    <VerdictBadge tri={it.aiTriage} />
-                  </>
-                )}
+                {it.aiTriage && <VerdictBadge tri={it.aiTriage} />}
                 <span className="toks">
                   <TokFacts it={it} bold />
                   {/* 参照回数はトランスクリプトが無いプロジェクトでは判定不能なので出さない */}
@@ -416,8 +421,6 @@ export function MemoryTriageView({
                   )}
                 </span>
               </div>
-              {/* 未診断の行でもスキャン時のシグナル(事実)は出す */}
-              {!it.aiTriage && <SignalChips signals={it.signals || []} />}
               <TriageResult it={it} />
             </div>
           ))}

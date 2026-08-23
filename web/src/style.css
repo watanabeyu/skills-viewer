@@ -1961,40 +1961,6 @@ button {
   background: #b0432f14;
   font-weight: 600;
 }
-/* 機械の事実は塗らず枠線だけ(AI の issues = 灰色の塗り と見分ける) */
-.issue.fact {
-  color: #6f6a5e;
-  background: transparent;
-  border: 1px solid #e3dfd4;
-}
-.sigs {
-  margin: 2px 0 4px;
-}
-.mem-card .sigs {
-  margin: 6px 0 2px;
-}
-/* 鮮度(state)バッジ。色は対応する verdict と揃える(current=keep / outdated=update / historical=to-docs / obsolete=delete) */
-.sbadge {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2.5px 8px;
-  border-radius: 999px;
-  white-space: nowrap;
-  flex: none;
-  border: 1px solid currentColor;
-}
-.sbadge.s-current {
-  color: #1f8a5b;
-}
-.sbadge.s-outdated {
-  color: #9a6b1f;
-}
-.sbadge.s-historical {
-  color: #5b7285;
-}
-.sbadge.s-obsolete {
-  color: #b0432f;
-}
 /* update は shrink(縮める)と同じ「索引 ±0・本文を直す」系だが区別できる暖色 */
 .vbadge.v-update {
   color: #9a6b1f;

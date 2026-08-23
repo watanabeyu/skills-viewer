@@ -1,4 +1,4 @@
-import type { MemorySection, MemorySignal, MemoryTriage, SkillItem } from '../api';
+import type { MemorySection, SkillItem } from '../api';
 import { MEM_COLOR, fmtMD } from '../util';
 import { memoryTypeLabel, t } from '../i18n';
 
@@ -85,63 +85,4 @@ export function readsLine(it: SkillItem, usageAvailable: boolean): string {
   if (!usageAvailable) return t('memory.card.na');
   if (it.useCount) return t('memory.card.reads', { n: it.useCount, date: fmtMD(it.lastUsed) });
   return t(it.memoryType === 'feedback' ? 'memory.card.noReadsFeedback' : 'memory.card.noReads');
-}
-
-/* 鮮度(state)のバッジ。type バッジと同じく生値を出し、意訳は tooltip。出力不正・未診断には出さない */
-export function MemoryStateBadge({ tri }: { tri?: MemoryTriage }) {
-  if (!tri || tri.error || !tri.state) return null;
-  return (
-    <span
-      className={'sbadge s-' + tri.state}
-      title={t(`memory.state.${tri.state}.title` as Parameters<typeof t>[0])}
-    >
-      {tri.state}
-    </span>
-  );
-}
-
-/* 行き先に関わらず必ず見せる注意系(置き場所の誤り・索引と本文の食い違い) */
-export const isWarnSignal = (s: MemorySignal) =>
-  s.kind === 'other-project' || s.kind === 'index-mismatch';
-
-/* 一覧では賑やかになりすぎるので出さない(正常な形を示すだけのシグナル) */
-const HIDDEN_SIGNALS: MemorySignal['kind'][] = ['first-line-restates'];
-
-const ICON: Partial<Record<MemorySignal['kind'], string>> = {
-  date: '⏱',
-  'path-missing': '⊘',
-  'done-words': '✓',
-  'branch-merged': '⎇',
-  'branch-missing': '⎇',
-  'how-restates': '¶',
-  'why-episodic': '¶',
-  'has-exception': '¶',
-  'body-over': '¶',
-};
-
-export function signalLabel(s: MemorySignal): string {
-  return t(`memory.signal.${s.kind}` as Parameters<typeof t>[0], {
-    value: s.value,
-    days: s.days ?? 0,
-  });
-}
-
-/*
- * 機械シグナルのチップ。注意系(赤)を先に、事実(枠線だけ)を後に並べる。
- * AI の issues(灰色の塗り)と見分けられるように、事実は塗らない。max で一覧カード向けに絞る
- */
-export function SignalChips({ signals, max }: { signals: MemorySignal[]; max?: number }) {
-  const warns = signals.filter(isWarnSignal);
-  const facts = signals.filter((s) => !isWarnSignal(s) && !HIDDEN_SIGNALS.includes(s.kind));
-  const shown = [...warns, ...facts].slice(0, max ?? Infinity);
-  if (!shown.length) return null;
-  return (
-    <div className="issues sigs">
-      {shown.map((s, i) => (
-        <span className={'issue ' + (isWarnSignal(s) ? 'warn' : 'fact')} key={s.kind + i}>
-          {isWarnSignal(s) ? '⚠' : ICON[s.kind] || '·'} {signalLabel(s)}
-        </span>
-      ))}
-    </div>
-  );
 }
