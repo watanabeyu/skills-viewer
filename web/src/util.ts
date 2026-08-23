@@ -260,14 +260,17 @@ export function buildFeedbackInstruction(it: SkillItem, plan: FeedbackBodyPlan):
     lines.push(t('memory.triage.tpl.whyGeneralize', { text: plan.whyRewrite || '' }));
   else lines.push(t('memory.triage.tpl.whyDrop'));
   if (plan.how === 'keep') lines.push(t('memory.triage.tpl.howKeep'));
-  else if (plan.how === 'keep-exceptions-only')
+  else if (plan.how === 'keep-lines-only')
     lines.push(
-      t('memory.triage.tpl.howExceptions', {
-        list: plan.exceptions.map((x) => '「' + x + '」').join(' / '),
+      t('memory.triage.tpl.howLines', {
+        list: plan.keepLines.map((x) => '「' + x + '」').join(' / '),
       }),
     );
   else lines.push(t('memory.triage.tpl.howDrop'));
-  lines.push(t('memory.triage.tpl.index'));
+  // 索引行は毎セッション注入される側。description が本文と食い違うときだけ書き換えを指示する
+  if (plan.index === 'rewrite')
+    lines.push(t('memory.triage.tpl.indexRewrite', { text: plan.indexRewrite || '' }));
+  else lines.push(t('memory.triage.tpl.index'));
   return lines.join('\n');
 }
 

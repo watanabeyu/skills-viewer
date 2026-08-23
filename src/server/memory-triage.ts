@@ -15,6 +15,7 @@ import type {
   AiModel,
   FeedbackBodyPlan,
   FeedbackHowPlan,
+  FeedbackIndexPlan,
   FeedbackWhyPlan,
   Lang,
   MemorySection,
@@ -44,7 +45,8 @@ const VERDICTS: readonly MemoryVerdict[] = [
 ];
 const STATES: readonly MemoryState[] = ['current', 'outdated', 'historical', 'obsolete'];
 const WHY_PLANS: readonly FeedbackWhyPlan[] = ['keep', 'generalize', 'drop'];
-const HOW_PLANS: readonly FeedbackHowPlan[] = ['keep', 'keep-exceptions-only', 'drop'];
+const HOW_PLANS: readonly FeedbackHowPlan[] = ['keep', 'keep-lines-only', 'drop'];
+const INDEX_PLANS: readonly FeedbackIndexPlan[] = ['keep', 'rewrite'];
 
 interface TriageEntry extends MemoryTriage {
   hash: string | null;
@@ -348,7 +350,10 @@ export function buildPrompt(
       '| obsolete | 役目を終えた。記録としての価値もない |\n' +
       '根拠にするもの: 各件の signals(本文の日付・参照パスの実在・ブランチのマージ状況)、最終更新と Read / Write・Edit の新しさ、' +
       '索引の他の行や CLAUDE.md との関係。signals に挙がった事実はそのまま issues に引用してよい。' +
-      '最終更新が新しく Write・Edit が続いている件は現役の作業メモなので、完了していない限り historical にしないこと。\n\n' +
+      '最終更新が新しく Write・Edit が続いている件は現役の作業メモなので、完了していない限り historical にしないこと。' +
+      'feedback / user 型で、description(索引行)と本文(1 行目や How to apply)が**異なる境界や段階**を言っている場合' +
+      '(例: 索引は「コミットで止める」、本文は「push まで進めて PR 作成の前で止める」)は outdated / update とし、' +
+      '索引行の書き換え(body の index = rewrite)を含めること。索引 1 行で動く型では、索引側の文言が実際の行動を決めている。\n\n' +
       '## 3. verdict は type × state から決める\n' +
       '| type \\ state | current | outdated | historical | obsolete |\n' +
       '|---|---|---|---|---|\n' +
@@ -367,11 +372,13 @@ export function buildPrompt(
       '次の表で分類して "body" を返してください(1 行目は常に残すので選択肢にありません):\n' +
       '| signals | 分類 |\n' +
       '|---|---|\n' +
-      '| How to apply は description の再掲、かつ例外なし | how = drop |\n' +
-      '| 本文に例外・但し書きあり | how = keep-exceptions-only(exceptions に本文からそのまま抜粋。生成しない)。例外以外に固有の手順があるなら keep |\n' +
+      '| How to apply は description の再掲、かつ例外・境界なし | how = drop |\n' +
+      '| 本文に例外(〜なら除く)や境界(どこまで進めてよいか・いつ止まるか)がある | how = keep-lines-only(keep_lines に本文からそのまま抜粋。生成しない。例外と境界の両方を拾う)。それ以外に固有の手順があるなら keep |\n' +
       '| Why にエピソード固有の語(ブランチ名 / #番号 / 日付 / ユーザーが指摘) | why = generalize(why_rewrite に固有名詞・日付・人名を含まない 1 文) |\n' +
       '| Why が「ユーザーが指摘した」だけで理由が無い | why = drop |\n' +
       '| Why が時間に依存しない理由を書いている | why = keep |\n' +
+      '| description(索引行)が本文と異なる境界・段階を言っている | index = rewrite(index_rewrite に本文と一致する新しい description を 1 行。固有名詞・日付なし) |\n' +
+      '| description が本文と一致している | index = keep |\n' +
       '迷ったら残す側(keep)に倒すこと。\n\n' +
       '# 出力\n' +
       '次の JSON 配列だけを出力してください(前置き・コードフェンス不要):\n' +
@@ -382,7 +389,8 @@ export function buildPrompt(
       '  "issues": ["判断の根拠になった事実(各30字程度、最大4件。無ければ空配列)"],\n' +
       '  "instruction": "Claude Code に貼る指示文(keep のときは空文字)",\n' +
       '  "body": {"why": "keep" | "generalize" | "drop", "why_rewrite": "generalize のときの 1 文(それ以外は空文字)",\n' +
-      '           "how": "keep" | "keep-exceptions-only" | "drop", "exceptions": ["本文からの抜粋"]}\n' +
+      '           "how": "keep" | "keep-lines-only" | "drop", "keep_lines": ["本文からの抜粋(例外・境界)"],\n' +
+      '           "index": "keep" | "rewrite", "index_rewrite": "rewrite のときの新しい description(それ以外は空文字)"}\n' +
       '          (feedback / user 型で verdict が shrink / update のときだけ。それ以外は省略)}]\n\n' +
       '制約:\n' +
       '- 対象ファイル(' +
@@ -441,7 +449,11 @@ export function buildPrompt(
     'Evidence: the per-memory signals (dates in the body, whether referenced paths exist, branch merge status), ' +
     'how recent the last update and Read / Write-Edit are, and how it relates to the other index lines and CLAUDE.md. ' +
     'You may quote the signals verbatim in issues. A memory updated recently with ongoing Write-Edit is a live working ' +
-    'note: never mark it historical unless the work is finished.\n\n' +
+    'note: never mark it historical unless the work is finished. For type feedback / user, when the description ' +
+    '(the index line) and the body (first line or How to apply) state a DIFFERENT boundary or stage (e.g. the index says ' +
+    '"stop at commit" while the body says "push is fine, stop before creating the PR"), it is outdated / update and the ' +
+    'index line must be rewritten (body.index = rewrite) — for a memory that works from its index line, the index wording ' +
+    'is what actually drives behaviour.\n\n' +
     '## 3. Derive the verdict from type x state\n' +
     '| type \\ state | current | outdated | historical | obsolete |\n' +
     '|---|---|---|---|---|\n' +
@@ -466,11 +478,13 @@ export function buildPrompt(
     'so it is not a choice):\n' +
     '| signals | classification |\n' +
     '|---|---|\n' +
-    '| How to apply restates the description and there is no exception | how = drop |\n' +
-    '| the body has an exception / caveat | how = keep-exceptions-only (quote the exception verbatim in exceptions; never invent). keep if there are other specific steps |\n' +
+    '| How to apply restates the description and there is no exception or boundary | how = drop |\n' +
+    '| the body has an exception (unless ...) or a boundary (how far to go / when to stop) | how = keep-lines-only (quote them verbatim in keep_lines; never invent; take both exceptions and boundaries). keep if there are other specific steps |\n' +
     '| Why contains episode-specific tokens (branch, #number, date, "the user pointed out") | why = generalize (why_rewrite: one sentence with no names, dates or people) |\n' +
     '| Why is only "the user pointed it out" with no reason | why = drop |\n' +
     '| Why states a reason that does not depend on time | why = keep |\n' +
+    '| the description (index line) states a different boundary / stage than the body | index = rewrite (index_rewrite: a new one-line description that matches the body; no names or dates) |\n' +
+    '| the description matches the body | index = keep |\n' +
     'When in doubt, lean to keep.\n\n' +
     '# Output\n' +
     'Output ONLY this JSON array (no preamble, no code fences):\n' +
@@ -481,7 +495,8 @@ export function buildPrompt(
     '  "issues": ["facts behind the call (about 10 words each, max 4; empty array if none)"],\n' +
     '  "instruction": "instruction to paste into Claude Code (empty string when verdict is keep)",\n' +
     '  "body": {"why": "keep" | "generalize" | "drop", "why_rewrite": "one sentence when generalize (else empty)",\n' +
-    '           "how": "keep" | "keep-exceptions-only" | "drop", "exceptions": ["verbatim quotes from the body"]}\n' +
+    '           "how": "keep" | "keep-lines-only" | "drop", "keep_lines": ["verbatim quotes from the body (exceptions and boundaries)"],\n' +
+    '           "index": "keep" | "rewrite", "index_rewrite": "the new description when rewrite (else empty)"}\n' +
     '          (only for type feedback / user with verdict shrink / update; omit otherwise)}]\n\n' +
     'Constraints:\n' +
     '- Emit exactly one element for each target file (' +
@@ -564,16 +579,24 @@ export function parseBodyPlan(raw: unknown, bodyText: string): FeedbackBodyPlan 
   const e = raw as Record<string, unknown>;
   const why = e.why as FeedbackWhyPlan;
   const how = e.how as FeedbackHowPlan;
-  if (!WHY_PLANS.includes(why) || !HOW_PLANS.includes(how)) return null;
+  // index は省略可(省略 = keep)。旧名 exceptions も keep_lines として読む(出力の揺れに寛容に)
+  const index = (e.index ?? 'keep') as FeedbackIndexPlan;
+  if (!WHY_PLANS.includes(why) || !HOW_PLANS.includes(how) || !INDEX_PLANS.includes(index))
+    return null;
   const norm = (x: string) => x.replace(/\s+/g, '');
   const bodyNorm = norm(bodyText);
-  const exceptions = (Array.isArray(e.exceptions) ? e.exceptions : [])
+  const rawLines = Array.isArray(e.keep_lines)
+    ? e.keep_lines
+    : Array.isArray(e.exceptions)
+      ? e.exceptions
+      : [];
+  const keepLines = rawLines
     .filter((x: unknown): x is string => typeof x === 'string')
     .map((x: string) => x.trim().slice(0, 200))
     .filter((x: string) => x && bodyNorm.includes(norm(x)))
     .slice(0, 4);
-  // 例外だけ残す指示なのに本文に実在する例外が 1 つも無ければ、指示として成立しない
-  if (how === 'keep-exceptions-only' && !exceptions.length) return null;
+  // 例外・境界だけ残す指示なのに本文に実在する行が 1 つも無ければ、指示として成立しない
+  if (how === 'keep-lines-only' && !keepLines.length) return null;
   let whyRewrite = '';
   if (why === 'generalize') {
     whyRewrite = String(e.why_rewrite || '')
@@ -581,7 +604,22 @@ export function parseBodyPlan(raw: unknown, bodyText: string): FeedbackBodyPlan 
       .slice(0, 200);
     if (!whyRewrite || episodicTokens(whyRewrite).length) return null;
   }
-  return { why, ...(whyRewrite ? { whyRewrite } : {}), how, exceptions };
+  let indexRewrite = '';
+  if (index === 'rewrite') {
+    indexRewrite = String(e.index_rewrite || '')
+      .trim()
+      .slice(0, 160);
+    // 索引行は毎セッション注入なので固有名詞・日付は持ち込ませない
+    if (!indexRewrite || episodicTokens(indexRewrite).length) return null;
+  }
+  return {
+    why,
+    ...(whyRewrite ? { whyRewrite } : {}),
+    how,
+    keepLines,
+    index,
+    ...(indexRewrite ? { indexRewrite } : {}),
+  };
 }
 
 export function parseTriage(

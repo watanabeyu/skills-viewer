@@ -110,16 +110,20 @@ export interface MemoryTriage {
 /*
  * feedback 本文の分類。ルール行(1 行目)は常に残すのでフィールドを持たない。
  *   why: keep = そのまま / generalize = 固有名詞・日付を落とした 1 文(whyRewrite)に / drop = 削除
- *   how: keep = そのまま / keep-exceptions-only = 例外(exceptions)だけ残す / drop = description の再掲なので削除
- *   exceptions: 本文からの抜粋(生成ではない。server で実在を検証済み)
+ *   how: keep = そのまま / keep-lines-only = 例外・境界(keepLines)だけ残す / drop = description の再掲なので削除
+ *   keepLines: 本文からの抜粋(生成ではない。server で実在を検証済み)。例外(〜なら除く)と境界(どこまで進めてよいか)
+ *   index: keep = 索引行はそのまま / rewrite = description が本文と食い違うので indexRewrite に書き換える
  */
 export type FeedbackWhyPlan = 'keep' | 'generalize' | 'drop';
-export type FeedbackHowPlan = 'keep' | 'keep-exceptions-only' | 'drop';
+export type FeedbackHowPlan = 'keep' | 'keep-lines-only' | 'drop';
+export type FeedbackIndexPlan = 'keep' | 'rewrite';
 export interface FeedbackBodyPlan {
   why: FeedbackWhyPlan;
   whyRewrite?: string;
   how: FeedbackHowPlan;
-  exceptions: string[];
+  keepLines: string[];
+  index: FeedbackIndexPlan;
+  indexRewrite?: string;
 }
 
 /* AI グルーピングの1グループ。id は言語非依存スラッグ、label は表示言語で生成 */

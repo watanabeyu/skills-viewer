@@ -327,23 +327,50 @@ describe('parseBodyPlan (feedback の残す / 削る分類の検証)', () => {
         {
           why: 'generalize',
           why_rewrite: 'レビュー対応は同じ PR の続きなので別ブランチに分けると対応が切れる',
-          how: 'keep-exceptions-only',
-          exceptions: ['ただし hotfix は除く。', '本文に無い文'],
+          how: 'keep-lines-only',
+          keep_lines: ['ただし hotfix は除く。', '本文に無い文'],
+          index: 'rewrite',
+          index_rewrite: 'レビュー対応は push まで進めて PR 作成の前で止まる',
         },
         body,
       ),
     ).toEqual({
       why: 'generalize',
       whyRewrite: 'レビュー対応は同じ PR の続きなので別ブランチに分けると対応が切れる',
-      how: 'keep-exceptions-only',
-      exceptions: ['ただし hotfix は除く。'],
+      how: 'keep-lines-only',
+      keepLines: ['ただし hotfix は除く。'],
+      index: 'rewrite',
+      indexRewrite: 'レビュー対応は push まで進めて PR 作成の前で止まる',
     });
+  });
+
+  it('index 省略は keep、旧名 exceptions も keep_lines として読む。rewrite なのに新 description が無い・固有名詞入りは null', () => {
+    expect(
+      parseBodyPlan(
+        { why: 'keep', how: 'keep-lines-only', exceptions: ['ただし hotfix は除く。'] },
+        body,
+      ),
+    ).toEqual({
+      why: 'keep',
+      how: 'keep-lines-only',
+      keepLines: ['ただし hotfix は除く。'],
+      index: 'keep',
+    });
+    expect(
+      parseBodyPlan({ why: 'keep', how: 'drop', index: 'rewrite', index_rewrite: '' }, body),
+    ).toBeNull();
+    expect(
+      parseBodyPlan(
+        { why: 'keep', how: 'drop', index: 'rewrite', index_rewrite: '#865 の件' },
+        body,
+      ),
+    ).toBeNull();
   });
 
   it('enum 以外・例外だけ残すのに抜粋が無い・一般化できていない why_rewrite は null(散文にフォールバック)', () => {
     expect(parseBodyPlan({ why: 'maybe', how: 'drop', exceptions: [] }, body)).toBeNull();
     expect(
-      parseBodyPlan({ why: 'keep', how: 'keep-exceptions-only', exceptions: ['捏造'] }, body),
+      parseBodyPlan({ why: 'keep', how: 'keep-lines-only', keep_lines: ['捏造'] }, body),
     ).toBeNull();
     expect(
       parseBodyPlan(
@@ -364,14 +391,14 @@ describe('parseBodyPlan (feedback の残す / 削る分類の検証)', () => {
       reason: 'r',
       issues: [],
       instruction: 'x',
-      body: { why: 'drop', how: 'drop', exceptions: [] },
+      body: { why: 'drop', how: 'drop', keep_lines: [] },
     });
     const m = parseTriage(
       JSON.stringify([el('a.md', 'update'), el('b.md', 'to-docs')]),
       files,
       new Map([['a.md', body]]),
     );
-    expect(m.get('a.md')?.body).toEqual({ why: 'drop', how: 'drop', exceptions: [] });
+    expect(m.get('a.md')?.body).toEqual({ why: 'drop', how: 'drop', keepLines: [], index: 'keep' });
     expect(m.get('b.md')?.body).toBeUndefined();
     // 本文を渡さなければ付けない(旧呼び出し互換)
     expect(

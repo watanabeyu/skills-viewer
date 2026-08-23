@@ -292,14 +292,16 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
       why: 'generalize',
       whyRewrite: 'レビュー対応は同じ PR の続きだから',
       how: 'drop',
-      exceptions: [],
+      keepLines: [],
+      index: 'rewrite',
+      indexRewrite: 'レビュー対応は push まで進めて PR 作成の前で止まる',
     });
     expect(text.split('\n')).toEqual([
       '- feedback_worktree_reuse.md の本文を次の構成に置き換える(索引行は変更しない)',
       '- 1 行目(ルール)はそのまま残す: 「レビュー対応は元ブランチで直接作業」',
       '- Why を次の 1 文に書き換える(固有名詞・日付を落とす): 「レビュー対応は同じ PR の続きだから」',
       '- How to apply は description の再掲なので削除する',
-      '- MEMORY.md の索引行は変更しない',
+      '- MEMORY.md の索引行の description を「レビュー対応は push まで進めて PR 作成の前で止まる」に書き換える(本文と異なる境界を言っているため)',
     ]);
     setLang('en');
   });
@@ -307,18 +309,19 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
   it('en: 例外だけ残す分類は抜粋を列挙する', () => {
     const text = buildFeedbackInstruction(base, {
       why: 'keep',
-      how: 'keep-exceptions-only',
-      exceptions: ['unless hotfix', 'except CI'],
+      how: 'keep-lines-only',
+      keepLines: ['unless hotfix', 'except CI'],
+      index: 'keep',
     });
     expect(text).toContain('- Keep Why as is');
     expect(text).toContain(
-      '- In How to apply keep only the exceptions: 「unless hotfix」 / 「except CI」',
+      '- In How to apply keep only the exceptions / boundaries: 「unless hotfix」 / 「except CI」',
     );
     expect(text).toContain('- Do not change the MEMORY.md index line');
   });
 
   it('effectiveInstruction: body があればテンプレート、無ければ AI の散文、keep や出力不正は空', () => {
-    const plan: FeedbackBodyPlan = { why: 'drop', how: 'drop', exceptions: [] };
+    const plan: FeedbackBodyPlan = { why: 'drop', how: 'drop', keepLines: [], index: 'keep' };
     expect(effectiveInstruction(withPlan(plan))).toContain('Replace the body of');
     expect(effectiveInstruction(withPlan(plan, 'keep'))).toBe('');
     expect(
