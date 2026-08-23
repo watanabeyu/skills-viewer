@@ -3,7 +3,7 @@
 All notable changes to this project are documented here, in English followed by Japanese.
 このファイルには主要な変更を記録します(英語の後に日本語を併記)。
 
-## [0.8.0] - Unreleased
+## [0.8.0] - 2026-08-24
 
 Your auto memory now has a place to be seen — and a way to get smaller.
 自動メモリを「見える」ようにし、「減らす」動線をつけました。
