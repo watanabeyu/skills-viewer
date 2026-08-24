@@ -332,4 +332,110 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
     const item = sec.items.find((x) => x.name === 'x')!;
     expect((item.signals || []).some((s) => s.kind === 'other-project')).toBe(false);
   });
+
+  /* 計画 13 検証節の再現シナリオ: プロジェクト不明 + 本文が自分の配下パスを参照 → 付かない */
+  it('プロジェクト不明(未登録の子リポジトリ)は、本文が自分の配下パスを参照しても登録済みの親に other-project が付かない', () => {
+    const orphRoot = path.join(tmp, 'orph-projects');
+    const parent = path.join(tmp, 'orph-work', 'parent'); // 登録済み
+    const child = path.join(tmp, 'orph-work', 'parent', 'child'); // 未登録(登録抹消・未マウントの想定)
+    fs.mkdirSync(child, { recursive: true });
+    const dir = path.join(orphRoot, encodeProjectPath(child), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(child, 'src', 'app.ts') +
+        ' を確認\n',
+    );
+    const secs = scanMemory(path.join(tmp, 'orph-work'), {
+      root: orphRoot,
+      projects: [parent],
+      mainWorktree: null,
+    });
+    const sec = secs.find((s) => s.id === encodeProjectPath(child))!;
+    expect(sec.orphan).toBe(true);
+    expect(sec.projectPath).toBe(null);
+    const item = sec.items.find((x) => x.name === 'x')!;
+    expect((item.signals || []).some((s) => s.kind === 'other-project')).toBe(false);
+  });
+
+  it('プロジェクト不明(メイン未登録)は、登録済みの自リポジトリ worktree に other-project が付かない', () => {
+    const wtRoot = path.join(tmp, 'wt-projects');
+    const mainRepo = path.join(tmp, 'wt-work', 'repo'); // 未登録(memory dir の slug はこちら基準)
+    const wt = path.join(tmp, 'wt-work', 'feat-x'); // メインの linked worktree。これだけ登録
+    fs.mkdirSync(mainRepo, { recursive: true });
+    fs.mkdirSync(wt, { recursive: true });
+    // linked worktree の .git ファイル(mainWorktreeOf は git コマンドを呼ばずこれだけを読む)
+    fs.writeFileSync(
+      path.join(wt, '.git'),
+      'gitdir: ' + path.join(mainRepo, '.git', 'worktrees', 'feat-x') + '\n',
+    );
+    const dir = path.join(wtRoot, encodeProjectPath(mainRepo), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(wt, 'src', 'app.ts') +
+        ' を確認\n',
+    );
+    // mainWorktree を注入しない = mainOf が実際に .git ファイルを読む経路を通す
+    const secs = scanMemory(path.join(tmp, 'wt-work'), { root: wtRoot, projects: [wt] });
+    const sec = secs.find((s) => s.id === encodeProjectPath(mainRepo))!;
+    expect(sec.orphan).toBe(true);
+    const item = sec.items.find((x) => x.name === 'x')!;
+    expect((item.signals || []).some((s) => s.kind === 'other-project')).toBe(false);
+  });
+
+  /* 過剰除外の番犬: path.sep 境界を落とす変異(/s/b が /s/bc を配下扱い)で fail する肯定テスト */
+  it('区切りの無い兄弟(/s/b と /s/bc)は除外されず、配下パス参照で other-project が付く(値はフルパス)', () => {
+    const sibRoot = path.join(tmp, 'sib-projects');
+    const b = path.join(tmp, 'sib-work', 'b');
+    const bc = path.join(tmp, 'sib-work', 'bc');
+    fs.mkdirSync(b, { recursive: true });
+    fs.mkdirSync(bc, { recursive: true });
+    const dir = path.join(sibRoot, encodeProjectPath(b), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(bc, 'src', 'app.ts') +
+        ' を確認\n',
+    );
+    const secs = scanMemory(b, { root: sibRoot, projects: [b, bc], mainWorktree: null });
+    const sec = secs.find((s) => s.projectPath === b)!;
+    const item = sec.items.find((x) => x.name === 'x')!;
+    const sig = (item.signals || []).find((s) => s.kind === 'other-project');
+    expect(sig?.value).toBe(bc);
+  });
+
+  it('入れ子の逆方向: 子プロジェクトの memory が親配下のパスを参照しても other-project は付かない', () => {
+    const revRoot = path.join(tmp, 'rev-projects');
+    const parent = path.join(tmp, 'rev-work', 'parent');
+    const child = path.join(tmp, 'rev-work', 'parent', 'child');
+    fs.mkdirSync(child, { recursive: true });
+    const dir = path.join(revRoot, encodeProjectPath(child), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(parent, 'docs', 'guide.md') +
+        ' を確認\n',
+    );
+    const secs = scanMemory(child, {
+      root: revRoot,
+      projects: [parent, child],
+      mainWorktree: null,
+    });
+    const sec = secs.find((s) => s.projectPath === child)!;
+    const item = sec.items.find((x) => x.name === 'x')!;
+    expect((item.signals || []).some((s) => s.kind === 'other-project')).toBe(false);
+  });
 });

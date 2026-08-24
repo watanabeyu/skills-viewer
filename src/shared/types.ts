@@ -82,7 +82,8 @@ export type MemorySignalKind =
   | 'first-line-restates'
   /* feedback として本文が長い(value = tok) */
   | 'body-over'
-  /* 本文が別の登録プロジェクトの配下パスを指す(value = そのプロジェクト名)。置き場所の誤りの機械的な根拠 */
+  /* 本文が別の登録プロジェクトの配下パスを指す(value = そのプロジェクトのフルパス。
+   * 同名プロジェクトを区別するため basename にしない)。置き場所の誤りの機械的な根拠 */
   | 'other-project'
   /* AI が「索引行と本文が違うことを言っている」と答えた(診断時。value = description の冒頭) */
   | 'index-mismatch';

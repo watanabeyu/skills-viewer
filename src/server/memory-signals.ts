@@ -23,7 +23,8 @@ export interface SignalOptions {
   memoryType?: MemoryType;
   /* 本文の概算 tok(body-over の判定用) */
   bodyTokens?: number;
-  /* この memory のプロジェクト以外の登録プロジェクト(worktree 関係は除外済み)。other-project の判定用 */
+  /* この memory のプロジェクト以外の登録プロジェクト。自分自身(slug 一致・worktree 関係)と
+   * 入れ子(親子)は呼び出し側(memory.ts)で除外済み。other-project の判定用 */
   otherProjects?: string[];
 }
 
@@ -124,7 +125,7 @@ export function extractSignals(
  * 「別プロジェクトの話が混入した memory」の機械的な根拠で、置き場所(wrong-project)の判断材料になる。
  * 呼び出し側で自分自身(slug 一致を含む)・worktree 関係・入れ子プロジェクトは除いて渡す。
  * 値はフルパス(basename だと teamA/ai-workspace と teamB/ai-workspace のような
- * 同名プロジェクトを区別できないため。basename が要る表示側で導出する)。
+ * 同名プロジェクトを区別できないため。区別が目的なので表示側もフルパスのまま出す)。
  */
 export function otherProjectRefs(body: string, home: string, others: string[]): string[] {
   if (!others.length) return [];

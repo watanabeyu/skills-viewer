@@ -50,13 +50,13 @@ export function TokFacts({ it, cls, bold }: { it: SkillItem; cls?: string; bold?
  * セクション見出し・棚卸しタイトルに共通で出す副題 1 行(フルパス)。
  * projectName は basename 由来で同名プロジェクト(teamA/ai-workspace と teamB/ai-workspace)を
  * 区別できないため、見出しの下に必ずフルパスを添える。プロジェクト不明は逆引き先が無いので
- * memory ディレクトリの実パス(note)を出す。
+ * memory ディレクトリの実パス(note)を、プロジェクトのパスと誤読されないよう別ラベルで出す。
  */
 export function MemoryPathSub({ sec }: { sec: MemorySection }) {
   const p = sec.projectPath ?? sec.note;
   return (
     <div className="path-sub" title={p}>
-      {t('memory.sec.path', { path: p })}
+      {t(sec.projectPath ? 'memory.secPath' : 'memory.secMemDir', { path: p })}
     </div>
   );
 }

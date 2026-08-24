@@ -2006,6 +2006,9 @@ button {
   background: #f4f1ea;
   border-radius: 6px;
   padding: 4px 9px;
+  /* other-project シグナルの値がフルパス化して長くなったため、区切りの無い文字列でも折り返す */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .instr {
   background: #f4f1ea;

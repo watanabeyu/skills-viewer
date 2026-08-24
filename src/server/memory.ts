@@ -161,6 +161,8 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
   const projects = [...new Set([...(opts.projects ?? listProjects(cwd)), ...(main ? [main] : [])])];
   const byEncoded = new Map<string, string>();
   for (const p of projects) byEncoded.set(encodeProjectPath(p), p);
+  // project → slug の順方向 Map。byEncoded は slug 衝突時に後勝ちで逆引き専用のため、別に持つ
+  const slugOf = new Map(projects.map((p) => [p, encodeProjectPath(p)] as const));
   const currentPaths = new Set([cwdResolved, ...(main ? [main] : [])]);
   // 登録プロジェクトごとのメインワークツリー(.git を見るだけ)。other-project の除外判定で使い回す
   const mainCache = new Map<string, string | null>();
@@ -194,16 +196,23 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
     const index = readIndex(memDir);
     const projectPath = byEncoded.get(d.name) ?? null;
     // 「別プロジェクトのパス」の候補。次を除外する:
-    //   - 自分自身: 登録一致(p === projectPath)、または slug 一致(encodeProjectPath(p) === d.name)。
-    //     slug 一致の除外はプロジェクト不明(projectPath null)でも効かせる。そうしないと、
-    //     本文が自分の配下パスを参照するだけで「別の登録プロジェクトの話」というシグナルが誤って付く
+    //   - 自分自身: slug 一致(登録一致 p === projectPath はこれに包含される)。加えて
+    //     **メインワークツリーの slug 一致**も自分扱いにする。memory dir の slug はメインワークツリー
+    //     基準なので、メインが未登録で worktree だけ登録されている環境では p 自身の slug が
+    //     d.name と一致しない(そのまま残すと、本文が自リポジトリの worktree 配下パスを
+    //     参照するだけで「別の登録プロジェクトの話」というシグナルが誤って付く)
     //   - worktree 関係(メインワークツリー同士)
     //   - 入れ子プロジェクト(親子関係。親の memory が子の配下パスに触れるだけで
-    //     wrong-project 経路に乗ってしまうのを防ぐ)
+    //     wrong-project 経路に乗ってしまうのを防ぐ)。プロジェクト不明(projectPath null)は
+    //     実パスでの親子判定ができないため、slug の区切り付き前方一致(usage.ts の
+    //     hasTranscripts と同じパターン)で祖先・子孫を除外する。`-` を含む兄弟を過剰除外し得るが、
+    //     過剰除外は「シグナルが付かない → keep」の安全側
     const otherProjects = projects.filter((p) => {
-      if (p === projectPath || encodeProjectPath(p) === d.name) return false;
-      if (!projectPath) return true;
-      if (mainOf(p) === projectPath || mainOf(projectPath) === p) return false;
+      const ps = slugOf.get(p)!;
+      const pMain = mainOf(p);
+      if (ps === d.name || (pMain && encodeProjectPath(pMain) === d.name)) return false;
+      if (!projectPath) return !(d.name.startsWith(ps + '-') || ps.startsWith(d.name + '-'));
+      if (pMain === projectPath || mainOf(projectPath) === p) return false;
       return !(p.startsWith(projectPath + path.sep) || projectPath.startsWith(p + path.sep));
     });
     const items: SkillItem[] = [];

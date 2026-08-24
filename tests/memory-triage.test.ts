@@ -710,6 +710,7 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
         signals: [
           { kind: 'date', value: '2026-06-01', days: 83 },
           { kind: 'path-missing', value: 'src/old.ts' },
+          { kind: 'other-project', value: '/w/other' },
         ],
       }),
       targets[0],
@@ -722,10 +723,13 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(ja).toContain('- 本文の最新日付 2026-06-01(83 日前)');
     expect(ja).toContain('- 参照パスが存在しない: src/old.ts');
     expect(ja).toContain('- ブランチ feat/x はマージ済み');
+    // other-project の値はフルパスのままプロンプトに載る(Phase B のゲート条件の前提)
+    expect(ja).toContain('- 本文が別の登録プロジェクト「/w/other」配下のパスを指している');
     expect(ja).toContain('signals(機械が拾った鮮度の事実):\n(なし)');
     const en = buildPrompt(withSig, ctx, 'en', extra);
     expect(en).toContain('- latest date in body: 2026-06-01 (83 days ago)');
     expect(en).toContain('- branch feat/x is already merged');
+    expect(en).toContain('- the body points at a path under another registered project "/w/other"');
     expect(en).toContain('signals (freshness facts collected mechanically):\n(none)');
   });
 
