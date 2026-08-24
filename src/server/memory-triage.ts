@@ -72,6 +72,10 @@ const STATES: readonly MemoryState[] = ['current', 'outdated', 'historical', 'ob
  * to-user-claude-md は帰属先を問わない行き先なので「制限しなくてよいのでは」という論点はあるが、
  * 判断 5 の確定仕様(採用は 3 値のみ)を変えずに許可リスト方式のまま格下げ対象に含める。
  */
+// 補足 1: type × state 表には to-* の行き先が制限つきプロンプトでも残る(適合表の新行だけゲート)。
+// restrictedNote の「keep / shrink / update のみ」と値数制約が上書きし、外れはサーバーが格下げする前提。
+// 補足 2: to-user-claude-md に memoryType(user / feedback)の機械ゲートは置かない。適用条件は
+// プロンプト要件 + 全プロジェクト注入のコスト警告 + 貼り先の「確認 → 承認後に実行」の 3 層で持つ
 const ORPHAN_ALLOWED_VERDICTS: readonly MemoryVerdict[] = ['keep', 'shrink', 'update'];
 /*
  * 型ガードにしておくと、格下げ側(demoted)に「実際に格下げされ得る値」だけが流れることを
@@ -202,15 +206,16 @@ export function collectTriageContext(
 ): { rules: string; skills: string } {
   const home = opts.home || HOME;
   const pp = sec.projectPath;
-  const files: { file: string; label: string }[] = [];
+  // ~/.claude/CLAUDE.md を先頭に積む: to-user-claude-md の追記先そのものなので、
+  // 見出しが RULES_MAX_LINES の末尾切りで丸ごと落ちると「現状を知らずに追記を提案」になる。
+  // プロジェクト側の見出しは重複 delete の材料だが、末尾が欠けるほうが被害が小さい
+  const files: { file: string; label: string }[] = [
+    { file: path.join(home, '.claude', 'CLAUDE.md'), label: '~/.claude/CLAUDE.md' },
+  ];
   if (pp) {
     files.push({ file: path.join(pp, 'CLAUDE.md'), label: 'CLAUDE.md' });
     files.push({ file: path.join(pp, '.claude', 'CLAUDE.md'), label: '.claude/CLAUDE.md' });
   }
-  files.push({
-    file: path.join(home, '.claude', 'CLAUDE.md'),
-    label: '~/.claude/CLAUDE.md',
-  });
 
   const ruleLines: string[] = [];
   for (const f of files) {
@@ -657,7 +662,8 @@ export function buildPrompt(
       'MEMORY.md の該当索引行の削除\n' +
       '- to-user-claude-md の instruction に必ず含めること: 追記先が ~/.claude/CLAUDE.md であること / ' +
       '既に同じことが書いてないか確認してから追記すること / MEMORY.md の該当索引行の削除 / ' +
-      '「**全プロジェクト**の毎セッションに +(本文 tok) tok」というコスト警告\n' +
+      '「全プロジェクトの毎セッションに +(本文 tok) tok 増える」というコスト警告' +
+      '(「全プロジェクト」であることを必ず書く。指示文はプレーンテキストなので ** などの装飾は使わない)\n' +
       '- 6 行に収まらない提案は複雑すぎるサインです。より単純な行き先を選ぶこと\n' +
       '- 出力の文章はすべて日本語で書くこと\n\n' +
       '# プロジェクト: ' +
@@ -856,7 +862,7 @@ export const invalidTriage = (): MemoryTriage => ({
 
 /*
  * 出力を検証つきでパース。file 対応が取れない要素(対象外・欠落・重複)は捨て、
- * verdict が 8 値以外・state が 4 値以外(欠落含む)・keep 以外で指示文が空の要素は出力不正として記録する
+ * verdict が VERDICTS 以外・state が 4 値以外(欠落含む)・keep 以外で指示文が空の要素は出力不正として記録する
  * (誤った行き先は提示しないが、診断済みであることは残して再 call を防ぐ)。
  */
 /*

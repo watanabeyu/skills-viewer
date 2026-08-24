@@ -1946,6 +1946,9 @@ button {
   padding: 2.5px 9px;
   border-radius: 999px;
   white-space: nowrap;
+  /* v-<verdict> の個別ルールが無い場合のフォールバック(新 verdict 追加時に無地バッジにしない) */
+  color: #6b675c;
+  background: #efece4;
 }
 .vbadge.v-to-docs {
   color: #5b7285;

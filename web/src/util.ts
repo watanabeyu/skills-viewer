@@ -325,6 +325,38 @@ export function effectiveInstruction(it: SkillItem): string {
   return tri.instruction;
 }
 
+/* 試算の符号付き表記(0 は増減なしを明示するため ±0) */
+export const signed = (n: number) =>
+  (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n).toLocaleString();
+
+/*
+ * 削減試算のラベル。機械層で計算する(AI に数値を出させない)。
+ * shrink / update は索引が変わらないので数値でなく文言だけ、keep は空。
+ * コンポーネントでなくここに置くのは、verdict × 上限外の分岐(特に to-user-claude-md の
+ * 「全プロジェクト」注記)をテストで固定するため(コンポーネントテスト基盤は無い)。
+ */
+export function estimateLabel(it: SkillItem): string {
+  if (it.aiTriage?.verdict === 'shrink') return t('memory.triage.estShrink');
+  if (it.aiTriage?.verdict === 'update') return t('memory.triage.estUpdate');
+  const est = triageEstimate(it);
+  if (!est) return '';
+  // 読み込み上限の外にある索引行は元から注入されていないので、消しても常時コストは減らない。
+  // 「索引 ±0」だけだと変更なしに見えるため、減らない理由まで書く(delete / to-docs / … 系)
+  if (it.indexBeyondLimit && est.always === 0) return t('memory.triage.estApplyBeyond');
+  // user scope の CLAUDE.md 行きは増える先が全プロジェクトなので、同じ式でも文言を分ける
+  if (it.aiTriage?.verdict === 'to-user-claude-md' && est.always > 0)
+    return t('memory.triage.estApplyUserClaude', {
+      n: signed(est.index),
+      m: est.always.toLocaleString(),
+    });
+  if (est.always > 0)
+    return t('memory.triage.estApplyClaude', {
+      n: signed(est.index),
+      m: est.always.toLocaleString(),
+    });
+  return t('memory.triage.estApply', { n: signed(est.index) });
+}
+
 /* 提案(指示文)のある memory だけ。サマリ・まとめコピーが同じ母集団を見るよう 1 箇所に置く */
 export const instructionsOf = (items: SkillItem[]) =>
   items.filter((it) => effectiveInstruction(it));

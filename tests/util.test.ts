@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { MemorySection, MemoryVerdict, SkillItem } from '../src/shared/types';
 import { itemKey } from '../web/src/api';
 import {
+  estimateLabel,
   backlinksOf,
   brokenLinkCount,
   copyInstruction,
@@ -333,6 +334,34 @@ describe('factHeader / copyInstruction (コピー本文の事実ヘッダ)', () 
 });
 
 /* 判断 7(計画 13 Phase B): 偏りは verdict を上書きせず警告の材料にするだけ */
+describe('estimateLabel (削減試算の文言分岐)', () => {
+  const item = (verdict: MemoryVerdict, over: Partial<SkillItem> = {}) =>
+    mem('el-' + verdict, {
+      indexTokens: 30,
+      bodyTokens: 200,
+      aiTriage: { verdict, reason: '', issues: [], instruction: '- x' },
+      ...over,
+    });
+
+  it('to-user-claude-md は「全プロジェクト」注記つきの専用文言(estApplyUserClaude)を使う', () => {
+    const label = estimateLabel(item('to-user-claude-md'));
+    expect(label).toContain('EVERY project'); // 既定言語 en。全プロジェクト注入の 2 軸目
+    expect(label).toContain('always-on'); // 常時注入の 1 軸目
+    expect(label).toContain('200');
+  });
+
+  it('to-claude-md は従来の estApplyClaude(1 プロジェクトの常時注入)のまま', () => {
+    const label = estimateLabel(item('to-claude-md'));
+    expect(label).toContain('always-on');
+    expect(label).not.toContain('EVERY project');
+  });
+
+  it('上限外 + delete 系は estApplyBeyond(索引 ±0 の理由)を優先する', () => {
+    const label = estimateLabel(item('delete', { indexBeyondLimit: true }));
+    expect(label).toBe(t('memory.triage.estApplyBeyond'));
+  });
+});
+
 describe('skewedVerdict (提案の偏り検知)', () => {
   const at = (verdict: MemoryVerdict, over: Partial<SkillItem['aiTriage']> = {}) => ({
     aiTriage: { verdict, reason: '', issues: [], instruction: '- x', ...over },

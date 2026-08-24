@@ -19,6 +19,8 @@ import {
   memoryListSearch,
   memoryResolver,
   skewedVerdict,
+  estimateLabel,
+  signed,
   triageEstimate,
 } from '../util';
 import { memoryVerdictLabel, t } from '../i18n';
@@ -32,35 +34,6 @@ import { renderMemoryBody } from './MemoryDetail';
  * 判断は 3 層(機械 = 事実の提示 / AI = 行き先の仮説と指示文 / 人間 = 指示文を貼るかどうか)で、
  * viewer は採否の選択状態を持たない。操作はコピーだけ、実行は貼り先の Claude Code に委ねる。
  */
-
-/* 試算の符号付き表記(0 は増減なしを明示するため ±0) */
-const signed = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n).toLocaleString();
-
-/*
- * 削減試算のラベル。機械層で計算する(AI に数値を出させない)。
- * shrink / update は索引が変わらないので数値でなく文言だけ、keep は空。
- */
-function estimateLabel(it: SkillItem): string {
-  if (it.aiTriage?.verdict === 'shrink') return t('memory.triage.estShrink');
-  if (it.aiTriage?.verdict === 'update') return t('memory.triage.estUpdate');
-  const est = triageEstimate(it);
-  if (!est) return '';
-  // 読み込み上限の外にある索引行は元から注入されていないので、消しても常時コストは減らない。
-  // 「索引 ±0」だけだと変更なしに見えるため、減らない理由まで書く(delete / to-docs / … 系)
-  if (it.indexBeyondLimit && est.always === 0) return t('memory.triage.estApplyBeyond');
-  // user scope の CLAUDE.md 行きは増える先が全プロジェクトなので、同じ式でも文言を分ける
-  if (it.aiTriage?.verdict === 'to-user-claude-md' && est.always > 0)
-    return t('memory.triage.estApplyUserClaude', {
-      n: signed(est.index),
-      m: est.always.toLocaleString(),
-    });
-  if (est.always > 0)
-    return t('memory.triage.estApplyClaude', {
-      n: signed(est.index),
-      m: est.always.toLocaleString(),
-    });
-  return t('memory.triage.estApply', { n: signed(est.index) });
-}
 
 /* 1 件の棚卸しを実行(詳細画面の「✦ 棚卸し診断」)。診断済みなら force で診断し直す */
 export const runTriageOne = (sec: MemorySection, it: SkillItem) =>

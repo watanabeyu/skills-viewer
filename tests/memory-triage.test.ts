@@ -834,7 +834,7 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
       '- to-user-claude-md の instruction に必ず含めること: 追記先が ~/.claude/CLAUDE.md',
     );
     expect(ja).toContain('既に同じことが書いてないか確認してから追記すること');
-    expect(ja).toContain('「**全プロジェクト**の毎セッションに +(本文 tok) tok」というコスト警告');
+    expect(ja).toContain('「全プロジェクトの毎セッションに +(本文 tok) tok 増える」というコスト警告');
     const en = buildPrompt(targets, ctx, 'en');
     expect(en).toContain('- For to-user-claude-md, the instruction MUST cover');
     expect(en).toContain('checking it does not already say the same thing before appending');
