@@ -280,7 +280,7 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
       note: memDir,
       // worktree 用の memory が将来作られたら両方 current になる(統合はしない)
       ...(projectPath && currentPaths.has(projectPath) ? { isCurrent: true } : {}),
-      // orphan の真実源はここだけ。空文字のパスと「逆引き失敗(null)」を取り違えないよう明示比較にする
+      // orphan の真実源はここだけ(逆引き失敗は null で表す。byEncoded の値に空文字は入らない)
       ...(projectPath === null ? { orphan: true } : {}),
       usageAvailable: false, // 実測は Phase B で算出する
       indexTokens: items.reduce((sum, it) => sum + (it.indexTokens || 0), 0),

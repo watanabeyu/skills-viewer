@@ -2017,13 +2017,11 @@ button {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* 格下げ件(未検証のモデルの見立て)の根拠。塗りを外した破線で、裏付けのある事実チップと区別する */
+/* 格下げ件(未検証のモデルの見立て)の根拠。opacity は文字コントラストを削って AA を割るので使わず、
+ * 塗りは残したまま warn 系の淡い左アクセントで「裏付けのある事実チップ」と区別する */
 .issue.demoted {
-  opacity: 0.75;
-  background: transparent;
-  border: 1px dashed #ddd8ce;
-  /* 枠線ぶん高さが増えて事実チップと行が揃わなくなるのを避ける */
-  padding: 3px 8px;
+  border-left: 3px solid rgba(200, 72, 48, 0.4);
+  border-radius: 3px 6px 6px 3px;
 }
 .instr {
   background: #f4f1ea;

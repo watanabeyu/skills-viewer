@@ -814,12 +814,25 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(ja).toContain('(プロジェクト不明のため wrong-project は選べない。候補なし)');
     expect(ja).not.toContain('# このプロジェクトで常時有効なもの');
     expect(ja).not.toContain('# 運用ルール');
+    // wrong-project の手順書き(適合表の行・出力スキーマの target 行・制約行)も orphan では出ない
+    expect(ja).not.toContain('| wrong-project |');
+    expect(ja).not.toContain('"target": "wrong-project のときのみ必須');
+    expect(ja).not.toContain('"target" に候補一覧のパスをそのまま入れる');
+    expect(ja).toContain(
+      '- verdict は keep / shrink / update のみを使う(それ以外はその件ごと不採用になる)',
+    );
 
     const en = buildPrompt(targets, orphanCtx, 'en', undefined, cands);
     expect(en).not.toContain('The memories belong to the project above');
     expect(en).not.toContain('# Destination candidates for wrong-project');
     expect(en).toContain('(unknown project: wrong-project cannot be chosen');
     expect(en).not.toContain('# Always-on context for this project');
+    expect(en).not.toContain('| wrong-project |');
+    expect(en).not.toContain('"target": "required for wrong-project only');
+    expect(en).not.toContain('Use wrong-project only for a memory');
+    expect(en).toContain(
+      '- verdict must be one of keep / shrink / update; anything else makes that element unusable.',
+    );
   });
 
   /* orphan の追加文言: 鮮度の着地点(keep のまま)と、memory の実体の実パス(サーバーの確定事実) */

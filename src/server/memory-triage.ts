@@ -122,7 +122,8 @@ export interface TriageContext {
    * ここへ渡ってこない直接呼び出し(テスト等)だけ projectPath === null にフォールバックする
    */
   orphan?: boolean;
-  /* memory の実体があるディレクトリの実パス。プロジェクト不明のときだけ「サーバーが確定できた事実」として渡す */
+  /* memory の実体があるディレクトリの実パス。値は常に運び、プロンプトに出すのは
+   * プロジェクト不明のときだけ(buildPrompt 側で出し分ける) */
   memDir?: string;
   /* MEMORY.md の全文(無ければ空文字) */
   index: string;
@@ -526,8 +527,11 @@ export function buildPrompt(
       '## 1. 置き場所の適合(state に関係なく先に決まる)\n' +
       '| 状況 | 行き先 |\n' +
       '|---|---|\n' +
-      '| 別プロジェクトの話(signals に「別の登録プロジェクトの配下パス」がある件**のみ**選べる。' +
-      'そのパスを "target" にそのまま返す) | wrong-project |\n' +
+      // orphan では wrong-project 自体を禁じている(orphanNote)ので、行き方の説明も載せない
+      (orphan
+        ? ''
+        : '| 別プロジェクトの話(signals に「別の登録プロジェクトの配下パス」がある件**のみ**選べる。' +
+          'そのパスを "target" にそのまま返す) | wrong-project |\n') +
       '| 内容が特定の skill / command の手順や挙動に対する好み(例: PR 作成前に止まる、ブランチ名の確認) | ' +
       'その skill の SKILL.md に追記して memory を消す(to-skill)。全プロジェクトで効くようになる |\n' +
       '| CLAUDE.md や skill に既に同じことが書いてある | delete |\n' +
@@ -577,7 +581,9 @@ export function buildPrompt(
       '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
       '  "index_matches_body": true | false(索引行の description と本文が同じ境界・段階・内容を言っていれば true、違うことを言っていれば false。全件必須),\n' +
       '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
-      '  "target": "wrong-project のときのみ必須。移動先候補の一覧から選んだパスをそのまま(他の verdict では省略)",\n' +
+      (orphan
+        ? ''
+        : '  "target": "wrong-project のときのみ必須。移動先候補の一覧から選んだパスをそのまま(他の verdict では省略)",\n') +
       '  "reason": "そう判断した理由(1〜3文。state の根拠を必ず含める)",\n' +
       '  "issues": ["判断の根拠になった事実(各30字程度、最大4件。無ければ空配列)"],\n' +
       '  "instruction": "Claude Code に貼る指示文(keep のときは空文字)",\n' +
@@ -590,9 +596,11 @@ export function buildPrompt(
       files +
       ')それぞれについて 1 要素ずつ、過不足なく出すこと\n' +
       '- state は上記 4 値、verdict は上記 8 値のみ。それ以外の値は使わない。state を省略しない\n' +
-      '- wrong-project は signals に「別の登録プロジェクトの配下パス」がある件だけに使い、' +
-      '"target" に候補一覧のパスをそのまま入れる。シグナルが無い件を wrong-project にしない' +
-      '(移動先を推測で書かない)。候補外・欠落の "target" はその件ごと不採用になる\n' +
+      (orphan
+        ? '- verdict は keep / shrink / update のみを使う(それ以外はその件ごと不採用になる)\n'
+        : '- wrong-project は signals に「別の登録プロジェクトの配下パス」がある件だけに使い、' +
+          '"target" に候補一覧のパスをそのまま入れる。シグナルが無い件を wrong-project にしない' +
+          '(移動先を推測で書かない)。候補外・欠落の "target" はその件ごと不採用になる\n') +
       '- update の instruction は「どの記述を何に直すか」(日付・パス・手順・type の付け替え)を具体に書く。' +
       '索引行は消さないが、description が古ければ MEMORY.md の索引行の書き換えも書く\n' +
       '- instruction は各行を「- 」で始める箇条書きで 3〜6 行。改行で区切る(1 行 1 要点)。' +
@@ -637,8 +645,11 @@ export function buildPrompt(
     '## 1. Placement fit (decided first, regardless of state)\n' +
     '| situation | destination |\n' +
     '|---|---|\n' +
-    '| belongs to a different project (ONLY selectable when the signals of that memory show a path under ' +
-    'another registered project; return that path as "target") | wrong-project |\n' +
+    // orphan では wrong-project 自体を禁じている(orphanNote)ので、行き方の説明も載せない
+    (orphan
+      ? ''
+      : '| belongs to a different project (ONLY selectable when the signals of that memory show a path under ' +
+        'another registered project; return that path as "target") | wrong-project |\n') +
     '| a preference about how a specific skill / command behaves (e.g. stop before creating the PR, ' +
     'confirm the branch name) | add it to that skill SKILL.md and drop the memory (to-skill); ' +
     'it then applies in every project |\n' +
@@ -697,7 +708,9 @@ export function buildPrompt(
     '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
     '  "index_matches_body": true | false (true when the description in the index line says the same boundary / stage / content as the body, false when they differ; required for every element),\n' +
     '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
-    '  "target": "required for wrong-project only: a path copied verbatim from the candidate list (omit for other verdicts)",\n' +
+    (orphan
+      ? ''
+      : '  "target": "required for wrong-project only: a path copied verbatim from the candidate list (omit for other verdicts)",\n') +
     '  "reason": "why (1-3 sentences; always include the evidence for the state)",\n' +
     '  "issues": ["facts behind the call (about 10 words each, max 4; empty array if none)"],\n' +
     '  "instruction": "instruction to paste into Claude Code (empty string when verdict is keep)",\n' +
@@ -711,9 +724,11 @@ export function buildPrompt(
     '), no more, no less.\n' +
     '- state must be one of the four values and verdict one of the eight values above; never invent ' +
     'another value, never omit state.\n' +
-    '- Use wrong-project only for a memory whose own signals show a path under another registered project, ' +
-    'and put that path into "target" exactly as listed in the candidates. Never use wrong-project without ' +
-    'that signal (never guess a destination); a missing or unlisted "target" makes the whole element unusable.\n' +
+    (orphan
+      ? '- verdict must be one of keep / shrink / update; anything else makes that element unusable.\n'
+      : '- Use wrong-project only for a memory whose own signals show a path under another registered project, ' +
+        'and put that path into "target" exactly as listed in the candidates. Never use wrong-project without ' +
+        'that signal (never guess a destination); a missing or unlisted "target" makes the whole element unusable.\n') +
     '- For update, the instruction says concretely which statements change to what (dates, paths, steps, ' +
     'the type tag). The index line stays, but if the description is stale, also say to rewrite the MEMORY.md line.\n' +
     '- instruction is a bullet list of 3 to 6 lines, every line starting with "- ", one point per line, ' +
@@ -1138,7 +1153,7 @@ export async function triageProject(
   if (stale.length) {
     // orphan は常設文脈(CLAUDE.md 見出し・skill 一覧)をプロンプトに載せない(置き場所判定を
     // しないため)ので、遅延フルスキャンごとスキップして無駄な走査を払わない
-    const standing = sec.orphan
+    const standing = orphan
       ? { rules: '', skills: '' }
       : collectTriageContext(sec, opts.sections?.() || []);
     const ctx: TriageContext = {
