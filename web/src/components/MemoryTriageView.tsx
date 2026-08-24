@@ -124,7 +124,13 @@ function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
   );
   return (
     <>
-      {tri.reason && <p className="reason">{tri.reason}</p>}
+      {/* 格下げ件の理由文は機械シグナルの裏付けが無いモデルの見立てなので、事実と混ぜずラベルを付ける */}
+      {tri.reason && (
+        <p className="reason">
+          {tri.demoted && t('memory.triage.demotedReason')}
+          {tri.reason}
+        </p>
+      )}
       {!!warns.length && (
         <div className="issues">
           {warns.map((s, i) => (

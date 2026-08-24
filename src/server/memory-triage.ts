@@ -27,7 +27,7 @@ import type {
   SkillItem,
 } from '../shared/types';
 import { pruneMissing } from './cache';
-import { mainWorktreeOf } from './memory';
+import { repoRootOf } from './memory';
 import { branchSignals, episodicTokens, loadBranches } from './memory-signals';
 import { HOME, parseFrontmatter } from './scan';
 import { contentHash, runClaude } from './summary';
@@ -214,12 +214,30 @@ export function otherProjectPaths(signals: MemorySignal[]): string[] {
 }
 
 /*
- * 移動先の memory ディレクトリ。worktree は memory を共有する(memory dir の slug は
- * メインワークツリー基準で作られる)ので、slug はメインワークツリーのパスから算出する。
- * 表示・指示文用の文字列なので、HOME は展開せず `~/` 表記のままにする。
+ * wrong-project の移動先候補(判断 3)。件ごとの other-project シグナルの値を、
+ * scanMemory が算出した「別の登録プロジェクト」集合(自分自身・worktree・入れ子は除外済み)で
+ * 絞る。候補が空の件は wrong-project を採用しない(parseTriage が keep へ格下げする)
+ */
+export function candidatesFor(sec: MemorySection, signals: MemorySignal[]): string[] {
+  const registered = new Set(sec.otherProjects || []);
+  return otherProjectPaths(signals).filter((p) => registered.has(p));
+}
+
+/*
+ * 移動先の memory ディレクトリ。memory はリポジトリ単位で共有される(worktree にも
+ * サブディレクトリにも専用の memory dir は作られない)ので、slug はリポジトリのルート
+ * = repoRootOf から算出する(登録パスのままでは実在しない slug になる)。
+ * 表記は絶対パス。web の事実ヘッダ(sec.note)も一覧の副題も絶対パスなので、
+ * コピー文の中でパス表記が `~/` と絶対パスに混在しないように揃える。
  */
 export function targetMemDirOf(project: string): string {
-  return '~/.claude/projects/' + encodeProjectPath(mainWorktreeOf(project) ?? project) + '/memory/';
+  return path.join(
+    HOME,
+    '.claude',
+    'projects',
+    encodeProjectPath(repoRootOf(project) ?? project),
+    'memory',
+  );
 }
 
 /* シグナルをプロンプト用の 1 行ずつに(言語別)。無ければ「(なし)」で節を落とさない */
@@ -285,7 +303,11 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
     .join('\n');
 }
 
-/* 1 件分の事実 + 本文。本文は diagnose.ts と同じく 12,000 字で切る */
+/*
+ * 1 件分の事実 + 本文。本文は diagnose.ts と同じく 12,000 字で切る。
+ * `## file:` の basename は parseTriage が出力を突き合わせる照合キーなので promptPath を通さない
+ * (加工すると返ってきた file 名と一致しなくなり、全件が対象外として捨てられる)。
+ */
 function itemBlock(
   it: SkillItem,
   usageAvailable: boolean,
@@ -370,7 +392,12 @@ export function buildPrompt(
   const candLines = [...cands]
     .map(
       ([p, hits]) =>
-        '- ' + promptPath(p) + (lang === 'ja' ? '(該当: ' : ' (seen in: ') + hits.join(', ') + ')',
+        '- ' +
+        promptPath(p) +
+        (lang === 'ja' ? '(該当: ' : ' (seen in: ') +
+        // ファイル名もディレクトリ名由来の外部入力なので、候補行が 1 行を超えないよう通す
+        promptPath(hits.join(', ')) +
+        ')',
     )
     .join('\n');
   const candidates =
@@ -501,7 +528,7 @@ export function buildPrompt(
       '- 6 行に収まらない提案は複雑すぎるサインです。より単純な行き先を選ぶこと\n' +
       '- 出力の文章はすべて日本語で書くこと\n\n' +
       '# プロジェクト: ' +
-      ctx.projectName +
+      promptPath(ctx.projectName) +
       (ctx.projectPath ? '(パス: ' + promptPath(ctx.projectPath) + ')' : '') +
       '\n' +
       'この memory の持ち主は上のプロジェクトです。signals に「別の登録プロジェクトの配下パス」がある件は、' +
@@ -621,7 +648,7 @@ export function buildPrompt(
     '- A proposal that does not fit in 6 lines is too complex; pick a simpler destination.\n' +
     '- Write all prose in English.\n\n' +
     '# Project: ' +
-    ctx.projectName +
+    promptPath(ctx.projectName) +
     (ctx.projectPath ? ' (path: ' + promptPath(ctx.projectPath) + ')' : '') +
     '\n' +
     'The memories belong to the project above. When signals show paths under another registered project, ' +
@@ -805,8 +832,20 @@ export function parseTriage(
         });
         continue;
       }
-      const target = typeof e?.target === 'string' ? e.target.trim() : '';
-      if (!cands.includes(target)) {
+      /*
+       * 候補はプロンプトへ promptPath(改行落とし + 200 字切り)を通した「表示文字列」で
+       * 載せているので、照合も表示文字列で行う(生パスで比べると、長い・改行入りのパスは
+       * 一覧どおりにコピーされても必ず不一致になる)。採用するのは写像で戻した生パス。
+       * 表示が衝突する候補は戻せない(どちらか決められない)ので null にして無効化する。
+       */
+      const byDisplay = new Map<string, string | null>();
+      for (const c of cands) {
+        const d = promptPath(c);
+        byDisplay.set(d, byDisplay.has(d) ? null : c);
+      }
+      const answer = typeof e?.target === 'string' ? e.target.trim() : '';
+      const target = byDisplay.get(promptPath(answer)) ?? null;
+      if (!target) {
         out.set(file, invalidTriage());
         continue;
       }
@@ -832,7 +871,9 @@ export function parseTriage(
       state,
       reason,
       issues,
-      instruction: instruction.slice(0, 1200),
+      // 移動先が確定した wrong-project は web がテンプレートで指示文を組むので、モデルの散文は
+      // キャッシュにも応答にも残さない(格下げ側と対称。捏造混じりの文面をコピーさせない)
+      instruction: dest.target ? '' : instruction.slice(0, 1200),
       ...dest,
       ...(body ? { body } : {}),
       ...idxMatch,
@@ -853,6 +894,17 @@ export function applyIndexMismatch(r: MemoryTriage, it: SkillItem): MemoryTriage
     signals.push({ kind: 'index-mismatch', value: it.description.slice(0, 40) });
   const body = r.body && r.body.index === 'keep' ? { ...r.body, index: 'align' as const } : r.body;
   return { ...r, signals, ...(body ? { body } : {}) };
+}
+
+/*
+ * ゲート導入前(v0.8.0)の wrong-project キャッシュか。移動先はモデルの散文任せで、
+ * 捏造された移動先を含みうる。再診断の対象にする条件と、キャッシュを表示に載せない条件は
+ * 同じでなければならない(片方だけ緩いと捏造がそのまま貼れてしまう)ので 1 箇所に置く。
+ * demoted / error は現状 verdict が keep になるためここには来ないが、防御として条件に残す:
+ * Phase C で demoted が元の verdict を保持する形に変わっても素通りしないため。
+ */
+export function isLegacyWrongProject(e: MemoryTriage): boolean {
+  return e.verdict === 'wrong-project' && !e.target && !e.demoted && !e.error;
 }
 
 /*
@@ -878,7 +930,7 @@ export function selectStale(
       cached.lang !== lang ||
       cached.hash !== triageHash(it) ||
       (!cached.state && !cached.error) ||
-      (cached.verdict === 'wrong-project' && !cached.target && !cached.demoted && !cached.error)
+      isLegacyWrongProject(cached)
     );
   });
 }
@@ -962,14 +1014,7 @@ export async function triageProject(
       ...(it.signals || []),
       ...(gitSignals.get(it.path) || []),
     ];
-    /*
-     * wrong-project の移動先候補(判断 3)。件ごとの other-project シグナルの値を、
-     * scanMemory が算出した「別の登録プロジェクト」集合(自分自身・worktree・入れ子は除外済み)で
-     * 絞る。候補が空の件は wrong-project を採用しない(parseTriage が keep へ格下げする)
-     */
-    const registered = new Set(sec.otherProjects || []);
-    const candidatesOf = (it: SkillItem) =>
-      otherProjectPaths(signalsOf(it)).filter((p) => registered.has(p));
+    const candidatesOf = (it: SkillItem) => candidatesFor(sec, signalsOf(it));
     const candidates = new Map<string, string[]>();
     for (const it of stale) {
       const cands = candidatesOf(it);
@@ -1038,9 +1083,9 @@ export async function triageProject(
       ...(e.signals?.length ? { signals: e.signals } : {}),
       ...(e.body ? { body: e.body } : {}),
       ...(e.indexMatchesBody !== undefined ? { indexMatchesBody: e.indexMatchesBody } : {}),
-      // wrong-project の移動先(選択済み)と、格下げの記録(要確認の表示に使う)
-      ...(e.target ? { target: e.target } : {}),
-      ...(e.targetMemDir ? { targetMemDir: e.targetMemDir } : {}),
+      // wrong-project の移動先(選択済み)と、格下げの記録(要確認の表示に使う)。
+      // 移動先ディレクトリは attachMemoryTriage と同じくキャッシュ値ではなく target から都度算出
+      ...(e.target ? { target: e.target, targetMemDir: targetMemDirOf(e.target) } : {}),
       ...(e.demoted ? { demoted: e.demoted } : {}),
       ...(e.error ? { error: e.error } : {}),
     });
@@ -1059,11 +1104,14 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
   for (const sec of memory) {
     for (const it of sec.items) {
       const cached = s[it.path];
+      // ゲート導入前の wrong-project は付与しない(= 未診断扱い)。捏造された移動先を含む
+      // 指示文を表示・コピーさせないためで、未診断の CTA と selectStale の再診断に自然に乗る
       if (
         cached &&
         cached.lang === lang &&
         fs.existsSync(it.path) &&
-        cached.hash === triageHash(it)
+        cached.hash === triageHash(it) &&
+        !isLegacyWrongProject(cached)
       ) {
         it.aiTriage = {
           verdict: cached.verdict,
@@ -1076,8 +1124,11 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
           ...(cached.indexMatchesBody !== undefined
             ? { indexMatchesBody: cached.indexMatchesBody }
             : {}),
-          ...(cached.target ? { target: cached.target } : {}),
-          ...(cached.targetMemDir ? { targetMemDir: cached.targetMemDir } : {}),
+          // 移動先ディレクトリはキャッシュ値を信用せず target から都度算出する
+          // (診断後に worktree 化・リネームがあると、固定値は実在しない slug を指すため)
+          ...(cached.target
+            ? { target: cached.target, targetMemDir: targetMemDirOf(cached.target) }
+            : {}),
           ...(cached.demoted ? { demoted: cached.demoted } : {}),
           // 出力不正も「診断済み」として載せる(未診断と区別し、再診断を促す)
           ...(cached.error ? { error: cached.error } : {}),

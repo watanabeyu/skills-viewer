@@ -297,6 +297,9 @@ export function buildWrongProjectInstruction(
     t('memory.triage.tpl.wpMove', { file: fileName(it.path), target, dir: targetMemDir }),
     t('memory.triage.tpl.wpCheck'),
     t('memory.triage.tpl.wpIndex'),
+    // 索引行の無い memory は毎セッション注入されない = 「移したのに使われない」で終わるので、
+    // 削除だけでなく移動先への索引行の追加まで必ず指示する
+    t('memory.triage.tpl.wpIndexAdd'),
     t('memory.triage.tpl.wpLink'),
   ].join('\n');
 }

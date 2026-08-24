@@ -5,6 +5,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { mainWorktreeOf, scanMemory } from '../src/server/memory';
 import { encodeProjectPath } from '../src/server/usage';
 import { estimateTokens } from '../src/server/lint';
+import { publicMemory } from '../src/server/index';
+import type { MemorySection } from '../src/shared/types';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-memory-'));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -526,5 +528,32 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
     const sec = secs.find((s) => s.projectPath === child)!;
     const item = sec.items.find((x) => x.name === 'x')!;
     expect((item.signals || []).some((s) => s.kind === 'other-project')).toBe(false);
+  });
+});
+
+/*
+ * 判断(計画 13 Phase B レビュー): otherProjects はサーバー内部用(wrong-project の候補算出)。
+ * web に参照が無く payload だけ増えるので /api/skills 応答からは落とす。
+ */
+describe('publicMemory (/api/skills 応答から内部用フィールドを落とす)', () => {
+  const sec = (over: Partial<MemorySection> = {}): MemorySection => ({
+    id: '-w-alpha',
+    projectPath: '/w/alpha',
+    projectName: 'alpha',
+    note: '/h/.claude/projects/-w-alpha/memory',
+    usageAvailable: true,
+    indexTokens: 12,
+    items: [],
+    ...over,
+  });
+
+  it('otherProjects だけを除き、他のフィールドは保つ', () => {
+    const [out] = publicMemory([sec({ otherProjects: ['/w/other', '/w/another'] })]);
+    expect('otherProjects' in out).toBe(false);
+    expect(out).toEqual(sec());
+  });
+
+  it('otherProjects を持たないセクションはそのまま', () => {
+    expect(publicMemory([sec()])).toEqual([sec()]);
   });
 });

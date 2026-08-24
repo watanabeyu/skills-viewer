@@ -146,6 +146,20 @@ function memorySections(cwd: string): MemorySection[] {
   return memory;
 }
 
+/*
+ * web へ返す直前に、サーバー内部でしか使わないフィールドを memory セクションから落とす。
+ * otherProjects は wrong-project の候補算出(triageProject)専用で web には参照が無く、
+ * セクション × 登録プロジェクト数だけ payload を膨らませるだけ。
+ * /api/memory-triage は自前で memorySections() を再スキャンするので影響しない。
+ */
+export function publicMemory(memory: MemorySection[]): MemorySection[] {
+  return memory.map((sec) => {
+    const out = { ...sec };
+    delete out.otherProjects;
+    return out;
+  });
+}
+
 function collect(cwd: string, lang: Lang): SkillsData {
   const sections = scanSections(cwd, lang);
   const usageAvailable = attributeUsage(sections);
@@ -194,7 +208,7 @@ function collect(cwd: string, lang: Lang): SkillsData {
     changes: computeChanges(sections),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
-    ...(memory.length ? { memory } : {}),
+    ...(memory.length ? { memory: publicMemory(memory) } : {}),
   };
 }
 

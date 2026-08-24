@@ -52,6 +52,24 @@ export function mainWorktreeOf(dir: string): string | null {
   return path.resolve(dir, gitdir, '..', '..', '..');
 }
 
+/*
+ * dir が属するリポジトリのルート(memory の slug を決める単位)。mainWorktreeOf が
+ * 非 null を返すまで path.dirname で親へ遡り、ルートまで見つからなければ null。
+ * なぜ遡るか: ~/.claude.json には「リポジトリのサブディレクトリ」(例 ~/repo/frontend。
+ * 自分の .git を持たない)が普通に登録される一方、memory はリポジトリから導出されて
+ * サブディレクトリ間で共有される。登録パスをそのまま slug 化すると実在しない移動先になる。
+ */
+export function repoRootOf(dir: string): string | null {
+  let cur = path.resolve(dir);
+  for (;;) {
+    const main = mainWorktreeOf(cur);
+    if (main) return main;
+    const parent = path.dirname(cur);
+    if (parent === cur) return null; // ファイルシステムのルートまで .git が無かった
+    cur = parent;
+  }
+}
+
 const MEMORY_TYPES: MemoryType[] = ['user', 'feedback', 'project', 'reference'];
 
 /* frontmatter は 2 形式が混在する: トップレベル `type:` と `metadata:` 配下のネスト */

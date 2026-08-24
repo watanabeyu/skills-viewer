@@ -115,7 +115,10 @@ export interface MemoryTriage {
    * 「選択」だけをさせ、パスの文字列自体は書かせない(捏造した移動先を出させないため)
    */
   target?: string;
-  /* target の memory ディレクトリ(~/.claude/projects/<slug>/memory/)。slug はメインワークツリー基準で server が算出 */
+  /*
+   * target の memory ディレクトリの絶対パス(<HOME>/.claude/projects/<slug>/memory)。
+   * slug はリポジトリのルート基準で server がその都度算出する(キャッシュ値は使わない)
+   */
   targetMemDir?: string;
   /*
    * 機械シグナル(other-project)が無いのに wrong-project と答えたので keep へ格下げした記録。
@@ -246,7 +249,8 @@ export interface MemorySection {
   /*
    * other-project シグナルの判定に使った「別の登録プロジェクト」候補(フルパス)。
    * wrong-project の移動先を AI に選ばせるときの候補集合でもあるので、計算元(scanMemory)から
-   * そのまま運ぶ(同じ除外規則を 2 箇所で書かない)。候補が無ければ省略
+   * そのまま運ぶ(同じ除外規則を 2 箇所で書かない)。候補が無ければ省略。
+   * サーバー内部用。web に参照が無く payload だけ増えるので /api/skills 応答からは落とす
    */
   otherProjects?: string[];
   items: SkillItem[];
