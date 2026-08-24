@@ -23,7 +23,7 @@ import {
 import { memoryVerdictLabel, t } from '../i18n';
 import { splitFrontmatter } from '../md';
 import { KindBadge } from './GridView';
-import { MemoryTypeBadge, TokFacts } from './MemoryBits';
+import { MemoryPathSub, MemoryTypeBadge, TokFacts } from './MemoryBits';
 import { renderMemoryBody } from './MemoryDetail';
 
 /*
@@ -341,6 +341,7 @@ export function MemoryTriageView({
                 : t('memory.triage.rerun')}
           </button>
         </div>
+        <MemoryPathSub sec={sec} />
       </div>
       <div className="triage-pad">
         <div className="sec-t mem tri">

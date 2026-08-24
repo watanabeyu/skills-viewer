@@ -148,7 +148,7 @@ function readMemoryFile(
  * 列挙の起点は ~/.claude/projects/<encoded>/memory の走査(~/.claude.json の一覧ではない)。
  * memory はリポジトリ単位で、worktree 用のディレクトリは作られないため、
  * 見つけたディレクトリ名を listProjects() のエンコード名で逆引きし、
- * 引けないものは孤児(削除済み/リネーム済みプロジェクト)として表示する。
+ * 引けないものはプロジェクト不明(削除済み/リネーム済みプロジェクト)として表示する。
  *
  * worktree から起動したときは memory が親リポジトリ側にあるため、cwd 完全一致だけでは
  * current が 1 件も無くなる。メインワークツリーも current 扱いにし、逆引き用の一覧にも足す
@@ -193,12 +193,19 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
     }
     const index = readIndex(memDir);
     const projectPath = byEncoded.get(d.name) ?? null;
-    // 「別プロジェクトのパス」の候補。自分自身と、自分の worktree / 自分が worktree である親は除く
-    const otherProjects = projects.filter(
-      (p) =>
-        p !== projectPath &&
-        (!projectPath || (mainOf(p) !== projectPath && mainOf(projectPath) !== p)),
-    );
+    // 「別プロジェクトのパス」の候補。次を除外する:
+    //   - 自分自身: 登録一致(p === projectPath)、または slug 一致(encodeProjectPath(p) === d.name)。
+    //     slug 一致の除外はプロジェクト不明(projectPath null)でも効かせる。そうしないと、
+    //     本文が自分の配下パスを参照するだけで「別の登録プロジェクトの話」というシグナルが誤って付く
+    //   - worktree 関係(メインワークツリー同士)
+    //   - 入れ子プロジェクト(親子関係。親の memory が子の配下パスに触れるだけで
+    //     wrong-project 経路に乗ってしまうのを防ぐ)
+    const otherProjects = projects.filter((p) => {
+      if (p === projectPath || encodeProjectPath(p) === d.name) return false;
+      if (!projectPath) return true;
+      if (mainOf(p) === projectPath || mainOf(projectPath) === p) return false;
+      return !(p.startsWith(projectPath + path.sep) || projectPath.startsWith(p + path.sep));
+    });
     const items: SkillItem[] = [];
     for (const f of files) {
       const item = readMemoryFile(
@@ -214,7 +221,7 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
     sections.push({
       id: d.name,
       projectPath,
-      // エンコードは不可逆なので、逆引きできない孤児の表示名はエンコード名そのまま
+      // エンコードは不可逆なので、逆引きできないプロジェクト不明の表示名はエンコード名そのまま
       projectName: projectPath ? path.basename(projectPath) : d.name,
       note: memDir,
       // worktree 用の memory が将来作られたら両方 current になる(統合はしない)

@@ -83,7 +83,7 @@ write(
   '---\nname: bogus\ndescription: 未知の type\ntype: bogus\n---\n\n本文\n',
 );
 
-// 逆引きできない孤児(削除済みプロジェクト)
+// 逆引きできないプロジェクト不明(削除済みプロジェクト)
 const dirOrphan = memDir('-Users-me-gone');
 write(dirOrphan, 'MEMORY.md', '- [gone](g.md) — 消えたプロジェクト');
 write(dirOrphan, 'g.md', '---\nname: gone\ndescription: 消えたプロジェクトのメモ\n---\n\n本文\n');
@@ -112,7 +112,7 @@ describe('scanMemory (自動メモリの走査)', () => {
     expect(it.memoryType).toBeUndefined();
   });
 
-  it('cwd のプロジェクトが current で先頭、孤児は末尾', () => {
+  it('cwd のプロジェクトが current で先頭、プロジェクト不明は末尾', () => {
     expect(secB.isCurrent).toBe(true);
     expect(secA.isCurrent).toBeUndefined();
     const orphan = sections[sections.length - 1];
@@ -271,5 +271,65 @@ describe('scanMemory (worktree から起動したとき)', () => {
     // 名前順(aaa-main < zzz-feat)ではなく cwd → メインワークツリーの順に並ぶ
     expect(secs.map((s) => s.projectPath)).toEqual([worktree, mainProj]);
     expect(secs.every((s) => s.isCurrent)).toBe(true);
+  });
+});
+
+/*
+ * Phase A(計画 13): otherProjects フィルタの安全化。
+ *   - 入れ子プロジェクト(親子関係)は除外(除外は従来 worktree 関係だけだった)
+ *   - 自分の memory dir slug と同じ slug になるプロジェクトは除外(encodeProjectPath(p) === d.name)。
+ *     slug が衝突する(非英数字が全て `-` に正規化されるため `dup_a` と `dup-a` は同じ slug になる)
+ *     2 プロジェクトが登録されている場合、byEncoded で負けた側(projectPath には解決されない側)も
+ *     このセクションの「別プロジェクト」候補には残ってはいけない
+ */
+describe('scanMemory (otherProjects フィルタの安全化)', () => {
+  it('入れ子プロジェクト(親子関係)は otherProjects から除外され、配下パス参照で other-project シグナルが付かない', () => {
+    const nestRoot = path.join(tmp, 'nest-projects');
+    const parent = path.join(tmp, 'nest-work', 'parent');
+    const child = path.join(tmp, 'nest-work', 'parent', 'child');
+    fs.mkdirSync(child, { recursive: true });
+    const dir = path.join(nestRoot, encodeProjectPath(parent), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(child, 'src', 'app.ts') +
+        ' を確認\n',
+    );
+    const secs = scanMemory(parent, {
+      root: nestRoot,
+      projects: [parent, child],
+      mainWorktree: null,
+    });
+    const sec = secs.find((s) => s.projectPath === parent)!;
+    const item = sec.items.find((x) => x.name === 'x')!;
+    expect((item.signals || []).some((s) => s.kind === 'other-project')).toBe(false);
+  });
+
+  it('slug が衝突する登録プロジェクトは、byEncoded で負けた側も otherProjects から除外される', () => {
+    const dupRoot = path.join(tmp, 'dup-projects');
+    const dupA = path.join(tmp, 'dup-work', 'dup_a'); // byEncoded で負ける側(先に処理される)
+    const dupB = path.join(tmp, 'dup-work', 'dup-a'); // byEncoded で勝つ側(同じ slug で後勝ち)
+    fs.mkdirSync(dupA, { recursive: true });
+    fs.mkdirSync(dupB, { recursive: true });
+    const slug = encodeProjectPath(dupB);
+    expect(encodeProjectPath(dupA)).toBe(slug); // 前提: 非英数字は全て `-` になるので衝突する
+    const dir = path.join(dupRoot, slug, 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(dupA, 'src', 'app.ts') +
+        ' を確認\n',
+    );
+    const secs = scanMemory(dupB, { root: dupRoot, projects: [dupA, dupB], mainWorktree: null });
+    const sec = secs.find((s) => s.id === slug)!;
+    expect(sec.projectPath).toBe(dupB); // 後勝ちで dupB に解決される
+    const item = sec.items.find((x) => x.name === 'x')!;
+    expect((item.signals || []).some((s) => s.kind === 'other-project')).toBe(false);
   });
 });

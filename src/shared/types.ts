@@ -219,9 +219,9 @@ export interface SkillItem {
 export interface MemorySection {
   /* ~/.claude/projects 配下のエンコード済みディレクトリ名 */
   id: string;
-  /* 逆引きできたプロジェクトの実パス。孤児(逆引き不可)は null */
+  /* 逆引きできたプロジェクトの実パス。プロジェクト不明(逆引き不可)は null */
   projectPath: string | null;
-  /* 表示名。孤児はエンコード名そのまま(エンコードは不可逆で復元できない) */
+  /* 表示名。プロジェクト不明はエンコード名そのまま(エンコードは不可逆で復元できない) */
   projectName: string;
   /* memory ディレクトリの実パス */
   note: string;

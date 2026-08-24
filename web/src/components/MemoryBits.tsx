@@ -46,6 +46,21 @@ export function TokFacts({ it, cls, bold }: { it: SkillItem; cls?: string; bold?
   );
 }
 
+/*
+ * セクション見出し・棚卸しタイトルに共通で出す副題 1 行(フルパス)。
+ * projectName は basename 由来で同名プロジェクト(teamA/ai-workspace と teamB/ai-workspace)を
+ * 区別できないため、見出しの下に必ずフルパスを添える。プロジェクト不明は逆引き先が無いので
+ * memory ディレクトリの実パス(note)を出す。
+ */
+export function MemoryPathSub({ sec }: { sec: MemorySection }) {
+  const p = sec.projectPath ?? sec.note;
+  return (
+    <div className="path-sub" title={p}>
+      {t('memory.sec.path', { path: p })}
+    </div>
+  );
+}
+
 /* プロジェクト見出し「MEMORY — <project>」。skill の SectionHeading と同じ骨格(sq / lbl / n / sec-tok / ln) */
 export function MemoryHeading({
   sec,
@@ -58,22 +73,25 @@ export function MemoryHeading({
   tokLabel: string;
 }) {
   return (
-    <div className="sec-h">
-      <span className="sq" style={{ background: MEM_COLOR }} />
-      <span className="lbl">{t('memory.secLabel', { name: sec.projectName })}</span>
-      <span className="n">{count}</span>
-      {!!sec.indexTokens && (
-        <span className="sec-tok" title={t('memory.secTokensTitle')}>
-          {tokLabel}
-        </span>
-      )}
-      {sec.orphan && (
-        <span className="orphan-badge" title={t('memory.orphanTitle')}>
-          {t('memory.orphan')}
-        </span>
-      )}
-      <span className="ln" />
-    </div>
+    <>
+      <div className="sec-h">
+        <span className="sq" style={{ background: MEM_COLOR }} />
+        <span className="lbl">{t('memory.secLabel', { name: sec.projectName })}</span>
+        <span className="n">{count}</span>
+        {!!sec.indexTokens && (
+          <span className="sec-tok" title={t('memory.secTokensTitle')}>
+            {tokLabel}
+          </span>
+        )}
+        {sec.orphan && (
+          <span className="orphan-badge" title={t('memory.orphanTitle')}>
+            {t('memory.orphan')}
+          </span>
+        )}
+        <span className="ln" />
+      </div>
+      <MemoryPathSub sec={sec} />
+    </>
   );
 }
 

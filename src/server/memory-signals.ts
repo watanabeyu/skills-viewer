@@ -58,7 +58,7 @@ export function latestDate(body: string, now: number): { value: string; days: nu
 /*
  * 本文が参照するファイルパスのうち存在しないもの。
  * 対象は「/ を含み、末尾が拡張子つきのファイル名」に限る(URL・ブランチ名・パッケージ名を拾わない)。
- * 相対パスは projectPath 基準。projectPath が無い(孤児)なら絶対パスと ~/ だけを見る。
+ * 相対パスは projectPath 基準。projectPath が無い(プロジェクト不明)なら絶対パスと ~/ だけを見る。
  */
 export function missingPaths(body: string, projectPath: string | null, home: string): string[] {
   const out: string[] = [];
@@ -122,7 +122,9 @@ export function extractSignals(
 /*
  * 本文が別の登録プロジェクトの配下パス(絶対 / ~/)を指しているか。
  * 「別プロジェクトの話が混入した memory」の機械的な根拠で、置き場所(wrong-project)の判断材料になる。
- * 呼び出し側で自分自身と worktree 関係のプロジェクトは除いて渡す。
+ * 呼び出し側で自分自身(slug 一致を含む)・worktree 関係・入れ子プロジェクトは除いて渡す。
+ * 値はフルパス(basename だと teamA/ai-workspace と teamB/ai-workspace のような
+ * 同名プロジェクトを区別できないため。basename が要る表示側で導出する)。
  */
 export function otherProjectRefs(body: string, home: string, others: string[]): string[] {
   if (!others.length) return [];
@@ -131,7 +133,7 @@ export function otherProjectRefs(body: string, home: string, others: string[]): 
     const raw = m[1].replace(/[/.,:;。、)）」]+$/, '');
     const resolved = raw.startsWith('~/') ? path.join(home, raw.slice(2)) : raw;
     for (const p of others) {
-      if (resolved === p || resolved.startsWith(p + path.sep)) hit.add(path.basename(p));
+      if (resolved === p || resolved.startsWith(p + path.sep)) hit.add(p);
     }
   }
   return [...hit].slice(0, 2);

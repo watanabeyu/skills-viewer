@@ -189,7 +189,7 @@ export function MemoryGrid({
   const pluginTok = tokOf('plugin');
   const userTok = tokOf('user');
 
-  // セクション順はサーバー側で確定済み(current 先頭 → 名前順 → 孤児末尾)
+  // セクション順はサーバー側で確定済み(current 先頭 → 名前順 → プロジェクト不明末尾)
   const sections = (data.memory || [])
     .map((sec) => ({
       sec,

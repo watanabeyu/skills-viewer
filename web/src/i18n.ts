@@ -95,6 +95,9 @@ const en = {
 
   'memory.searchPlaceholder': 'Search memory…',
   'memory.secLabel': 'MEMORY — {name}',
+  /* basename だけの見出しでは同名プロジェクト(teamA/ai-workspace と teamB/ai-workspace)を区別できないため、
+   * フルパスを副題で必ず添える(プロジェクト不明は memory dir の実パス) */
+  'memory.sec.path': 'Path: {path}',
   'memory.orphan': 'unknown project',
   'memory.orphanTitle':
     'No matching project — it may have been deleted, moved or renamed (the encoded directory name cannot be decoded back into a path)',
@@ -221,7 +224,7 @@ const en = {
   'memory.triage.tpl.indexAlign':
     '- The MEMORY.md index line and the body say different things: check which one is right and align them',
   'memory.signal.index-mismatch': 'Index line and body disagree',
-  'memory.signal.other-project': 'Points at another project: {value}',
+  'memory.signal.other-project': 'Points at another registered project: "{value}"',
   'memory.triage.verdict.error': 'Invalid output — re-run to retry',
   'memory.triage.seen': 'read {n}×',
   'memory.triage.unseen': 'no reads',
@@ -480,6 +483,7 @@ const ja: Record<MsgKey, string> = {
 
   'memory.searchPlaceholder': 'memory を検索…',
   'memory.secLabel': 'MEMORY — {name}',
+  'memory.sec.path': 'パス: {path}',
   'memory.orphan': 'プロジェクト不明',
   'memory.orphanTitle':
     '対応するプロジェクトが見つかりません(削除・移動・リネームの可能性。エンコードされたディレクトリ名から元のパスは復元できません)',
@@ -599,7 +603,7 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.tpl.indexAlign':
     '- MEMORY.md の索引行と本文が違うことを言っている。どちらが正しいか確認して揃える',
   'memory.signal.index-mismatch': '索引行と本文が食い違っています',
-  'memory.signal.other-project': '別プロジェクト「{value}」の話です',
+  'memory.signal.other-project': '別の登録プロジェクト「{value}」を指している',
   'memory.triage.verdict.error': '出力不正 — 再診断で再試行',
   'memory.triage.seen': '{n} 回参照',
   'memory.triage.unseen': '参照なし',

@@ -98,7 +98,7 @@ function daysAgo(ms?: number): number | null {
 
 export interface TriageContext {
   projectName: string;
-  /* プロジェクトの実パス(孤児は無し)。「このプロジェクト」が何かを AI に示す(別プロジェクト判定の基準) */
+  /* プロジェクトの実パス(プロジェクト不明は無し)。「このプロジェクト」が何かを AI に示す(別プロジェクト判定の基準) */
   projectPath?: string | null;
   /* MEMORY.md の全文(無ければ空文字) */
   index: string;
@@ -150,7 +150,7 @@ export function headingLines(file: string): string[] {
 /*
  * プロンプトに載せる「常設文脈」を集める。
  * rules = CLAUDE.md の見出しだけ、skills = このプロジェクトで使える定義の name — description。
- * 孤児(projectPath null)はプロジェクトの CLAUDE.md を特定できないので
+ * プロジェクト不明(projectPath null)はプロジェクトの CLAUDE.md を特定できないので
  * `~/.claude/CLAUDE.md` の見出しのみ、skills は user scope のみ。
  * home は既定で scan.ts の HOME。テストから擬似ホームを差せるよう引数にする(実環境依存を断つ)。
  */
@@ -225,7 +225,7 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
           case 'body-over':
             return `- feedback として本文が長い(${s.value} tok)`;
           case 'other-project':
-            return `- 本文が別の登録プロジェクト「${s.value}」の配下パスを指している`;
+            return `- 本文が別の登録プロジェクト「${s.value}」配下のパスを指している`;
           case 'index-mismatch':
             return `- 索引行と本文が違うことを言っている`;
         }
@@ -252,7 +252,7 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
         case 'body-over':
           return `- long for a feedback memory (${s.value} tok)`;
         case 'other-project':
-          return `- the body points at paths under another registered project "${s.value}"`;
+          return `- the body points at a path under another registered project "${s.value}"`;
         case 'index-mismatch':
           return `- the index line and the body say different things`;
       }

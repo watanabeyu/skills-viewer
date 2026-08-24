@@ -67,6 +67,18 @@ button {
   font-size: 12px;
   color: #8a8579;
 }
+/* セクション見出し・棚卸しタイトルの副題(フルパス)。同名プロジェクトの区別に使う控えめな 1 行 */
+.path-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: #a39d90;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sec-h + .path-sub {
+  margin: -4px 0 8px;
+}
 .hd input.q {
   margin-top: 16px;
   width: 100%;

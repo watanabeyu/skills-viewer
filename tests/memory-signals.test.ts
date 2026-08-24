@@ -67,7 +67,7 @@ describe('missingPaths (参照パスの実在)', () => {
     expect(missingPaths(body, proj, home)).toEqual([]);
   });
 
-  it('projectPath が無い(孤児)なら相対パスは判定せず、絶対と ~/ だけ見る', () => {
+  it('projectPath が無い(プロジェクト不明)なら相対パスは判定せず、絶対と ~/ だけ見る', () => {
     const body = 'src/gone.ts と ~/.claude/missing.md';
     expect(missingPaths(body, null, home)).toEqual(['~/.claude/missing.md']);
   });
@@ -236,9 +236,9 @@ describe('otherProjectRefs / other-project (別プロジェクトの配下パス
   const viewer = path.join(home, 'work', 'skills-viewer');
   const others = [viewer, path.join(home, 'work', 'cheap-trick')];
 
-  it('絶対パス・~/ の両方で、登録プロジェクトの配下を指していれば basename を返す(重複なし・最大 2)', () => {
+  it('絶対パス・~/ の両方で、登録プロジェクトの配下を指していればフルパスを返す(重複なし・最大 2)', () => {
     const body = `このツールは ~/work/skills-viewer/ で開発。実体は ${viewer}/src/cli.ts。関係ない ${weall}/apps は自分`;
-    expect(otherProjectRefs(body, home, others)).toEqual(['skills-viewer']);
+    expect(otherProjectRefs(body, home, others)).toEqual([viewer]);
     expect(
       otherProjectRefs('~/work/skills-viewer-2/x と ~/.cache/skills-viewer/', home, others),
     ).toEqual([]);
@@ -265,6 +265,6 @@ describe('otherProjectRefs / other-project (別プロジェクトの配下パス
       `---\nname: a\n---\n${wt}/apps は自分の worktree、${other}/src は別プロジェクト`,
     );
     const [sec] = scanMemory(main, { root, projects: [main, wt, other] });
-    expect(sec.items[0].signals).toEqual([{ kind: 'other-project', value: 'other' }]);
+    expect(sec.items[0].signals).toEqual([{ kind: 'other-project', value: other }]);
   });
 });

@@ -650,7 +650,7 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     const withPath = { ...ctx, projectPath: '/w/alpha' };
     expect(buildPrompt(targets, withPath, 'ja')).toContain('(パス: /w/alpha)');
     expect(buildPrompt(targets, withPath, 'en')).toContain('(path: /w/alpha)');
-    expect(buildPrompt(targets, ctx, 'ja')).not.toContain('(パス:'); // 孤児はパス無し
+    expect(buildPrompt(targets, ctx, 'ja')).not.toContain('(パス:'); // プロジェクト不明はパス無し
   });
 
   it('索引の全文と対象全件のファイル名をプロンプトに載せる', () => {
@@ -919,10 +919,10 @@ describe('collectTriageContext (常設文脈の収集)', () => {
     expect(skills).not.toContain('nested');
   });
 
-  /* 孤児は projectPath が無いのでプロジェクトの CLAUDE.md を特定できない(~/.claude のみ残る) */
-  it('孤児(projectPath null)はホームの見出しだけを載せ、skills は user scope のみ', () => {
+  /* プロジェクト不明は projectPath が無いのでプロジェクトの CLAUDE.md を特定できない(~/.claude のみ残る) */
+  it('プロジェクト不明(projectPath null)はホームの見出しだけを載せ、skills は user scope のみ', () => {
     const r = collectTriageContext({ ...sec, projectPath: null }, sections, { home });
-    expect(r.rules).toContain('# SV-TEST-HOME-HEADING'); // ホーム分は孤児でも載る
+    expect(r.rules).toContain('# SV-TEST-HOME-HEADING'); // ホーム分はプロジェクト不明でも載る
     expect(r.rules).not.toContain('## CLAUDE.md');
     expect(r.rules).not.toContain('## .claude/CLAUDE.md');
     expect(r.rules).not.toContain('# SV-TEST-PROJ-HEADING');
