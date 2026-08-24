@@ -19,6 +19,11 @@ export interface MemoryScanOptions {
   projects?: string[];
   /* メインワークツリーの実パス(テストで差し替える)。既定は mainWorktreeOf(cwd) */
   mainWorktree?: string | null;
+  /*
+   * settings.json の autoMemoryDirectory が指す実パス(テストで差し替える)。
+   * undefined = autoMemoryDirOf(cwd) で実解決、null = 無効(この設定は無いものとして扱う)
+   */
+  autoMemoryDir?: string | null;
 }
 
 /*
@@ -75,6 +80,46 @@ export function repoRootOf(dir: string): string | null {
 }
 
 /*
+ * settings.json の `autoMemoryDirectory`(公式仕様)を解決する。設定すると自動メモリの置き場が
+ * 丸ごと変わり、~/.claude/projects/<project>/memory/ には何も作られなくなるため、
+ * この設定が無いと memory が 1 件も見えない環境が生まれる。
+ *
+ * 読む順(優先度高い順、hooks 設定(scanHooks)と同じ readFileSync + JSON.parse の流儀):
+ *   1. <現在のプロジェクト>/.claude/settings.local.json
+ *   2. 同 settings.json
+ *   3. <home>/.claude/settings.json
+ * 値は絶対パスか `~/` 始まりのみ有効(公式仕様どおり)。相対パスや不正 JSON はスキップして次を試す。
+ */
+function readAutoMemoryDirectory(fp: string, home: string): string | null {
+  let cfg: any;
+  try {
+    cfg = JSON.parse(fs.readFileSync(fp, 'utf8'));
+  } catch {
+    return null;
+  }
+  const v = cfg?.autoMemoryDirectory;
+  if (typeof v !== 'string' || !v) return null;
+  if (v.startsWith('~/')) return path.join(home, v.slice(2));
+  if (path.isAbsolute(v)) return v;
+  return null; // 相対パスは公式仕様上無効
+}
+
+export function autoMemoryDirOf(cwd: string, home: string = HOME): string | null {
+  // 「現在のプロジェクト」はメインワークツリー基準(worktree の .claude/settings は見ない)
+  const base = mainWorktreeOf(cwd) ?? path.resolve(cwd);
+  const candidates = [
+    path.join(base, '.claude', 'settings.local.json'),
+    path.join(base, '.claude', 'settings.json'),
+    path.join(home, '.claude', 'settings.json'),
+  ];
+  for (const fp of candidates) {
+    const dir = readAutoMemoryDirectory(fp, home);
+    if (dir) return dir;
+  }
+  return null;
+}
+
+/*
  * web へ返す直前に、サーバー内部でしか使わないフィールドを memory セクションから落とす。
  * otherProjects は wrong-project の候補算出(triageProject)専用で web には参照が無く、
  * セクション × 登録プロジェクト数だけ payload を膨らませるだけ。
@@ -112,28 +157,55 @@ function extractLinks(body: string): string[] {
 }
 
 /*
+ * MEMORY.md は毎セッションの先頭 200 行 or 25KB(先に達した方)までしか読まれない(公式仕様)。
+ * その境界を超える索引行は「書いてあっても実際には注入されない」ため、常時コストに数えない。
+ */
+const INDEX_MAX_LINES = 200;
+const INDEX_MAX_BYTES = 25 * 1024;
+
+interface IndexEntry {
+  line: string;
+  /* この行の(ファイル全体基準の)行番号 */
+  lineNumber: number;
+  /* 200 行 / 25KB の上限外か */
+  beyondLimit: boolean;
+}
+
+/*
  * MEMORY.md(索引)を「本文ファイル名 → 索引行」の Map にする。
  * 索引行は `- [title](file.md) — desc` 形式で、リンク先ファイル名が本文と対応する。
+ * 併せて行番号・改行込みの累積 UTF-8 バイト数を数え、読み込み上限の内外を判定する。
  */
-function readIndex(memDir: string): Map<string, string> {
-  const map = new Map<string, string>();
+function readIndex(memDir: string): Map<string, IndexEntry> {
+  const map = new Map<string, IndexEntry>();
   let raw: string;
   try {
     raw = fs.readFileSync(path.join(memDir, 'MEMORY.md'), 'utf8');
   } catch {
     return map; // 索引が無い/読めない場合は索引行なし(indexTokens = 0)として扱う
   }
-  for (const line of raw.split(/\r?\n/)) {
+  const lines = raw.split(/\r?\n/);
+  let bytes = 0;
+  lines.forEach((line, i) => {
+    // 改行 1 バイト分を加算(このファイルは常に \n で書かれる前提の近似。厳密な \r\n 環境は対象外)
+    bytes += Buffer.byteLength(line, 'utf8') + 1;
     const m = line.match(/\(([^()]+\.md)\)/);
-    if (m) map.set(path.basename(m[1]), line.trim());
-  }
+    if (m) {
+      const lineNumber = i + 1;
+      map.set(path.basename(m[1]), {
+        line: line.trim(),
+        lineNumber,
+        beyondLimit: lineNumber > INDEX_MAX_LINES || bytes > INDEX_MAX_BYTES,
+      });
+    }
+  });
   return map;
 }
 
 function readMemoryFile(
   fp: string,
   fileName: string,
-  indexLine: string,
+  indexEntry: IndexEntry | undefined,
   projectPath: string | null,
   otherProjects: string[],
 ): SkillItem | null {
@@ -152,6 +224,13 @@ function readMemoryFile(
   } catch {
     /* mtime が取れなくても一覧には出す */
   }
+  // v2.1.214+ は書き込み時に frontmatter へ `modified`(ISO 8601)を刻む。mtime はコピー・同期・
+  // チェックアウトで簡単に狂うが、modified は Claude Code 自身が書いた事実なので優先する
+  const modifiedRaw = metaValue(meta, 'modified');
+  if (modifiedRaw) {
+    const parsed = Date.parse(modifiedRaw);
+    if (!Number.isNaN(parsed)) updatedAt = parsed;
+  }
   const description = meta.description || firstBodyLine(body);
   // 鮮度の機械シグナル(テキスト / fs 層)。正規表現と existsSync だけなのでスキャン時に払える
   const bodyTokens = estimateTokens(raw);
@@ -160,6 +239,8 @@ function readMemoryFile(
     bodyTokens,
     otherProjects,
   });
+  if (indexEntry?.beyondLimit)
+    signals.push({ kind: 'index-beyond-limit', value: String(indexEntry.lineNumber) });
   return {
     name: meta.name || fileName.replace(/\.md$/, ''),
     description,
@@ -170,8 +251,9 @@ function readMemoryFile(
     updatedAt,
     files: [],
     // 索引行だけが毎セッション注入される。本文は Read されたときだけのコストなので分けて持つ
-    indexTokens: indexLine ? estimateTokens(indexLine) : 0,
-    ...(indexLine ? { indexLine } : {}),
+    indexTokens: indexEntry ? estimateTokens(indexEntry.line) : 0,
+    ...(indexEntry ? { indexLine: indexEntry.line } : {}),
+    ...(indexEntry?.beyondLimit ? { indexBeyondLimit: true } : {}),
     bodyTokens,
     ...(type ? { memoryType: type } : {}),
     ...(originSessionId ? { originSessionId } : {}),
@@ -214,7 +296,9 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
   try {
     dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
   } catch {
-    return [];
+    // 既定の走査先が無くても autoMemoryDirectory 側は独立して見る(未インストール環境で
+    // ~/.claude/projects が無くても、autoMemoryDirectory の memory は表示できるようにする)
+    dirs = [];
   }
 
   const sections: MemorySection[] = [];
@@ -265,13 +349,14 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
       const item = readMemoryFile(
         path.join(memDir, f),
         f,
-        index.get(f) || '',
+        index.get(f),
         projectPath,
         otherProjects,
       );
       if (item) items.push(item);
     }
     if (!items.length) continue;
+    const beyondCount = items.filter((it) => it.indexBeyondLimit).length;
     sections.push({
       id: d.name,
       projectPath,
@@ -283,11 +368,72 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
       // orphan の真実源はここだけ(逆引き失敗は null で表す。byEncoded の値に空文字は入らない)
       ...(projectPath === null ? { orphan: true } : {}),
       usageAvailable: false, // 実測は Phase B で算出する
-      indexTokens: items.reduce((sum, it) => sum + (it.indexTokens || 0), 0),
+      // 200 行 / 25KB の上限外の索引行は実際には注入されないので常時コストから除く
+      indexTokens: items.reduce(
+        (sum, it) => sum + (it.indexBeyondLimit ? 0 : it.indexTokens || 0),
+        0,
+      ),
+      ...(beyondCount ? { indexBeyondCount: beyondCount } : {}),
       // 棚卸し診断(wrong-project の移動先候補)でも同じ集合が要るので、計算元からそのまま運ぶ
       ...(otherProjects.length ? { otherProjects } : {}),
       items,
     });
+  }
+
+  // autoMemoryDirectory(公式仕様)。設定されていれば <dir> 直下に MEMORY.md + 個別 *.md が
+  // プロジェクト区分なしで作られる(実測 2026-08-25)。この設定が有効な環境では Claude Code が
+  // 実際に使う置き場なので、逆引き失敗ではなく明示的な現在地として orphan にはしない
+  // root 注入(テスト等の隔離環境)では実 HOME・実プロジェクトの settings を読みに行かない
+  // (実行機に autoMemoryDirectory が設定されているとテストの隔離が破れるため)。
+  // 明示指定(autoMemoryDir)が常に最優先
+  const autoDir =
+    opts.autoMemoryDir !== undefined
+      ? opts.autoMemoryDir
+      : opts.root !== undefined
+        ? null
+        : autoMemoryDirOf(cwd);
+  if (autoDir) {
+    let autoFiles: string[];
+    try {
+      autoFiles = fs
+        .readdirSync(autoDir)
+        .filter((f) => f.endsWith('.md') && f !== 'MEMORY.md')
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      autoFiles = [];
+    }
+    if (autoFiles.length) {
+      const autoIndex = readIndex(autoDir);
+      const autoProjectPath = main ?? cwdResolved;
+      const autoItems: SkillItem[] = [];
+      for (const f of autoFiles) {
+        const item = readMemoryFile(
+          path.join(autoDir, f),
+          f,
+          autoIndex.get(f),
+          autoProjectPath,
+          [],
+        );
+        if (item) autoItems.push(item);
+      }
+      if (autoItems.length) {
+        const autoBeyond = autoItems.filter((it) => it.indexBeyondLimit).length;
+        sections.push({
+          id: encodeProjectPath(autoDir),
+          projectPath: autoProjectPath,
+          projectName: path.basename(autoProjectPath),
+          note: autoDir,
+          isCurrent: true,
+          usageAvailable: false,
+          indexTokens: autoItems.reduce(
+            (sum, it) => sum + (it.indexBeyondLimit ? 0 : it.indexTokens || 0),
+            0,
+          ),
+          ...(autoBeyond ? { indexBeyondCount: autoBeyond } : {}),
+          items: autoItems,
+        });
+      }
+    }
   }
 
   return sections.sort(

@@ -86,7 +86,13 @@ export type MemorySignalKind =
    * 同名プロジェクトを区別するため basename にしない)。置き場所の誤りの機械的な根拠 */
   | 'other-project'
   /* AI が「索引行と本文が違うことを言っている」と答えた(診断時。value = description の冒頭) */
-  | 'index-mismatch';
+  | 'index-mismatch'
+  /*
+   * この索引行が MEMORY.md の読み込み上限(先頭 200 行 or 25KB、先に達した方)の外にある
+   * (公式仕様。value = ファイル全体基準の行番号)。書いてあっても毎セッション注入されないため、
+   * 常時コストには数えない(MemorySection.indexTokens は除外して合算する)
+   */
+  | 'index-beyond-limit';
 export interface MemorySignal {
   kind: MemorySignalKind;
   value: string;
@@ -237,6 +243,8 @@ export interface SkillItem {
   signals?: MemorySignal[];
   /* キャッシュ済みの AI 棚卸し診断(未診断なら省略。生成はオンデマンド) */
   aiTriage?: MemoryTriage;
+  /* この索引行が MEMORY.md の読み込み上限(200 行 / 25KB)の外にあるか。無ければ省略(= 上限内) */
+  indexBeyondLimit?: boolean;
 }
 
 /*
@@ -255,8 +263,13 @@ export interface MemorySection {
   isCurrent?: boolean;
   orphan?: boolean;
   usageAvailable: boolean;
-  /* items の indexTokens 合計(= このプロジェクトで毎セッション注入される索引の量) */
+  /*
+   * items の indexTokens 合計(= このプロジェクトで毎セッション注入される索引の量)。
+   * 読み込み上限(200 行 / 25KB)の外にある索引行は数えない(indexBeyondLimit の件を除外)
+   */
   indexTokens: number;
+  /* 読み込み上限の外にある索引行の件数。無ければ省略(コストバーの「上限外 n 件」表示に使う) */
+  indexBeyondCount?: number;
   /*
    * other-project シグナルの判定に使った「別の登録プロジェクト」候補(フルパス)。
    * wrong-project の移動先を AI に選ばせるときの候補集合でもあるので、計算元(scanMemory)から

@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { mainWorktreeOf, scanMemory } from '../src/server/memory';
+import { autoMemoryDirOf, mainWorktreeOf, scanMemory } from '../src/server/memory';
 import { encodeProjectPath } from '../src/server/usage';
 import { estimateTokens } from '../src/server/lint';
 import { publicMemory } from '../src/server/memory';
@@ -555,5 +555,345 @@ describe('publicMemory (/api/skills 応答から内部用フィールドを落�
 
   it('otherProjects を持たないセクションはそのまま', () => {
     expect(publicMemory([sec()])).toEqual([sec()]);
+  });
+});
+
+/*
+ * 計画 13 Phase D: 公式仕様との整合。
+ *   1. autoMemoryDirectory の解決(純関数)
+ *   2. MEMORY.md の読み込み上限(先頭 200 行 or 25KB、先に達した方)
+ *   3. frontmatter の modified(ISO 8601)を updatedAt に優先使用
+ */
+describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-automem-home-'));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-automem-cwd-'));
+  afterAll(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  function writeSettings(dir: string, file: string, content: unknown): void {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, file),
+      typeof content === 'string' ? content : JSON.stringify(content),
+    );
+  }
+  function clearSettings(dir: string, file: string): void {
+    fs.rmSync(path.join(dir, file), { force: true });
+  }
+
+  it('どのファイルにも設定が無ければ null', () => {
+    expect(autoMemoryDirOf(cwd, home)).toBeNull();
+  });
+
+  it('user scope(<home>/.claude/settings.json)を読み、~/ は home で展開する', () => {
+    writeSettings(path.join(home, '.claude'), 'settings.json', {
+      autoMemoryDirectory: '~/mem-store',
+    });
+    expect(autoMemoryDirOf(cwd, home)).toBe(path.join(home, 'mem-store'));
+    clearSettings(path.join(home, '.claude'), 'settings.json');
+  });
+
+  it('現在のプロジェクトの settings.json が user scope より優先される', () => {
+    writeSettings(path.join(home, '.claude'), 'settings.json', {
+      autoMemoryDirectory: '/from-user',
+    });
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', {
+      autoMemoryDirectory: '/from-project',
+    });
+    expect(autoMemoryDirOf(cwd, home)).toBe('/from-project');
+    clearSettings(path.join(cwd, '.claude'), 'settings.json');
+    clearSettings(path.join(home, '.claude'), 'settings.json');
+  });
+
+  it('settings.local.json が同プロジェクトの settings.json より優先される', () => {
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', {
+      autoMemoryDirectory: '/from-settings',
+    });
+    writeSettings(path.join(cwd, '.claude'), 'settings.local.json', {
+      autoMemoryDirectory: '/from-local',
+    });
+    expect(autoMemoryDirOf(cwd, home)).toBe('/from-local');
+    clearSettings(path.join(cwd, '.claude'), 'settings.local.json');
+    clearSettings(path.join(cwd, '.claude'), 'settings.json');
+  });
+
+  it('不正 JSON はスキップして次の優先度のファイルを試す', () => {
+    writeSettings(path.join(cwd, '.claude'), 'settings.local.json', '{ not json');
+    writeSettings(path.join(home, '.claude'), 'settings.json', {
+      autoMemoryDirectory: '/fallback',
+    });
+    expect(autoMemoryDirOf(cwd, home)).toBe('/fallback');
+    clearSettings(path.join(cwd, '.claude'), 'settings.local.json');
+    clearSettings(path.join(home, '.claude'), 'settings.json');
+  });
+
+  it('キー欠落もスキップして次の候補を試す', () => {
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', { other: 1 });
+    writeSettings(path.join(home, '.claude'), 'settings.json', {
+      autoMemoryDirectory: '/fallback2',
+    });
+    expect(autoMemoryDirOf(cwd, home)).toBe('/fallback2');
+    clearSettings(path.join(cwd, '.claude'), 'settings.json');
+    clearSettings(path.join(home, '.claude'), 'settings.json');
+  });
+
+  it('相対パスは公式仕様上無効(絶対パスか ~/ のみ有効)', () => {
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', {
+      autoMemoryDirectory: 'relative/dir',
+    });
+    expect(autoMemoryDirOf(cwd, home)).toBeNull();
+    clearSettings(path.join(cwd, '.claude'), 'settings.json');
+  });
+
+  it('worktree から呼んでもメインワークツリーの設定を見る(worktree 自身の .claude/settings は読まない)', () => {
+    const gitTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-automem-wt-'));
+    const main = path.join(gitTmp, 'main');
+    const wt = path.join(gitTmp, 'wt');
+    fs.mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
+    fs.mkdirSync(wt, { recursive: true });
+    fs.writeFileSync(
+      path.join(wt, '.git'),
+      'gitdir: ' + path.join(main, '.git', 'worktrees', 'wt'),
+    );
+    writeSettings(path.join(main, '.claude'), 'settings.json', {
+      autoMemoryDirectory: '/from-main',
+    });
+    writeSettings(path.join(wt, '.claude'), 'settings.json', {
+      autoMemoryDirectory: '/from-worktree',
+    });
+    expect(autoMemoryDirOf(wt, home)).toBe('/from-main');
+    fs.rmSync(gitTmp, { recursive: true, force: true });
+  });
+});
+
+describe('scanMemory (autoMemoryDirectory: 置き場所を丸ごと差し替える設定)', () => {
+  it('セクション化する: id はエンコード名、note は実パス、projectPath は現在のプロジェクト、isCurrent、orphan ではない', () => {
+    const autoDir = path.join(tmp, 'auto-mem-store');
+    fs.mkdirSync(autoDir, { recursive: true });
+    write(autoDir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(autoDir, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    const proj = path.join(tmp, 'auto-mem-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+
+    const secs = scanMemory(proj, {
+      root: path.join(tmp, 'auto-mem-projects-empty'), // 既定の走査先は空(旧 memory dir 無し)
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: autoDir,
+    });
+
+    expect(secs).toHaveLength(1);
+    const sec = secs[0];
+    expect(sec.id).toBe(encodeProjectPath(autoDir));
+    expect(sec.note).toBe(autoDir);
+    expect(sec.projectPath).toBe(proj);
+    expect(sec.isCurrent).toBe(true);
+    expect(sec.orphan).toBeUndefined();
+    expect(sec.items.map((it) => it.name)).toEqual(['x']);
+  });
+
+  it('MEMORY.md 以外の *.md が無ければセクションにしない', () => {
+    const autoDir = path.join(tmp, 'auto-mem-store-empty');
+    fs.mkdirSync(autoDir, { recursive: true });
+    write(autoDir, 'MEMORY.md', '- [x](x.md) — メモ');
+    const proj = path.join(tmp, 'auto-mem-work2', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+
+    const secs = scanMemory(proj, {
+      root: path.join(tmp, 'auto-mem-projects-empty2'),
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: autoDir,
+    });
+    expect(secs).toEqual([]);
+  });
+
+  it('null(無効)を注入すると、実在するディレクトリを指していてもセクション化しない', () => {
+    const autoDir = path.join(tmp, 'auto-mem-store-disabled');
+    fs.mkdirSync(autoDir, { recursive: true });
+    write(autoDir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(autoDir, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    const proj = path.join(tmp, 'auto-mem-work3', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+
+    const secs = scanMemory(proj, {
+      root: path.join(tmp, 'auto-mem-projects-empty3'),
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
+    expect(secs).toEqual([]);
+  });
+
+  it('既定の ~/.claude/projects 走査は維持される(旧 memory dir が残っていれば従来どおり並ぶ)', () => {
+    const root2 = path.join(tmp, 'auto-mem-projects-legacy');
+    const proj = path.join(tmp, 'auto-mem-work4', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const legacyDir = path.join(root2, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(legacyDir, { recursive: true });
+    write(legacyDir, 'MEMORY.md', '- [old](old.md) — 旧メモ');
+    write(legacyDir, 'old.md', '---\nname: old\ndescription: 旧メモ\n---\n\n本文\n');
+
+    const autoDir = path.join(tmp, 'auto-mem-store2');
+    fs.mkdirSync(autoDir, { recursive: true });
+    write(autoDir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(autoDir, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+
+    const secs = scanMemory(proj, {
+      root: root2,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: autoDir,
+    });
+    expect(secs.map((s) => s.note).sort()).toEqual([autoDir, legacyDir].sort());
+  });
+});
+
+describe('scanMemory (MEMORY.md の読み込み上限: 先頭 200 行 or 25KB、先に達した方)', () => {
+  function linesIndexContent(totalLines: number, linkAtLine: number, mdName: string): string {
+    const lines: string[] = [];
+    for (let i = 1; i <= totalLines; i++) {
+      lines.push(i === linkAtLine ? `- [x](${mdName}) — メモ` : `filler line ${i}`);
+    }
+    return lines.join('\n') + '\n';
+  }
+  function scanOne(base: string, indexContent: string, mdName: string): MemorySection {
+    const projectsRoot = path.join(base, 'projects');
+    const proj = path.join(base, 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const dir = path.join(projectsRoot, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', indexContent);
+    write(dir, mdName, `---\nname: x\ndescription: メモ\n---\n\n本文\n`);
+    const secs = scanMemory(proj, {
+      root: projectsRoot,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
+    return secs[0];
+  }
+
+  it('200 行目ちょうどの索引行は上限内(indexBeyondLimit なし、indexTokens に算入)', () => {
+    const sec = scanOne(
+      path.join(tmp, 'lim-lines-in'),
+      linesIndexContent(200, 200, 'in.md'),
+      'in.md',
+    );
+    const item = sec.items[0];
+    expect(item.indexBeyondLimit).toBeUndefined();
+    expect(sec.indexBeyondCount).toBeUndefined();
+    expect(sec.indexTokens).toBe(item.indexTokens);
+    expect((item.signals || []).some((s) => s.kind === 'index-beyond-limit')).toBe(false);
+  });
+
+  it('201 行目の索引行は上限外(indexBeyondLimit、indexTokens には算入されない)', () => {
+    const sec = scanOne(
+      path.join(tmp, 'lim-lines-out'),
+      linesIndexContent(201, 201, 'out.md'),
+      'out.md',
+    );
+    const item = sec.items[0];
+    expect(item.indexBeyondLimit).toBe(true);
+    expect(sec.indexBeyondCount).toBe(1);
+    expect(sec.indexTokens).toBe(0);
+    const sig = (item.signals || []).find((s) => s.kind === 'index-beyond-limit');
+    expect(sig?.value).toBe('201');
+  });
+
+  /* マルチバイト文字(UTF-8 で 3 byte)でぴったり境界を作り、JS の文字数ではなくバイト数で判定していることを確かめる */
+  function fillerBytes(bytes: number): string {
+    const CH = 'あ'; // UTF-8 で 3 byte
+    const chBytes = Buffer.byteLength(CH, 'utf8');
+    const n = Math.floor(bytes / chBytes);
+    const rest = bytes - n * chBytes;
+    return CH.repeat(n) + 'x'.repeat(rest);
+  }
+  /* 索引行(改行込み)の末尾までの累積バイト数がちょうど targetBytes になる MEMORY.md */
+  function indexAtByteBoundary(targetBytes: number, mdName: string): string {
+    const linkLine = `- [x](${mdName}) — メモ`;
+    const linkLineBytes = Buffer.byteLength(linkLine, 'utf8') + 1; // 改行込み
+    const fillerLineBytes = targetBytes - linkLineBytes;
+    // フィラー行自身の改行 1 byte を引いた分を本文で埋める
+    const filler = fillerBytes(fillerLineBytes - 1);
+    return filler + '\n' + linkLine + '\n';
+  }
+
+  it('25KB ちょうどの索引行は上限内', () => {
+    const content = indexAtByteBoundary(25 * 1024, 'in2.md');
+    const sec = scanOne(path.join(tmp, 'lim-bytes-in'), content, 'in2.md');
+    const item = sec.items[0];
+    expect(item.indexBeyondLimit).toBeUndefined();
+    expect(sec.indexTokens).toBe(item.indexTokens);
+  });
+
+  it('25KB を 1 byte 跨いだ索引行は上限外', () => {
+    const content = indexAtByteBoundary(25 * 1024 + 1, 'out2.md');
+    const sec = scanOne(path.join(tmp, 'lim-bytes-out'), content, 'out2.md');
+    const item = sec.items[0];
+    expect(item.indexBeyondLimit).toBe(true);
+    expect(sec.indexBeyondCount).toBe(1);
+    expect(sec.indexTokens).toBe(0);
+  });
+});
+
+describe('scanMemory (frontmatter の modified を updatedAt に優先使用)', () => {
+  it('有効な ISO 8601 の modified は mtime より優先される', () => {
+    const root2 = path.join(tmp, 'modified-valid-projects');
+    const proj = path.join(tmp, 'modified-valid-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const dir = path.join(root2, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    const iso = '2024-03-15T09:30:00Z';
+    write(dir, 'x.md', `---\nname: x\ndescription: メモ\nmodified: ${iso}\n---\n\n本文\n`);
+    const secs = scanMemory(proj, {
+      root: root2,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
+    const item = secs[0].items[0];
+    expect(item.updatedAt).toBe(Date.parse(iso));
+    // mtime(スキャン直前に書いたファイル)とは明確に異なる日付であることも確認する
+    expect(item.updatedAt).not.toBe(fs.statSync(path.join(dir, 'x.md')).mtimeMs);
+  });
+
+  it('不正な modified はスキャン時の mtime にフォールバックする', () => {
+    const root2 = path.join(tmp, 'modified-invalid-projects');
+    const proj = path.join(tmp, 'modified-invalid-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const dir = path.join(root2, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(dir, 'x.md', `---\nname: x\ndescription: メモ\nmodified: not-a-date\n---\n\n本文\n`);
+    const secs = scanMemory(proj, {
+      root: root2,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
+    const item = secs[0].items[0];
+    expect(item.updatedAt).toBe(fs.statSync(path.join(dir, 'x.md')).mtimeMs);
+  });
+
+  it('modified が無ければ従来どおり mtime', () => {
+    const root2 = path.join(tmp, 'modified-missing-projects');
+    const proj = path.join(tmp, 'modified-missing-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const dir = path.join(root2, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(dir, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    const secs = scanMemory(proj, {
+      root: root2,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
+    const item = secs[0].items[0];
+    expect(item.updatedAt).toBe(fs.statSync(path.join(dir, 'x.md')).mtimeMs);
   });
 });

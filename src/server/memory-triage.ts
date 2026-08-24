@@ -298,6 +298,8 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
             return `- 本文が別の登録プロジェクト「${promptPath(s.value)}」配下のパスを指している`;
           case 'index-mismatch':
             return `- 索引行と本文が違うことを言っている`;
+          case 'index-beyond-limit':
+            return `- この索引行は MEMORY.md の読み込み上限(200 行 / 25KB)の外にあり、毎セッション読まれていない`;
         }
       }
       switch (s.kind) {
@@ -325,6 +327,8 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
           return `- the body points at a path under another registered project "${promptPath(s.value)}"`;
         case 'index-mismatch':
           return `- the index line and the body say different things`;
+        case 'index-beyond-limit':
+          return `- this index line is outside MEMORY.md's read limit (200 lines / 25KB) and is not read every session`;
       }
     })
     .join('\n');

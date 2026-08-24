@@ -130,6 +130,8 @@ const en = {
   'memory.cost.indexK': 'Index — every session',
   'memory.cost.indexNote':
     'Index lines for {n} memories are\ninjected unconditionally every session',
+  /* MEMORY.md は毎セッション先頭 200 行 or 25KB までしか読まれない(公式仕様)。その外の索引行は書いてあっても注入されない */
+  'memory.cost.indexBeyond': '{n} beyond the limit (not read every session)',
   'memory.cost.bodyK': 'Bodies — only when read',
   'memory.cost.bodyNote': 'Costs nothing unless read.\n{k} / {n} read within the retention window',
   'memory.cost.bodyNoteNA': 'Costs nothing unless read.\nReads cannot be measured (no transcripts)',
@@ -535,6 +537,7 @@ const ja: Record<MsgKey, string> = {
 
   'memory.cost.indexK': '索引 — 毎セッション',
   'memory.cost.indexNote': '{n} 件ぶんの索引行が\n無条件で毎回注入される',
+  'memory.cost.indexBeyond': '上限外 {n} 件(毎セッション読まれていない)',
   'memory.cost.bodyK': '本文 — 参照時のみ',
   'memory.cost.bodyNote': '読まれない限り 0 コスト。\n保持期間内に参照 {k} / {n} 件',
   'memory.cost.bodyNoteNA': '読まれない限り 0 コスト。\n参照実績は計測不能(transcript なし)',

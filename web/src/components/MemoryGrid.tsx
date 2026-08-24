@@ -59,6 +59,7 @@ function CostBar({
   const per = n ? Math.round(sec.indexTokens / n) : 0;
   const max = Math.max(sec.indexTokens, pluginTok, userTok);
   const unit = t('memory.cost.unit');
+  const beyond = sec.indexBeyondCount || 0;
   return (
     <div className="costbar">
       <div className="cell">
@@ -67,7 +68,10 @@ function CostBar({
           {sec.indexTokens.toLocaleString()}
           <span className="u"> {unit}</span>
         </span>
-        <span className="note">{t('memory.cost.indexNote', { n })}</span>
+        <span className="note">
+          {t('memory.cost.indexNote', { n })}
+          {beyond > 0 && '\n' + t('memory.cost.indexBeyond', { n: beyond })}
+        </span>
       </div>
       <div className="cell">
         <span className="k">{t('memory.cost.bodyK')}</span>
