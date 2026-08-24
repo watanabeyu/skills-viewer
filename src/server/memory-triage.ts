@@ -232,10 +232,15 @@ export function candidatesFor(sec: MemorySection, signals: MemorySignal[]): stri
  */
 export function targetMemDirOf(project: string, home: string = HOME): string {
   const projectsDir = path.join(home, '.claude', 'projects');
-  // 算出より観測を優先: 登録パス自身の slug に memory が既に実在するなら、それが正
-  // (scanMemory がディレクトリの実在を起点にする設計と揃える。home はテスト注入用)
+  // 算出より観測を優先: 登録パス自身の slug に memory が既に実在するなら、それが正。
+  // 「実在」は scanMemory の採用条件と同じ「MEMORY.md 以外の *.md が 1 件以上」で判定する
+  // (空ディレクトリや索引だけの残骸に負けて、実体と別の slug へ誘導しないため。home はテスト注入用)
   const own = path.join(projectsDir, encodeProjectPath(project), 'memory');
-  if (fs.existsSync(own)) return own;
+  try {
+    if (fs.readdirSync(own).some((f) => f.endsWith('.md') && f !== 'MEMORY.md')) return own;
+  } catch {
+    /* 無い・読めない → 算出(リポジトリルート基準)へフォールバック */
+  }
   return path.join(projectsDir, encodeProjectPath(repoRootOf(project) ?? project), 'memory');
 }
 

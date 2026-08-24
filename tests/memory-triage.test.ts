@@ -1197,16 +1197,22 @@ describe('targetMemDirOf (移動先の memory ディレクトリ)', () => {
     path.join(os.homedir(), '.claude', 'projects', encodeProjectPath(project), 'memory');
 
   it('実在する memory dir を算出より優先する(登録パス自身の slug に memory が既にあるならそれが正)', () => {
-    // 擬似 HOME を注入: 親リポジトリ配下のサブディレクトリだが、自身の slug に memory が実在する
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-tmd-home-'));
+    // 擬似 HOME を注入(tmp 配下 = afterAll で一括削除)。親リポジトリ配下のサブディレクトリだが、
+    // 自身の slug に本文ファイル入りの memory が実在するケース
+    const home = fs.mkdtempSync(path.join(tmp, 'tmd-home-'));
     const repo = path.join(tmp, 'tm-own-repo');
     const sub = path.join(repo, 'frontend');
     fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
     fs.mkdirSync(sub, { recursive: true });
     const own = path.join(home, '.claude', 'projects', encodeProjectPath(sub), 'memory');
     fs.mkdirSync(own, { recursive: true });
+    fs.writeFileSync(path.join(own, 'x.md'), '---\nname: x\n---\n本文');
     expect(targetMemDirOf(sub, home)).toBe(own); // repoRootOf(= repo)より実在を優先
-    fs.rmSync(home, { recursive: true, force: true });
+    // 空ディレクトリ(残骸)は実在扱いしない: x.md を消すと算出(リポジトリルート)へ落ちる
+    fs.rmSync(path.join(own, 'x.md'));
+    expect(targetMemDirOf(sub, home)).toBe(
+      path.join(home, '.claude', 'projects', encodeProjectPath(repo), 'memory'),
+    );
   });
 
   it('submodule は親リポジトリに束ねない(.git がリポジトリ境界。自身の slug になる)', () => {
