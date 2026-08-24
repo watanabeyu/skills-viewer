@@ -530,9 +530,11 @@ describe('triageHash (本文 + 索引行)', () => {
       },
     };
     expect(
-      selectStale([{ ...it1, indexLine: '- [a](h-a.md) — 新' }], store, 'ja', false),
+      selectStale([{ ...it1, indexLine: '- [a](h-a.md) — 新' }], store, 'ja', false, {
+        sharedEnv: false,
+      }),
     ).toHaveLength(1);
-    expect(selectStale([withIndex], store, 'ja', false)).toHaveLength(0);
+    expect(selectStale([withIndex], store, 'ja', false, { sharedEnv: false })).toHaveLength(0);
   });
 
   /*
@@ -562,8 +564,10 @@ describe('triageHash (本文 + 索引行)', () => {
         generatedAt: '',
       },
     };
-    expect(selectStale([{ ...base, indexBeyondLimit: true }], store, 'ja', false)).toHaveLength(1);
-    expect(selectStale([base], store, 'ja', false)).toHaveLength(0);
+    expect(
+      selectStale([{ ...base, indexBeyondLimit: true }], store, 'ja', false, { sharedEnv: false }),
+    ).toHaveLength(1);
+    expect(selectStale([base], store, 'ja', false, { sharedEnv: false })).toHaveLength(0);
   });
 });
 
@@ -591,7 +595,7 @@ describe('selectStale (差分 call の対象選定)', () => {
       [b.path]: entry({ hash: 'stale-hash' }),
       [d.path]: entry({ hash: contentHash(d.path), lang: 'en' }),
     };
-    const stale = selectStale([a, b, c, d], store, 'ja', false);
+    const stale = selectStale([a, b, c, d], store, 'ja', false, { sharedEnv: false });
     expect(stale.map((it) => it.path)).toEqual([b.path, c.path, d.path]);
   });
 
@@ -602,13 +606,15 @@ describe('selectStale (差分 call の対象選定)', () => {
       [a.path]: entry({ hash: contentHash(a.path), state: undefined }),
       [b.path]: entry({ hash: contentHash(b.path), state: undefined, error: 'invalid-output' }),
     };
-    expect(selectStale([a, b], store, 'ja', false).map((it) => it.path)).toEqual([a.path]);
+    expect(
+      selectStale([a, b], store, 'ja', false, { sharedEnv: false }).map((it) => it.path),
+    ).toEqual([a.path]);
   });
 
   it('force なら全件が対象', () => {
     const a = memItem('f-a.md', 'aaa');
     const store: TriageStore = { [a.path]: entry({ hash: contentHash(a.path) }) };
-    expect(selectStale([a], store, 'ja', true)).toHaveLength(1);
+    expect(selectStale([a], store, 'ja', true, { sharedEnv: false })).toHaveLength(1);
   });
 });
 
@@ -952,7 +958,12 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
 
   it('hash と lang が一致するときだけ aiTriage を付ける', () => {
     const it = memItem('at-a.md', 'aaa');
-    attachMemoryTriage([section([it])], 'ja', { [it.path]: entry({ hash: contentHash(it.path) }) });
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      { [it.path]: entry({ hash: contentHash(it.path) }) },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage).toEqual({
       verdict: 'delete',
       reason: '古い',
@@ -963,26 +974,41 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
 
   it('state と診断時シグナルもキャッシュから載せる', () => {
     const it = memItem('at-s.md', 'sss');
-    attachMemoryTriage([section([it])], 'ja', {
-      [it.path]: entry({
-        hash: contentHash(it.path),
-        state: 'historical',
-        signals: [{ kind: 'branch-merged', value: 'feat/x' }],
-      }),
-    });
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      {
+        [it.path]: entry({
+          hash: contentHash(it.path),
+          state: 'historical',
+          signals: [{ kind: 'branch-merged', value: 'feat/x' }],
+        }),
+      },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage?.state).toBe('historical');
     expect(it.aiTriage?.signals).toEqual([{ kind: 'branch-merged', value: 'feat/x' }]);
   });
 
   it('本文が変わっていれば(hash 不一致)付けない', () => {
     const it = memItem('at-b.md', 'bbb');
-    attachMemoryTriage([section([it])], 'ja', { [it.path]: entry({ hash: 'stale-hash' }) });
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      { [it.path]: entry({ hash: 'stale-hash' }) },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage).toBeUndefined();
   });
 
   it('lang が違えば付けない', () => {
     const it = memItem('at-c.md', 'ccc');
-    attachMemoryTriage([section([it])], 'en', { [it.path]: entry({ hash: contentHash(it.path) }) });
+    attachMemoryTriage(
+      [section([it])],
+      'en',
+      { [it.path]: entry({ hash: contentHash(it.path) }) },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage).toBeUndefined();
   });
 
@@ -990,7 +1016,7 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     const it = memItem('at-d.md', 'ddd');
     const store: TriageStore = { [it.path]: entry({ hash: contentHash(it.path) }) };
     fs.rmSync(it.path);
-    attachMemoryTriage([section([it])], 'ja', store);
+    attachMemoryTriage([section([it])], 'ja', store, { sharedEnv: false });
     expect(it.aiTriage).toBeUndefined();
   });
 
@@ -1000,36 +1026,46 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
    */
   it('ゲート導入前の wrong-project キャッシュ(target / demoted / error 無し)は付けない', () => {
     const it = memItem('at-legacy.md', 'lll');
-    attachMemoryTriage([section([it])], 'ja', {
-      [it.path]: entry({
-        hash: contentHash(it.path),
-        state: 'current',
-        verdict: 'wrong-project',
-        instruction: '- /w/でっちあげ へ移す',
-      }),
-    });
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      {
+        [it.path]: entry({
+          hash: contentHash(it.path),
+          state: 'current',
+          verdict: 'wrong-project',
+          instruction: '- /w/でっちあげ へ移す',
+        }),
+      },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage).toBeUndefined();
   });
 
   it('ゲートを通った wrong-project(target あり)と格下げ済み(demoted)はキャッシュから載せる', () => {
     const a = memItem('at-wp.md', 'aaa');
     const b = memItem('at-demoted.md', 'bbb');
-    attachMemoryTriage([section([a, b])], 'ja', {
-      [a.path]: entry({
-        hash: contentHash(a.path),
-        state: 'current',
-        verdict: 'wrong-project',
-        instruction: '',
-        target: '/w/other',
-      }),
-      [b.path]: entry({
-        hash: contentHash(b.path),
-        state: 'current',
-        verdict: 'keep',
-        instruction: '',
-        demoted: 'wrong-project',
-      }),
-    });
+    attachMemoryTriage(
+      [section([a, b])],
+      'ja',
+      {
+        [a.path]: entry({
+          hash: contentHash(a.path),
+          state: 'current',
+          verdict: 'wrong-project',
+          instruction: '',
+          target: '/w/other',
+        }),
+        [b.path]: entry({
+          hash: contentHash(b.path),
+          state: 'current',
+          verdict: 'keep',
+          instruction: '',
+          demoted: 'wrong-project',
+        }),
+      },
+      { sharedEnv: false },
+    );
     expect(a.aiTriage?.verdict).toBe('wrong-project');
     expect(a.aiTriage?.target).toBe('/w/other');
     // 移動先ディレクトリはキャッシュ値ではなく target から都度算出する
@@ -1044,7 +1080,7 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     const it2 = memItem('at-e.md', 'eee');
     const store: TriageStore = { [it2.path]: entry({ hash: null }) };
     fs.rmSync(it2.path);
-    attachMemoryTriage([section([it2])], 'ja', store);
+    attachMemoryTriage([section([it2])], 'ja', store, { sharedEnv: false });
     expect(it2.aiTriage).toBeUndefined();
   });
 
@@ -1061,7 +1097,9 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
         instruction: '- 削除する',
       }),
     };
-    attachMemoryTriage([{ ...section([it], null), orphan: true }], 'ja', store);
+    attachMemoryTriage([{ ...section([it], null), orphan: true }], 'ja', store, {
+      sharedEnv: false,
+    });
     expect(it.aiTriage?.verdict).toBe('keep');
     expect(it.aiTriage?.demoted).toBe('delete');
     expect(it.aiTriage?.instruction).toBe('');
@@ -1071,18 +1109,32 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
 
   it('orphan セクションでも keep / shrink / update はそのまま表示する', () => {
     const it = memItem('at-orphan-shrink.md', 'ooo');
-    attachMemoryTriage([{ ...section([it], null), orphan: true }], 'ja', {
-      [it.path]: entry({ hash: contentHash(it.path), verdict: 'shrink', instruction: '- 縮める' }),
-    });
+    attachMemoryTriage(
+      [{ ...section([it], null), orphan: true }],
+      'ja',
+      {
+        [it.path]: entry({
+          hash: contentHash(it.path),
+          verdict: 'shrink',
+          instruction: '- 縮める',
+        }),
+      },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage?.verdict).toBe('shrink');
     expect(it.aiTriage?.demoted).toBeUndefined();
   });
 
   it('orphan でないセクションでは delete をそのまま表示する(回帰防止)', () => {
     const it = memItem('at-nonorphan-del.md', 'ooo');
-    attachMemoryTriage([section([it])], 'ja', {
-      [it.path]: entry({ hash: contentHash(it.path), verdict: 'delete' }),
-    });
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      {
+        [it.path]: entry({ hash: contentHash(it.path), verdict: 'delete' }),
+      },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage?.verdict).toBe('delete');
     expect(it.aiTriage?.demoted).toBeUndefined();
   });
@@ -1093,15 +1145,20 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
    */
   it('orphan セクションでは target 付きの wrong-project キャッシュも移動先ごと落とす', () => {
     const it = memItem('at-orphan-wp.md', 'ooo');
-    attachMemoryTriage([{ ...section([it], null), orphan: true }], 'ja', {
-      [it.path]: entry({
-        hash: contentHash(it.path),
-        state: 'current',
-        verdict: 'wrong-project',
-        instruction: '',
-        target: '/w/other',
-      }),
-    });
+    attachMemoryTriage(
+      [{ ...section([it], null), orphan: true }],
+      'ja',
+      {
+        [it.path]: entry({
+          hash: contentHash(it.path),
+          state: 'current',
+          verdict: 'wrong-project',
+          instruction: '',
+          target: '/w/other',
+        }),
+      },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage?.verdict).toBe('keep');
     expect(it.aiTriage?.demoted).toBe('wrong-project');
     expect(it.aiTriage?.target).toBeUndefined();
@@ -1124,13 +1181,18 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
         demotedBy: 'orphan',
       }),
     };
-    attachMemoryTriage([section([it])], 'ja', store);
+    attachMemoryTriage([section([it])], 'ja', store, { sharedEnv: false });
     expect(it.aiTriage).toBeUndefined();
     // 同じキャッシュでも orphan セクションのままなら表示する(格下げの記録つき)
     const same = memItem('at-orphan-demoted2.md', 'ooo');
-    attachMemoryTriage([{ ...section([same], null), orphan: true }], 'ja', {
-      [same.path]: { ...store[it.path], hash: contentHash(same.path) },
-    });
+    attachMemoryTriage(
+      [{ ...section([same], null), orphan: true }],
+      'ja',
+      {
+        [same.path]: { ...store[it.path], hash: contentHash(same.path) },
+      },
+      { sharedEnv: false },
+    );
     expect(same.aiTriage?.demoted).toBe('delete');
   });
 });
@@ -1732,7 +1794,7 @@ describe('selectStale: ゲート導入前の wrong-project キャッシュ', () 
   it('target も demoted も無い wrong-project は hash が一致しても再診断に乗せる', () => {
     const a = memItem('ws-old.md', 'aaa');
     const store: TriageStore = { [a.path]: entry({ hash: contentHash(a.path) }) };
-    expect(selectStale([a], store, 'ja', false)).toHaveLength(1);
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false })).toHaveLength(1);
   });
 
   /*
@@ -1754,8 +1816,10 @@ describe('selectStale: ゲート導入前の wrong-project キャッシュ', () 
         demotedBy: 'orphan',
       }),
     };
-    expect(selectStale([a], store, 'ja', false)).toHaveLength(1); // opts 省略 = 非 orphan
-    expect(selectStale([a], store, 'ja', false, { orphan: true })).toHaveLength(0);
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false })).toHaveLength(1); // orphan 未指定 = 非制限
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false, orphan: true })).toHaveLength(
+      0,
+    );
   });
 
   /* no-signal(内容側の理由)の格下げは環境が変わっても再診断しない */
@@ -1770,7 +1834,7 @@ describe('selectStale: ゲート導入前の wrong-project キャッシュ', () 
         demotedBy: 'no-signal',
       }),
     };
-    expect(selectStale([a], store, 'ja', false)).toHaveLength(0);
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false })).toHaveLength(0);
   });
 
   it('target あり・格下げ済み(demoted)・出力不正(error)の wrong-project は stale にしない', () => {
@@ -1782,7 +1846,7 @@ describe('selectStale: ゲート導入前の wrong-project キャッシュ', () 
       [b.path]: entry({ hash: contentHash(b.path), instruction: '', demoted: 'wrong-project' }),
       [c.path]: entry({ hash: contentHash(c.path), instruction: '', error: 'invalid-output' }),
     };
-    expect(selectStale([a, b, c], store, 'ja', false)).toHaveLength(0);
+    expect(selectStale([a, b, c], store, 'ja', false, { sharedEnv: false })).toHaveLength(0);
   });
 });
 
@@ -1924,7 +1988,7 @@ describe('共有ストア(sharedStore)の制限', () => {
       indexTokens: 0,
       items: [it0],
     };
-    attachMemoryTriage([sec], 'ja', store);
+    attachMemoryTriage([sec], 'ja', store, { sharedEnv: false });
     expect(it0.aiTriage?.verdict).toBe('keep');
     expect(it0.aiTriage?.demoted).toBe('delete');
     expect(it0.aiTriage?.instruction).toBe('');
@@ -2041,7 +2105,7 @@ describe('格下げ理由の区分(orphan / shared-env)', () => {
     // 制限は解けたが user scope の設定は残っている = 同じ格下げが再現するだけなので呼び直さない
     expect(selectStale([a], store, 'ja', false, { sharedEnv: true })).toHaveLength(0);
     // 設定も外れた = 環境条件が消えたので再診断へ乗せる
-    expect(selectStale([a], store, 'ja', false)).toHaveLength(1);
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false })).toHaveLength(1);
 
     // 表示側も同じ判定(設定が残っていれば出す / 消えたら未診断扱い)
     const shown = memItem('db-shown.md', 'aaa');
@@ -2053,9 +2117,14 @@ describe('格下げ理由の区分(orphan / shared-env)', () => {
     );
     expect(shown.aiTriage?.demoted).toBe('delete');
     const hidden = memItem('db-hidden.md', 'aaa');
-    attachMemoryTriage([{ ...secOf(hidden) }], 'ja', {
-      [hidden.path]: { ...cached, hash: triageHash(hidden) },
-    });
+    attachMemoryTriage(
+      [{ ...secOf(hidden) }],
+      'ja',
+      {
+        [hidden.path]: { ...cached, hash: triageHash(hidden) },
+      },
+      { sharedEnv: false },
+    );
     expect(hidden.aiTriage).toBeUndefined();
   });
 

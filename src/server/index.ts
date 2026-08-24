@@ -12,14 +12,14 @@ import { execFile } from 'node:child_process';
 
 import type { Lang, MemorySection, Section, SkillsData } from '../shared/types';
 import { scanSections, listProjects, HOME } from './scan';
+import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
 import {
-  scanUsageByDir,
-  scanMemoryUsage,
-  encodeProjectPath,
-  hasTranscripts,
-  setMemoryRoots,
-} from './usage';
-import { publicMemory, resolveAutoMemoryDir, scanMemory } from './memory';
+  publicMemory,
+  realDir,
+  resolveAutoMemoryDir,
+  scanMemory,
+  usageAvailableFor,
+} from './memory';
 import {
   loadSummaries,
   contentHash,
@@ -123,6 +123,7 @@ function attributeUsage(sections: Section[]): boolean {
  * skill と違って帰属先の解決は不要で、Read の file_path がそのまま実ファイルを指す。
  * usageAvailable は「そのプロジェクトのトランスクリプトがあるか」= エンコード名で始まる
  * ディレクトリ(worktree 分を含む)に jsonl が 1 件以上あるか。false なら Read 列は出さない。
+ * 判定そのもの(共有ストアの扱いを含む)は usageAvailableFor に集約している。
  */
 function attributeMemoryUsage(memory: MemorySection[]): void {
   if (!memory.length) return;
@@ -130,7 +131,7 @@ function attributeMemoryUsage(memory: MemorySection[]): void {
   for (const sec of memory) {
     // autoMemoryDirectory の置き場は id が置き場のパス由来なので、transcript の
     // ディレクトリ名(現在のプロジェクトの slug)を別に持っている
-    sec.usageAvailable = hasTranscripts(dirsWithTranscripts, sec.transcriptSlug ?? sec.id);
+    sec.usageAvailable = usageAvailableFor(sec, dirsWithTranscripts);
     for (const it of sec.items) {
       const u = byPath[it.path];
       if (!u) continue;
@@ -162,7 +163,17 @@ function memorySections(cwd: string): MemorySection[] {
  */
 function primeMemoryRoots(cwd: string): void {
   const auto = resolveAutoMemoryDir(cwd);
-  setMemoryRoots(auto ? [auto.dir] : []);
+  if (!auto) {
+    setMemoryRoots([]);
+    return;
+  }
+  /*
+   * 設定値そのものと、その実パス(異なるときだけ)の両方を許可ルートにする。
+   * transcript の file_path が symlink 解決済みで記録される環境があり、設定値だけを
+   * 前方一致に使うと、その置き場の Read / Write を丸ごと取り逃すため。
+   */
+  const real = realDir(auto.dir);
+  setMemoryRoots(real !== auto.dir ? [auto.dir, real] : [auto.dir]);
 }
 
 function collect(cwd: string, lang: Lang): SkillsData {

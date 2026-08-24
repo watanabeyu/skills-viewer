@@ -10,7 +10,7 @@ import type { MemorySection, MemoryType, SkillItem } from '../shared/types';
 import { estimateTokens } from './lint';
 import { HOME, firstBodyLine, listProjects, parseFrontmatter } from './scan';
 import { extractSignals } from './memory-signals';
-import { encodeProjectPath } from './usage';
+import { encodeProjectPath, hasTranscripts } from './usage';
 
 export interface MemoryScanOptions {
   /* ~/.claude/projects 相当のルート(テストで差し替える) */
@@ -114,11 +114,15 @@ function readAutoMemoryDirectory(fp: string, home: string): string | null {
   /*
    * 過大な指定は「設定なし」として捨てる。ファイルシステムのルート / HOME 自身 / HOME の祖先を
    * 置き場にすると、上記 2 つの許可がホーム配下(実質全体)まで広がり、「memory の置き場」という
-   * 限定が意味を失う(公式仕様にもそんな運用は無い)
+   * 限定が意味を失う(公式仕様にもそんな運用は無い)。
+   * 比較は実パス(realDir)同士で行う: 表記だけ見ると HOME と別物でも、symlink 経由で
+   * HOME(やその祖先)を指す値はガードを素通りしてしまうため。
    */
-  const homeResolved = path.resolve(home);
-  if (dir === path.parse(dir).root) return null;
-  if (dir === homeResolved || homeResolved.startsWith(dir + path.sep)) return null;
+  const dirReal = realDir(dir);
+  const homeReal = realDir(home);
+  if (dirReal === path.parse(dirReal).root) return null;
+  if (dirReal === homeReal || homeReal.startsWith(dirReal + path.sep)) return null;
+  // 返すのは正規化しただけの値(実パスに置き換えない): 表示・重複判定は既に realDir を通す
   return dir;
 }
 
@@ -179,6 +183,22 @@ export function publicMemory(memory: MemorySection[]): MemorySection[] {
     delete out.transcriptSlug;
     return out;
   });
+}
+
+/*
+ * そのセクションの Read / Write 実績を「測れる環境か」(usageAvailable)。
+ * 実績の付与そのものは index.ts(attributeMemoryUsage)が行うが、判定だけはテストできるよう
+ * ここに純関数で置く。
+ *   - 既定・帰属ありのセクション: そのプロジェクト(worktree 含む)の transcript があるか。
+ *     無ければ「Read 0 = 読まれていない」が言えないので列ごと出さない
+ *   - 共有ストア(sharedStore): どのプロジェクトのセッションが読んだかは決まらないが、
+ *     scanMemoryUsage は全プロジェクトの transcript を横断して置き場配下の Read / Write を
+ *     file_path で拾っている。つまり実績は「全プロジェクト合算」の事実として本物なので、
+ *     判定も全体の transcript の有無で行う(1 件も無ければ測れない、で従来どおり false)
+ */
+export function usageAvailableFor(sec: MemorySection, dirsWithTranscripts: Set<string>): boolean {
+  if (sec.sharedStore) return dirsWithTranscripts.size > 0;
+  return hasTranscripts(dirsWithTranscripts, sec.transcriptSlug ?? sec.id);
 }
 
 const MEMORY_TYPES: MemoryType[] = ['user', 'feedback', 'project', 'reference'];
@@ -348,8 +368,10 @@ const AUTO_FILE_MAX_BYTES = 1024 * 1024;
  * 重複セクション判定用の正規化。symlink 経由で同じディレクトリを指した設定
  * (例: ~/mem → ~/.claude/projects/<slug>/memory)を「別の場所」と誤認しないよう実パスで比べる。
  * 実パスが取れない(存在しない・権限が無い)場合は path.resolve で代用する。
+ * 設定値の過大指定ガード(readAutoMemoryDirectory)と usage の許可ルート(index.ts)も
+ * 同じ写像を通す: 実パスで見るかどうかが場所ごとに違うと、許可と判定がずれる。
  */
-function realDir(p: string): string {
+export function realDir(p: string): string {
   try {
     return fs.realpathSync(p);
   } catch {
@@ -543,8 +565,7 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
           ...(shared ? { sharedStore: true } : {}),
           // Read / Write 実績が計測可能かは、帰属先プロジェクトの slug で判定する
           // (transcript は現在のプロジェクトのものしか無い)。共有ストアは帰属が決まらないので
-          // 持たせない = usageAvailable は false のまま。帰属不明の memory に
-          // 「Read 0 = 読まれていない」という誤った前提を出さないため
+          // 持たせず、判定は全プロジェクトの transcript の有無で行う(usageAvailableFor)
           ...(shared ? {} : { transcriptSlug: encodeProjectPath(owner) }),
           usageAvailable: false,
           indexTokens: autoItems.reduce(

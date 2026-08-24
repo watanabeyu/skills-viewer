@@ -5,7 +5,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { autoMemoryDirOf, mainWorktreeOf, scanMemory } from '../src/server/memory';
 import { encodeProjectPath } from '../src/server/usage';
 import { estimateTokens } from '../src/server/lint';
-import { publicMemory } from '../src/server/memory';
+import { publicMemory, usageAvailableFor } from '../src/server/memory';
 import type { MemorySection } from '../src/shared/types';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-memory-'));
@@ -598,6 +598,49 @@ describe('publicMemory (/api/skills 応答から内部用フィールドを落�
 });
 
 /*
+ * 計画 13 Phase D round3: 共有ストアの usageAvailable は「全 transcript の有無」で決める。
+ * scanMemoryUsage は全プロジェクトの transcript を横断して置き場配下の Read / Write を
+ * file_path で拾うので、実績(合算)は本物。false 固定にすると測れているものを隠してしまう。
+ */
+describe('usageAvailableFor (Read 実績を測れる環境か)', () => {
+  const sec = (over: Partial<MemorySection> = {}): MemorySection => ({
+    id: '-w-alpha',
+    projectPath: '/w/alpha',
+    projectName: 'alpha',
+    note: '/h/.claude/projects/-w-alpha/memory',
+    usageAvailable: false,
+    indexTokens: 0,
+    items: [],
+    ...over,
+  });
+
+  it('既定セクションは自分の slug(id)の transcript で判定する', () => {
+    expect(usageAvailableFor(sec(), new Set(['-w-alpha']))).toBe(true);
+    // worktree のディレクトリ名(親 + '-')も自分の実績
+    expect(usageAvailableFor(sec(), new Set(['-w-alpha-feat-x']))).toBe(true);
+    expect(usageAvailableFor(sec(), new Set(['-w-beta']))).toBe(false);
+  });
+
+  it('transcriptSlug があればそれを優先する(autoDir セクション)', () => {
+    const s = sec({ id: 'auto--w-mem', autoDir: true, transcriptSlug: '-w-alpha' });
+    expect(usageAvailableFor(s, new Set(['-w-alpha']))).toBe(true);
+    expect(usageAvailableFor(s, new Set(['auto--w-mem']))).toBe(false);
+  });
+
+  it('共有ストアは slug を持たなくても、transcript が 1 件でもあれば測れる', () => {
+    const shared = sec({ id: 'auto--w-mem', projectPath: null, autoDir: true, sharedStore: true });
+    // 現在のプロジェクトのものが無くても、別プロジェクトのセッションが読んでいれば実績は残る
+    expect(usageAvailableFor(shared, new Set(['-w-beta']))).toBe(true);
+    expect(usageAvailableFor(shared, new Set(['-w-alpha', '-w-beta']))).toBe(true);
+  });
+
+  it('共有ストアでも transcript が 1 件も無ければ測れない', () => {
+    const shared = sec({ id: 'auto--w-mem', projectPath: null, autoDir: true, sharedStore: true });
+    expect(usageAvailableFor(shared, new Set<string>())).toBe(false);
+  });
+});
+
+/*
  * 計画 13 Phase D: 公式仕様との整合。
  *   1. autoMemoryDirectory の解決(純関数)
  *   2. MEMORY.md の読み込み上限(先頭 200 行 or 25KB、先に達した方)
@@ -694,6 +737,36 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
   ])('過大な指定(%s)は無効', (_label, value) => {
     writeSettings(path.join(cwd, '.claude'), 'settings.json', { autoMemoryDirectory: value });
     expect(autoMemoryDirOf(cwd, home)).toBeNull();
+  });
+
+  /*
+   * 計画 13 Phase D round3: 過大指定のガードは実パス同士で比べる。
+   * 表記上は HOME と別物でも、symlink 経由で HOME を指す値が素通りすると、
+   * 読み取り許可と usage の許可ルートがホーム配下まで広がってしまう。
+   */
+  it('symlink 経由で HOME を指す指定も無効(比較は実パスで行う)', () => {
+    const link = path.join(cwd, 'home-alias');
+    fs.rmSync(link, { force: true });
+    fs.symlinkSync(home, link, 'dir');
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', { autoMemoryDirectory: link });
+    expect(autoMemoryDirOf(cwd, home)).toBeNull();
+    // HOME の祖先を指す symlink も同じく無効
+    const ancestorLink = path.join(cwd, 'ancestor-alias');
+    fs.rmSync(ancestorLink, { force: true });
+    fs.symlinkSync(path.dirname(path.resolve(home)), ancestorLink, 'dir');
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', {
+      autoMemoryDirectory: ancestorLink,
+    });
+    expect(autoMemoryDirOf(cwd, home)).toBeNull();
+    // 一方、HOME と無関係なディレクトリへの symlink は有効なまま(過剰に弾かない)
+    const okTarget = path.join(cwd, 'mem-real');
+    fs.mkdirSync(okTarget, { recursive: true });
+    const okLink = path.join(cwd, 'mem-alias');
+    fs.rmSync(okLink, { force: true });
+    fs.symlinkSync(okTarget, okLink, 'dir');
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', { autoMemoryDirectory: okLink });
+    // 返すのは正規化しただけの設定値(実パスに置き換えない)
+    expect(autoMemoryDirOf(cwd, home)).toEqual({ dir: okLink, scope: 'project' });
   });
 
   it('末尾スラッシュや .. を含む指定は正規化して返す', () => {
@@ -1047,10 +1120,11 @@ describe('scanMemory (autoMemoryDirectory の scope 別の帰属)', () => {
 
   /*
    * 計画 13 Phase D round2: 共有ストアは帰属が決まらないので transcriptSlug を持たない。
-   * 現在のプロジェクトの slug を当てると、別プロジェクトが書いた memory に
-   * 「Read 0 = 読まれていない」という誤った前提(usageAvailable = true)が付く。
+   * 現在のプロジェクトの slug を当てると、別プロジェクトが書いた memory の Read 実績を
+   * 「そのプロジェクトの transcript があるか」で判定してしまう(round3: 判定は
+   * 全プロジェクトの transcript の有無に変わったが、slug を持たないことは変わらない)。
    */
-  it('共有ストア(user scope)は transcriptSlug を持たない = usageAvailable は false のまま', () => {
+  it('共有ストア(user scope)は transcriptSlug を持たない(scanMemory 段階では usageAvailable は false)', () => {
     const { autoDir, proj, root } = fixture('scope-id-shared');
     const [sec] = scanMemory(proj, {
       root,
@@ -1060,6 +1134,7 @@ describe('scanMemory (autoMemoryDirectory の scope 別の帰属)', () => {
     });
     expect(sec.sharedStore).toBe(true);
     expect('transcriptSlug' in sec).toBe(false);
+    // 実測は attributeMemoryUsage(usageAvailableFor)で付くので、スキャン時点では未算出の false
     expect(sec.usageAvailable).toBe(false);
   });
 

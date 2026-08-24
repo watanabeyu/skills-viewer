@@ -1149,9 +1149,11 @@ export function selectStale(
     /* そのセクションが制限つきか(判断 5。格下げを解消したときの再診断判定に使う。
      * 鍵名は互換のため orphan のまま、値は「プロジェクト不明 or 共有ストア」) */
     orphan?: boolean;
-    /* user scope の autoMemoryDirectory が効いている環境か(shared-env 格下げの解消判定) */
-    sharedEnv?: boolean;
-  } = {},
+    /* user scope の autoMemoryDirectory が効いている環境か(shared-env 格下げの解消判定)。
+     * 省略可にしない: 未指定の既定(false)は「環境条件が解消した」= 全件再診断を意味するので、
+     * 渡し忘れが黙って claude 呼び出しを増やす。呼び出し側に必ず解決させる */
+    sharedEnv: boolean;
+  },
 ): SkillItem[] {
   if (force) return [...items];
   return items.filter((it) => {
@@ -1384,10 +1386,12 @@ export async function triageProject(
 export function attachMemoryTriage(
   memory: MemorySection[],
   lang: Lang,
-  store?: TriageStore,
+  /* 既定は loadTriage()。必須引数(opts)より前なので、既定にしたい呼び出しは undefined を渡す */
+  store: TriageStore | undefined,
   /* user scope の autoMemoryDirectory が効いている環境か(shared-env 格下げの解消判定。
-   * 呼び出し側の cwd で解決した値を渡す。未指定は「解消済み」として扱う) */
-  opts: { sharedEnv?: boolean } = {},
+   * 呼び出し側の cwd で解決した値を渡す。省略可にしない: 未指定の既定(false)は
+   * 「環境条件が解消した」= 制限つきの診断を隠す判断になり、渡し忘れが表示を変えてしまう) */
+  opts: { sharedEnv: boolean },
 ): void {
   if (!memory.length) return;
   // memory が 0 件のときはキャッシュ読み込みごと省く(デフォルト引数だとガードより先に走る)

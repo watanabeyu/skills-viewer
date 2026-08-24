@@ -275,15 +275,17 @@ export interface MemorySection {
   /*
    * user scope の autoMemoryDirectory による「全プロジェクト共有の置き場」か。
    * どのプロジェクトの memory かを特定できないため projectPath は null になり、棚卸しは
-   * orphan と同じ制限(keep / shrink / update のみ)に乗る。逆引き失敗ではないので orphan にはしない
+   * orphan と同じ制限(keep / shrink / update のみ)に乗る。逆引き失敗ではないので orphan にはしない。
+   * Read / Write 実績は全プロジェクトの transcript を横断して file_path で拾うので測れる
+   * (usageAvailable は全体の transcript の有無で決まり、回数は全プロジェクト合算)
    */
   sharedStore?: true;
   /*
    * usageAvailable(そのプロジェクトの transcript があるか)の判定に使う slug。
    * 既定セクションは id 自身が slug なので持たず、autoDir セクションだけが持つ
    * (置き場のパスと transcript のディレクトリ名は無関係なため)。
-   * 共有ストア(sharedStore)は帰属が決まらないので持たない = usageAvailable は false 固定になる
-   * (「Read 0 = 読まれていない」という誤った前提を、帰属不明の memory に対して出さない)。
+   * 共有ストア(sharedStore)は transcript の帰属が決まらないため持たず、判定は全体の
+   * transcript の有無で行う(実績は全プロジェクト合算)。
    * サーバー内部用。web に参照が無いので /api/skills 応答からは落とす(publicMemory)
    */
   transcriptSlug?: string;
