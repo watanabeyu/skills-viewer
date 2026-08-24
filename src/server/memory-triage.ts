@@ -57,6 +57,15 @@ const VERDICTS: readonly MemoryVerdict[] = [
   'update',
 ];
 const STATES: readonly MemoryState[] = ['current', 'outdated', 'historical', 'obsolete'];
+/*
+ * プロジェクト不明(orphan)セクションで採用できる verdict(判断 5)。置き場所の判定
+ * (wrong-project / 重複による delete / to-claude-md・to-docs・to-skill への昇格)は
+ * 逆引き先のプロジェクトが無いと前提が成立しないため、鮮度に関する 3 値だけを許す。
+ */
+const ORPHAN_ALLOWED_VERDICTS: readonly MemoryVerdict[] = ['keep', 'shrink', 'update'];
+function isOrphanRestricted(verdict: MemoryVerdict): boolean {
+  return !ORPHAN_ALLOWED_VERDICTS.includes(verdict);
+}
 const WHY_PLANS: readonly FeedbackWhyPlan[] = ['keep', 'generalize', 'drop'];
 const HOW_PLANS: readonly FeedbackHowPlan[] = ['keep', 'keep-lines-only', 'drop'];
 const INDEX_PLANS: readonly FeedbackIndexPlan[] = ['keep', 'rewrite', 'align'];
@@ -441,6 +450,25 @@ export function buildPrompt(
         'Their bodies are NOT provided. Use the headings, names and descriptions to guess duplicates and ' +
         'promotion targets; when you are not certain, write "check it does not duplicate <file> first" ' +
         'in the instruction.\n';
+  /*
+   * プロジェクト不明(orphan。projectPath が null)セクション向けの追加節(判断 5)。
+   * スラッグは逆引き不能なディレクトリ名のエンコードであって実在パスではないので、
+   * モデルが所在や移動先を捏造しないよう明記し、verdict を鮮度側の 3 値だけに縛る。
+   */
+  const orphanNote =
+    lang === 'ja'
+      ? 'このセクションはプロジェクトへの逆引きに失敗している(プロジェクト名はディレクトリ名のエンコード表記であり、' +
+        '非英数字は "-" に置き換わっている)。memory の実体は `~/.claude/projects/<スラッグ>/memory/` にある。' +
+        '所在や移動先を推測しないこと。\n' +
+        '置き場所の判定(別プロジェクトの話 = wrong-project / 重複による delete / ' +
+        'to-claude-md・to-docs・to-skill への昇格)はできない。verdict は keep / shrink / update のみを使うこと。' +
+        'それ以外を答えても採用されない。\n'
+      : 'This section failed to resolve back to a registered project (the project name is an encoded ' +
+        'directory name where non-alphanumeric characters become "-", not an actual path). The memory bodies ' +
+        'actually live under `~/.claude/projects/<slug>/memory/`; do not guess its location or a destination.\n' +
+        'Placement judgements (wrong-project, delete for duplicates, promotion to CLAUDE.md / docs / a skill) ' +
+        'are not possible here. verdict must be one of keep / shrink / update only; anything else will not be ' +
+        'adopted.\n';
   if (lang === 'ja') {
     return (
       'あなたは Claude Code の自動メモリ(~/.claude/projects/<project>/memory/)の棚卸しをします。\n' +
@@ -539,9 +567,12 @@ export function buildPrompt(
       promptPath(ctx.projectName) +
       (ctx.projectPath ? '(パス: ' + promptPath(ctx.projectPath) + ')' : '') +
       '\n' +
-      'この memory の持ち主は上のプロジェクトです。signals に「別の登録プロジェクトの配下パス」がある件は、' +
-      'その参照が上のプロジェクトでの作業に必要なもの(例: 連携先の設定ファイル)でない限り wrong-project とし、' +
-      'wrong-project にしない場合は reason にその根拠を書くこと。\n\n' +
+      (ctx.projectPath === null
+        ? orphanNote
+        : 'この memory の持ち主は上のプロジェクトです。signals に「別の登録プロジェクトの配下パス」がある件は、' +
+          'その参照が上のプロジェクトでの作業に必要なもの(例: 連携先の設定ファイル)でない限り wrong-project とし、' +
+          'wrong-project にしない場合は reason にその根拠を書くこと。\n') +
+      '\n' +
       candidates +
       standing +
       '\n# MEMORY.md(索引全文)\n' +
@@ -659,9 +690,12 @@ export function buildPrompt(
     promptPath(ctx.projectName) +
     (ctx.projectPath ? ' (path: ' + promptPath(ctx.projectPath) + ')' : '') +
     '\n' +
-    'The memories belong to the project above. When signals show paths under another registered project, ' +
-    'the verdict is wrong-project unless that reference is needed for work in the project above (e.g. a config ' +
-    'file of an integration); if you do not choose wrong-project, state the evidence in reason.\n\n' +
+    (ctx.projectPath === null
+      ? orphanNote
+      : 'The memories belong to the project above. When signals show paths under another registered project, ' +
+        'the verdict is wrong-project unless that reference is needed for work in the project above (e.g. a ' +
+        'config file of an integration); if you do not choose wrong-project, state the evidence in reason.\n') +
+    '\n' +
     candidates +
     standing +
     '\n# MEMORY.md (full index)\n' +
@@ -793,6 +827,8 @@ export function parseTriage(
    * 渡されない / 空の件は「機械シグナル無し」なので wrong-project を採用しない
    */
   candidates: Map<string, string[]> = new Map(),
+  /* orphan: プロジェクト不明セクションの棚卸しか(判断 5。verdict を keep/shrink/update に制限) */
+  opts: { orphan?: boolean } = {},
 ): Map<string, MemoryTriage> {
   const j = extractJsonArray(text);
   if (!Array.isArray(j)) throw new Error('triage output is not an array');
@@ -819,6 +855,24 @@ export function parseTriage(
       typeof e?.index_matches_body === 'boolean'
         ? { indexMatchesBody: e.index_matches_body as boolean }
         : {};
+    /*
+     * プロジェクト不明(orphan)の verdict 制限(判断 5)。置き場所の判定は逆引き先が無いと
+     * 前提が成立しないため、keep / shrink / update 以外はここで keep へ格下げする
+     * (出力不正ではない: モデルは正しいスキーマで答えている)。wrong-project もここで弾くので、
+     * 以降の候補照合(cands)には進まない。
+     */
+    if (opts.orphan && isOrphanRestricted(verdict)) {
+      out.set(file, {
+        verdict: 'keep',
+        state,
+        reason,
+        issues,
+        instruction: '',
+        demoted: verdict,
+        ...idxMatch,
+      });
+      continue;
+    }
     /*
      * wrong-project のゲート。移動先は事実(機械シグナル)からしか決められないので:
      *   - シグナルが無い件は keep へ格下げし、demoted に元の verdict を残す(観察は続ける)
@@ -914,6 +968,21 @@ export function applyIndexMismatch(r: MemoryTriage, it: SkillItem): MemoryTriage
  */
 export function isLegacyWrongProject(e: MemoryTriage): boolean {
   return e.verdict === 'wrong-project' && !e.target && !e.demoted && !e.error;
+}
+
+/*
+ * プロジェクト不明(orphan)セクションの表示ゲート(判断 5)。parseTriage は生成時にこの制限を
+ * かけるが、制限の導入前(Phase B まで)に生成されたキャッシュは wrong-project / delete / to-* が
+ * demoted 無しで残り得るので、保存値は書き換えずに表示のたびに読み替える。
+ * verdict が既に keep(= 新形式で格下げ済み、または元から keep)なら isOrphanRestricted が false を
+ * 返すのでそのまま通る(冪等)。target / targetMemDir は置き場所判定の結果なので orphan では持たせない。
+ */
+export function orphanTriage<T extends MemoryTriage>(e: T): T {
+  if (e.error || !isOrphanRestricted(e.verdict)) return e;
+  const gated: T = { ...e, verdict: 'keep', demoted: e.verdict, instruction: '' };
+  delete gated.target;
+  delete gated.targetMemDir;
+  return gated;
 }
 
 /*
@@ -1056,6 +1125,7 @@ export async function triageProject(
         chunk.map((it) => path.basename(it.path)),
         bodies,
         candidates,
+        { orphan: !!sec.orphan },
       );
       const generatedAt = new Date().toISOString();
       for (const it of chunk) {
@@ -1084,7 +1154,7 @@ export async function triageProject(
   for (const it of targets) {
     const e = store[it.path];
     if (!e) continue;
-    results.push({
+    const raw: TriageResult = {
       file: path.basename(it.path),
       path: it.path,
       verdict: e.verdict,
@@ -1100,7 +1170,9 @@ export async function triageProject(
       ...(e.target ? { target: e.target, targetMemDir: targetMemDirOf(e.target) } : {}),
       ...(e.demoted ? { demoted: e.demoted } : {}),
       ...(e.error ? { error: e.error } : {}),
-    });
+    };
+    // orphan セクションは表示時にも verdict 制限をかける(制限導入前のキャッシュ対策。判断 5)
+    results.push(sec.orphan ? orphanTriage(raw) : raw);
   }
   return results;
 }
@@ -1125,7 +1197,7 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
         cached.hash === triageHash(it) &&
         !isLegacyWrongProject(cached)
       ) {
-        it.aiTriage = {
+        const raw: MemoryTriage = {
           verdict: cached.verdict,
           ...(cached.state ? { state: cached.state } : {}),
           reason: cached.reason,
@@ -1145,6 +1217,8 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
           // 出力不正も「診断済み」として載せる(未診断と区別し、再診断を促す)
           ...(cached.error ? { error: cached.error } : {}),
         };
+        // orphan セクションは表示時にも verdict 制限をかける(制限導入前のキャッシュ対策。判断 5)
+        it.aiTriage = sec.orphan ? orphanTriage(raw) : raw;
       }
     }
   }

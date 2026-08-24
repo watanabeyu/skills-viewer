@@ -121,10 +121,13 @@ export interface MemoryTriage {
    */
   targetMemDir?: string;
   /*
-   * 機械シグナル(other-project)が無いのに wrong-project と答えたので keep へ格下げした記録。
-   * 誤判定を握り潰さず「要確認」として観察を続けるため、元の verdict を残す
+   * verdict を keep へ格下げした記録(元の verdict を残す)。誤判定を握り潰さず「要確認」として
+   * 観察を続けるためのもので、2 系統ある:
+   *   - 機械シグナル(other-project)が無いのに wrong-project と答えた(判断 3)
+   *   - プロジェクト不明(orphan)セクションで置き場所の判定(wrong-project / delete / to-*)を答えた
+   *     (判断 5。逆引き先が無く前提が成立しないため keep / shrink / update しか採用しない)
    */
-  demoted?: 'wrong-project';
+  demoted?: MemoryVerdict;
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
 }

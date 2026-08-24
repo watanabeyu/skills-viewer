@@ -771,6 +771,27 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(en).toContain('not measurable');
     expect(en).not.toContain('Read: 0');
   });
+
+  /*
+   * プロジェクト不明(orphan。projectPath === null)のときだけ verdict 制限とスラッグ説明を載せる(判断 5)。
+   * projectPath が単に未指定(既存の ctx のように)のときは対象外(実際の呼び出しは常に null を渡す)。
+   */
+  it('projectPath が null のときだけ verdict 制限とスラッグの説明を ja / en とも載せる', () => {
+    const orphanCtx = { ...ctx, projectPath: null };
+    const ja = buildPrompt(targets, orphanCtx, 'ja');
+    expect(ja).toContain('verdict は keep / shrink / update のみを使うこと');
+    expect(ja).toContain('~/.claude/projects/<スラッグ>/memory/');
+    expect(ja).toContain('非英数字は "-" に置き換わっている');
+    const en = buildPrompt(targets, orphanCtx, 'en');
+    expect(en).toContain('verdict must be one of keep / shrink / update only');
+    expect(en).toContain('~/.claude/projects/<slug>/memory/');
+
+    // projectPath 無指定(undefined)は orphan 扱いしない = 制限文言は載らない
+    expect(buildPrompt(targets, ctx, 'ja')).not.toContain('verdict は keep / shrink / update のみ');
+    expect(buildPrompt(targets, ctx, 'en')).not.toContain(
+      'verdict must be one of keep / shrink / update only',
+    );
+  });
 });
 
 describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
@@ -890,6 +911,45 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     fs.rmSync(it2.path);
     attachMemoryTriage([section([it2])], 'ja', store);
     expect(it2.aiTriage).toBeUndefined();
+  });
+
+  /*
+   * プロジェクト不明(orphan)セクションの verdict 制限(判断 5)。制限導入前に生成された
+   * delete / wrong-project 等のキャッシュは、保存値を書き換えず表示時に keep + demoted へ読み替える。
+   */
+  it('orphan セクションの旧キャッシュ(delete)は表示時に keep + demoted へ読み替える', () => {
+    const it = memItem('at-orphan-del.md', 'ooo');
+    const store: TriageStore = {
+      [it.path]: entry({
+        hash: contentHash(it.path),
+        verdict: 'delete',
+        instruction: '- 削除する',
+      }),
+    };
+    attachMemoryTriage([{ ...section([it]), orphan: true }], 'ja', store);
+    expect(it.aiTriage?.verdict).toBe('keep');
+    expect(it.aiTriage?.demoted).toBe('delete');
+    expect(it.aiTriage?.instruction).toBe('');
+    // 保存値そのものは書き換えない(表示時の読み替えのみ)
+    expect(store[it.path].verdict).toBe('delete');
+  });
+
+  it('orphan セクションでも keep / shrink / update はそのまま表示する', () => {
+    const it = memItem('at-orphan-shrink.md', 'ooo');
+    attachMemoryTriage([{ ...section([it]), orphan: true }], 'ja', {
+      [it.path]: entry({ hash: contentHash(it.path), verdict: 'shrink', instruction: '- 縮める' }),
+    });
+    expect(it.aiTriage?.verdict).toBe('shrink');
+    expect(it.aiTriage?.demoted).toBeUndefined();
+  });
+
+  it('orphan でないセクションでは delete をそのまま表示する(回帰防止)', () => {
+    const it = memItem('at-nonorphan-del.md', 'ooo');
+    attachMemoryTriage([section([it])], 'ja', {
+      [it.path]: entry({ hash: contentHash(it.path), verdict: 'delete' }),
+    });
+    expect(it.aiTriage?.verdict).toBe('delete');
+    expect(it.aiTriage?.demoted).toBeUndefined();
   });
 });
 
@@ -1188,6 +1248,73 @@ describe('parseTriage の wrong-project ゲート(判断 2 / 3)', () => {
     expect(m.get('a.md')?.target).toBeUndefined();
     expect(m.get('b.md')?.verdict).toBe('wrong-project');
     expect(m.get('b.md')?.target).toBe('/w/other');
+  });
+});
+
+describe('parseTriage のプロジェクト不明(orphan)verdict 制限(判断 5)', () => {
+  const files = ['a.md'];
+  const answer = (over: Record<string, unknown> = {}) =>
+    JSON.stringify([
+      {
+        file: 'a.md',
+        state: 'current',
+        verdict: 'delete',
+        reason: '重複',
+        issues: ['CLAUDE.md に同じ記述'],
+        instruction: '- 削除する',
+        ...over,
+      },
+    ]);
+
+  it('delete は keep + demoted: "delete" に格下げし、指示文は捨てる(出力不正ではない)', () => {
+    const m = parseTriage(answer(), files, new Map(), new Map(), { orphan: true });
+    expect(m.get('a.md')).toEqual({
+      verdict: 'keep',
+      state: 'current',
+      reason: '重複',
+      issues: ['CLAUDE.md に同じ記述'],
+      instruction: '',
+      demoted: 'delete',
+    });
+  });
+
+  it('wrong-project は候補があっても格下げする(orphan は置き場所の判定そのものができない)', () => {
+    const m = parseTriage(
+      answer({ verdict: 'wrong-project', target: '/w/other' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]), // 候補ありでも採用しない
+      { orphan: true },
+    );
+    expect(m.get('a.md')?.verdict).toBe('keep');
+    expect(m.get('a.md')?.demoted).toBe('wrong-project');
+    expect(m.get('a.md')?.target).toBeUndefined();
+  });
+
+  it.each(['to-claude-md', 'to-docs', 'to-skill'] as const)('%s も格下げする', (verdict) => {
+    const m = parseTriage(answer({ verdict }), files, new Map(), new Map(), { orphan: true });
+    expect(m.get('a.md')?.verdict).toBe('keep');
+    expect(m.get('a.md')?.demoted).toBe(verdict);
+  });
+
+  it.each(['keep', 'shrink', 'update'] as const)('%s はそのまま素通りする', (verdict) => {
+    const m = parseTriage(
+      answer({ verdict, instruction: verdict === 'keep' ? '' : '- 直す' }),
+      files,
+      new Map(),
+      new Map(),
+      {
+        orphan: true,
+      },
+    );
+    expect(m.get('a.md')?.verdict).toBe(verdict);
+    expect(m.get('a.md')?.demoted).toBeUndefined();
+  });
+
+  it('orphan フラグ無し(既定)では従来どおり delete がそのまま通る', () => {
+    const m = parseTriage(answer(), files);
+    expect(m.get('a.md')?.verdict).toBe('delete');
+    expect(m.get('a.md')?.demoted).toBeUndefined();
   });
 });
 

@@ -102,7 +102,7 @@ const en = {
   'memory.secMemDir': 'memory dir: {path}',
   'memory.orphan': 'unknown project',
   'memory.orphanTitle':
-    'No matching project — it may have been deleted, moved or renamed (the encoded directory name cannot be decoded back into a path)',
+    'No matching project — possible causes include an unmounted external volume, leftover files from a deleted worktree, or the project having been unregistered (the encoded directory name may not decode back into the original path)',
   'memory.type.user': 'About you',
   'memory.type.feedback': 'Guidance',
   'memory.type.project': 'Project',
@@ -242,7 +242,7 @@ const en = {
   /* 格下げ件の理由文はモデルの見立てのまま(検証されていない)ことを前置きで示す */
   'memory.triage.demotedReason': "Model's view (unverified): ",
   'memory.triage.demotedTitle':
-    'The model answered "belongs elsewhere", but no mechanical signal (a path under another registered project) backs it, so the destination would have been guesswork. Held at "keep as is" — check which project this memory belongs to yourself.',
+    'The model proposed a destination, but nothing here can back it mechanically (e.g. no path under another registered project, or the project itself could not be resolved), so it would have been guesswork. Held at "keep as is" — please check it yourself.',
   'memory.triage.skew':
     'The proposals are concentrated on a single destination. Check first whether the project identification (a mistaken path, or being treated as an unknown project) is wrong',
   'memory.signal.index-mismatch': 'Index line and body disagree',
@@ -509,7 +509,7 @@ const ja: Record<MsgKey, string> = {
   'memory.secMemDir': 'memory ディレクトリ: {path}',
   'memory.orphan': 'プロジェクト不明',
   'memory.orphanTitle':
-    '対応するプロジェクトが見つかりません(削除・移動・リネームの可能性。エンコードされたディレクトリ名から元のパスは復元できません)',
+    '対応するプロジェクトが見つかりません(外部ボリューム未マウント・削除済み worktree の残骸・プロジェクトの登録抹消などが考えられます。エンコードされたディレクトリ名から元のパスを復元できるとは限りません)',
   'memory.type.user': '人物像',
   'memory.type.feedback': '指示・方針',
   'memory.type.project': '進行状況',
@@ -637,7 +637,7 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.demoted': '要確認',
   'memory.triage.demotedReason': 'AI の見立て(未検証): ',
   'memory.triage.demotedTitle':
-    'AI は「別プロジェクトの話」と答えましたが、機械シグナル(別の登録プロジェクト配下のパス)が無く、移動先が推測になるため「このまま」に留めました。このメモリがどのプロジェクトのものかはご自身で確認してください。',
+    'AI は行き先を提案しましたが、機械的な裏付け(別の登録プロジェクト配下のパスや、プロジェクトへの逆引きなど)が無く、推測になるため「このまま」に留めました。内容はご自身で確認してください。',
   'memory.triage.skew':
     '提案が 1 種類に偏っています。プロジェクトの特定(パスの取り違え・プロジェクト不明扱い)が誤っている可能性を先に確認してください',
   'memory.signal.index-mismatch': '索引行と本文が食い違っています',
