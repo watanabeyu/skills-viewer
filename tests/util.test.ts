@@ -181,6 +181,14 @@ describe('sortMemory (memory 軸の並び順)', () => {
   it('name は名前順', () => {
     expect(sortMemory(items, 'name').map((i) => i.name)).toEqual(['a', 'b', 'c']);
   });
+  /*
+   * 計画 13 Phase D round2: 読み込み上限(200 行 / 25KB)の外にある索引行は実際には注入されない。
+   * 「減らす価値が高い順」を意図した並びなので 0 として扱う(セクション合計の数え方と同じ)。
+   */
+  it('index は上限外(indexBeyondLimit)の索引行を 0 として並べる', () => {
+    const withBeyond = [...items, mem('x', { indexTokens: 99, indexBeyondLimit: true })];
+    expect(sortMemory(withBeyond, 'index').map((i) => i.name)).toEqual(['c', 'a', 'b', 'x']);
+  });
   it('元の配列を変更しない', () => {
     const before = items.map((i) => i.name);
     sortMemory(items, 'index');

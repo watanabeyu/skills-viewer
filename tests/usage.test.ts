@@ -224,6 +224,23 @@ describe('scanMemoryUsage (autoMemoryDirectory の置き場を許可ルートと
     const { byPath: plain } = scanMemoryUsage(root, []);
     expect(plain[memPath]).toBeUndefined();
   });
+
+  /*
+   * 計画 13 Phase D round2: 逆順(許可なし → 許可あり)でも拾えることを固定する。
+   * transcript のスキャン結果は mtime キャッシュに載るので、許可ルートをキーに含めていないと
+   * 1 回目(許可なし)の結果が居座り、設定を効かせた 2 回目で実績が 0 のままになる。
+   */
+  it('許可なしで一度スキャンした transcript でも、許可ルートを渡した 2 回目で拾える', () => {
+    const dir = path.join(root, '-Users-x-auto-late');
+    fs.mkdirSync(dir, { recursive: true });
+    const late = path.join(store, 'late.md');
+    fs.writeFileSync(
+      path.join(dir, 's2.jsonl'),
+      line('Read', late, '2026-07-13T00:00:00.000Z'), // 同じ transcript を 2 回スキャンする
+    );
+    expect(scanMemoryUsage(root, []).byPath[late]).toBeUndefined();
+    expect(scanMemoryUsage(root, [store]).byPath[late]).toMatchObject({ reads: 1 });
+  });
 });
 
 /* 入力は Set だけなので他 describe の fixture に依存させない(-t 指定の単独実行でも通す) */

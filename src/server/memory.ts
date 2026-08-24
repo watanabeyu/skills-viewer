@@ -94,6 +94,7 @@ export function repoRootOf(dir: string): string | null {
  * (worktree から起動した場合、その worktree の settings.local.json が実際に効く)。
  * cwd 側に無ければメインワークツリー側も見る(memory はリポジトリ単位で共有されるため)。
  * 値は絶対パスか `~/` 始まりのみ有効(公式仕様どおり)。相対パスや不正 JSON はスキップして次を試す。
+ * 解決した値は path.resolve で正規化し、過大な指定(ルート / HOME 自身 / HOME の祖先)は無効にする。
  */
 function readAutoMemoryDirectory(fp: string, home: string): string | null {
   let cfg: any;
@@ -104,9 +105,21 @@ function readAutoMemoryDirectory(fp: string, home: string): string | null {
   }
   const v = cfg?.autoMemoryDirectory;
   if (typeof v !== 'string' || !v) return null;
-  if (v.startsWith('~/')) return path.join(home, v.slice(2));
-  if (path.isAbsolute(v)) return v;
-  return null; // 相対パスは公式仕様上無効
+  // 相対パスは公式仕様上無効
+  const raw = v.startsWith('~/') ? path.join(home, v.slice(2)) : path.isAbsolute(v) ? v : null;
+  if (!raw) return null;
+  // `..` や末尾のスラッシュを畳む: この値は読み取り許可(manage.ts の前方一致)と usage の
+  // 許可ルートにそのまま使われるので、表記の揺れが判定の揺れになる
+  const dir = path.resolve(raw);
+  /*
+   * 過大な指定は「設定なし」として捨てる。ファイルシステムのルート / HOME 自身 / HOME の祖先を
+   * 置き場にすると、上記 2 つの許可がホーム配下(実質全体)まで広がり、「memory の置き場」という
+   * 限定が意味を失う(公式仕様にもそんな運用は無い)
+   */
+  const homeResolved = path.resolve(home);
+  if (dir === path.parse(dir).root) return null;
+  if (dir === homeResolved || homeResolved.startsWith(dir + path.sep)) return null;
+  return dir;
 }
 
 /*
@@ -153,14 +166,17 @@ export function resolveAutoMemoryDir(cwd: string = process.cwd()): AutoMemoryDir
 
 /*
  * web へ返す直前に、サーバー内部でしか使わないフィールドを memory セクションから落とす。
- * otherProjects は wrong-project の候補算出(triageProject)専用で web には参照が無く、
- * セクション × 登録プロジェクト数だけ payload を膨らませるだけ。
+ *   - otherProjects: wrong-project の候補算出(triageProject)専用。web には参照が無く、
+ *     セクション × 登録プロジェクト数だけ payload を膨らませるだけ
+ *   - transcriptSlug: usageAvailable の判定(attributeMemoryUsage)専用。結果は usageAvailable
+ *     に畳まれており、web は slug 自体を使わない
  * /api/memory-triage は自前で再スキャンするので影響しない。
  */
 export function publicMemory(memory: MemorySection[]): MemorySection[] {
   return memory.map((sec) => {
     const out = { ...sec };
     delete out.otherProjects;
+    delete out.transcriptSlug;
     return out;
   });
 }
@@ -329,6 +345,19 @@ const AUTO_DIR_MAX_FILES = 500;
 const AUTO_FILE_MAX_BYTES = 1024 * 1024;
 
 /*
+ * 重複セクション判定用の正規化。symlink 経由で同じディレクトリを指した設定
+ * (例: ~/mem → ~/.claude/projects/<slug>/memory)を「別の場所」と誤認しないよう実パスで比べる。
+ * 実パスが取れない(存在しない・権限が無い)場合は path.resolve で代用する。
+ */
+function realDir(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+/*
  * 列挙の起点は ~/.claude/projects/<encoded>/memory の走査(~/.claude.json の一覧ではない)。
  * memory はリポジトリ単位で、worktree 用のディレクトリは作られないため、
  * 見つけたディレクトリ名を listProjects() のエンコード名で逆引きし、
@@ -424,7 +453,7 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
       if (item) items.push(item);
     }
     if (!items.length) continue;
-    scannedDirs.add(path.resolve(memDir));
+    scannedDirs.add(realDir(memDir));
     const beyondCount = items.filter((it) => it.indexBeyondLimit).length;
     sections.push({
       id: d.name,
@@ -456,7 +485,7 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
   // 明示指定(autoMemoryDir)が常に最優先で、テストはここに null を渡して隔離する
   const auto = opts.autoMemoryDir !== undefined ? opts.autoMemoryDir : resolveAutoMemoryDir(cwd);
   // 既定走査と同じディレクトリを指しているなら、そちらで既にセクション化済み(重複表示・二重計上の回避)
-  if (auto && !scannedDirs.has(path.resolve(auto.dir))) {
+  if (auto && !scannedDirs.has(realDir(auto.dir))) {
     const autoDir = auto.dir;
     let autoFiles: string[];
     try {
@@ -507,12 +536,16 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
           projectPath: autoProjectPath,
           projectName: autoProjectPath ? path.basename(autoProjectPath) : path.basename(autoDir),
           note: autoDir,
+          // 現に Claude Code が書き込む唯一の置き場なので、常に「現在地」として扱う
+          // (web は先頭の isCurrent セクションを現在地とみなすため、並び順でも最優先にする)
           isCurrent: true,
           autoDir: true,
           ...(shared ? { sharedStore: true } : {}),
-          // transcript は現在のプロジェクトのものしか無いので(共有ストアでも同じ)、
-          // Read / Write 実績が計測可能かは現在のプロジェクトの slug で判定する
-          transcriptSlug: encodeProjectPath(owner),
+          // Read / Write 実績が計測可能かは、帰属先プロジェクトの slug で判定する
+          // (transcript は現在のプロジェクトのものしか無い)。共有ストアは帰属が決まらないので
+          // 持たせない = usageAvailable は false のまま。帰属不明の memory に
+          // 「Read 0 = 読まれていない」という誤った前提を出さないため
+          ...(shared ? {} : { transcriptSlug: encodeProjectPath(owner) }),
           usageAvailable: false,
           indexTokens: autoItems.reduce(
             (sum, it) => sum + (it.indexBeyondLimit ? 0 : it.indexTokens || 0),
@@ -528,6 +561,10 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
 
   return sections.sort(
     (a, b) =>
+      // autoDir(= 現に書き込まれている置き場)は rank より前。共有ストアは projectPath を
+      // 持たないので rankOf では最後尾に落ちるが、web は先頭の isCurrent セクションを
+      // 現在地として拾うため、実際に使われている置き場が先頭に来ていないと選択がずれる
+      Number(!!b.autoDir) - Number(!!a.autoDir) ||
       Number(!!a.orphan) - Number(!!b.orphan) ||
       rankOf(a.projectPath) - rankOf(b.projectPath) ||
       a.projectName.localeCompare(b.projectName),

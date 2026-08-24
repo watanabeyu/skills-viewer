@@ -918,9 +918,16 @@ export function parseTriage(
    * 渡されない / 空の件は「機械シグナル無し」なので wrong-project を採用しない
    */
   candidates: Map<string, string[]> = new Map(),
-  /* orphan: 制限つきセクション(プロジェクト不明 / 共有ストア)の棚卸しか
-   * (判断 5。verdict を keep/shrink/update に制限。鍵名は互換のため orphan のまま) */
-  opts: { orphan?: boolean } = {},
+  opts: {
+    /* 制限つきセクション(プロジェクト不明 / 共有ストア)の棚卸しか
+     * (判断 5。verdict を keep/shrink/update に制限。鍵名は互換のため orphan のまま) */
+    orphan?: boolean;
+    /* 制限の理由が共有ストア(user scope の autoMemoryDirectory)か。格下げ理由の区分に使う */
+    sharedStore?: boolean;
+    /* user scope の autoMemoryDirectory が効いている環境か
+     * (移動先の概念が成立しないので、候補なしの wrong-project 格下げも環境が理由になる) */
+    sharedEnv?: boolean;
+  } = {},
 ): Map<string, MemoryTriage> {
   const j = extractJsonArray(text);
   if (!Array.isArray(j)) throw new Error('triage output is not an array');
@@ -961,8 +968,9 @@ export function parseTriage(
         issues,
         instruction: '',
         demoted: verdict,
-        // 格下げの理由。orphan は一時的な環境条件なので、解消したら再診断に乗せる(selectStale)
-        demotedBy: 'orphan',
+        // 格下げの理由は制限の出どころで分ける(どちらも一時的な環境条件で、解消したら
+        // 再診断に乗せる。selectStale / attachMemoryTriage が条件ごとに解消を判定する)
+        demotedBy: opts.sharedStore ? 'shared-env' : 'orphan',
         ...idxMatch,
       });
       continue;
@@ -984,8 +992,13 @@ export function parseTriage(
           issues,
           instruction: '',
           demoted: 'wrong-project',
-          // 内容側の理由(シグナルが無い)なので、本文が変わらない限り再診断はしない
-          demotedBy: 'no-signal',
+          /*
+           * 候補が無い理由で分ける:
+           *   - 共有ストア環境(sharedEnv): 移動先の概念そのものが設定で消えている環境条件。
+           *     設定を外せば候補が組めるようになるので、そのときに再診断へ乗せる
+           *   - それ以外: 内容側の理由(機械シグナルが無い)。本文が変わらない限り再診断しない
+           */
+          demotedBy: opts.sharedEnv ? 'shared-env' : 'no-signal',
           ...idxMatch,
         });
         continue;
@@ -1073,8 +1086,14 @@ export function isLegacyWrongProject(e: MemoryTriage): boolean {
  * verdict が既に keep(= 新形式で格下げ済み、または元から keep)なら isOrphanRestricted が false を
  * 返すのでそのまま通る(冪等)。target / targetMemDir は置き場所判定の結果なので orphan では持たせず、
  * body(残す / 削る分類)も keep に対応しないので落とす。
+ * 格下げ理由は制限の出どころで分ける(parseTriage の生成側と同じ区分にする。片方だけずれると、
+ * 同じ状況の件が生成経由か表示ゲート経由かで再診断の扱いが変わってしまう)。
  */
-export function orphanTriage<T extends MemoryTriage>(e: T): T {
+export function orphanTriage<T extends MemoryTriage>(
+  e: T,
+  /* 制限の理由が共有ストア(user scope の autoMemoryDirectory)か */
+  sharedStore = false,
+): T {
   if (e.error || !isOrphanRestricted(e.verdict)) return e;
   // delete 演算子ではなく分割代入で落とす(元オブジェクトを触らず、落とす鍵を 1 行で見せる)。
   // body は置き場所判定の結果ではないが keep には対応しない分類なので、防御として一緒に落とす
@@ -1084,9 +1103,29 @@ export function orphanTriage<T extends MemoryTriage>(e: T): T {
     ...(rest as T),
     verdict: 'keep',
     demoted: e.verdict,
-    demotedBy: 'orphan',
+    demotedBy: sharedStore ? 'shared-env' : 'orphan',
     instruction: '',
   };
+}
+
+/*
+ * 環境条件を理由に格下げされたキャッシュが「条件の解消で失効した」か。再診断(selectStale)と
+ * 表示(attachMemoryTriage)が必ず同じ答えを使うよう 1 箇所に置く
+ * (片方だけ緩いと、制限つきの結果が前提の変わった後も表示に居座る / 逆に、条件が続いている
+ * 環境で毎回 claude を呼び直して同じ格下げを繰り返す)。
+ *   - 'orphan'     : そのセクションが制限つきでなくなったら失効(帰属が決まった)
+ *   - 'shared-env' : 制限が解け、かつ user scope の autoMemoryDirectory も外れたら失効
+ *                    (どちらか一方でも残っていれば、同じ格下げが再現するだけ)
+ *   - 'no-signal'  : 内容側の理由なので環境では失効しない(hash 側の判定に任せる)
+ */
+export function demotionExpired(
+  demotedBy: MemoryTriage['demotedBy'],
+  opts: { restricted?: boolean; sharedEnv?: boolean } = {},
+): boolean {
+  if (opts.restricted) return false;
+  if (demotedBy === 'orphan') return true;
+  if (demotedBy === 'shared-env') return !opts.sharedEnv;
+  return false;
 }
 
 /*
@@ -1096,9 +1135,9 @@ export function orphanTriage<T extends MemoryTriage>(e: T): T {
  * 出力不正のエントリは state が無くても stale にしない(同じ出力を繰り返すモデルで無限に呼び直さない)。
  * 例外 2: wrong-project ゲート導入前の wrong-project(target も demoted も無い)は stale。
  * 移動先が捏造だった事故の発端そのものなので自動で再診断に乗せる。
- * 例外 3: orphan を理由に格下げされたエントリは、そのセクションが制限つきでなくなったら stale。
- * 未マウント・登録抹消・共有ストアといった環境条件が解消したのに、制限つきの診断結果が
- * 居座り続けないようにする。
+ * 例外 3: 環境条件(orphan / shared-env)を理由に格下げされたエントリは、その条件が解消したら
+ * stale。未マウント・登録抹消・共有ストアといった環境条件が消えたのに、制限つきの診断結果が
+ * 居座り続けないようにする(条件ごとの解消判定は demotionExpired が持つ)。
  * 全件を stale にはしない(安全化と無関係な旧エントリに再診断コストを払わせない)。
  */
 export function selectStale(
@@ -1106,9 +1145,13 @@ export function selectStale(
   store: TriageStore,
   lang: Lang,
   force: boolean,
-  /* そのセクションが制限つきか(判断 5。格下げを解消したときの再診断判定に使う。
-   * 鍵名は互換のため orphan のまま、値は「プロジェクト不明 or 共有ストア」) */
-  opts: { orphan?: boolean } = {},
+  opts: {
+    /* そのセクションが制限つきか(判断 5。格下げを解消したときの再診断判定に使う。
+     * 鍵名は互換のため orphan のまま、値は「プロジェクト不明 or 共有ストア」) */
+    orphan?: boolean;
+    /* user scope の autoMemoryDirectory が効いている環境か(shared-env 格下げの解消判定) */
+    sharedEnv?: boolean;
+  } = {},
 ): SkillItem[] {
   if (force) return [...items];
   return items.filter((it) => {
@@ -1119,7 +1162,7 @@ export function selectStale(
       cached.hash !== triageHash(it) ||
       (!cached.state && !cached.error) ||
       isLegacyWrongProject(cached) ||
-      (!opts.orphan && cached.demotedBy === 'orphan')
+      demotionExpired(cached.demotedBy, { restricted: opts.orphan, sharedEnv: opts.sharedEnv })
     );
   });
 }
@@ -1195,9 +1238,17 @@ export async function triageProject(
    * プロンプト・パース・表示ゲートで同じ値を使う
    */
   const restricted = !!sec.orphan || !!sec.sharedStore;
+  /*
+   * user scope の autoMemoryDirectory が効いている環境か。全プロジェクトの memory が 1 つの
+   * 置き場を共有するため「別プロジェクトの memory dir へ移す」という移動先の概念自体が成立せず、
+   * このセクションが共有ストアでなくても(旧 ~/.claude/projects 側の残骸でも)候補を組めない。
+   * 再診断の判定(shared-env 格下げの解消)にも同じ値を使うので、stale 選定より前に出す
+   */
+  const sharedEnv =
+    (opts.autoMemory !== undefined ? opts.autoMemory : resolveAutoMemoryDir())?.scope === 'user';
   const run = opts.run ?? ((prompt: string) => runClaude(prompt, model, 600000));
   const store = loadTriage();
-  const stale = selectStale(targets, store, lang, !!opts.force, { orphan: restricted });
+  const stale = selectStale(targets, store, lang, !!opts.force, { orphan: restricted, sharedEnv });
   if (stale.length) {
     // 制限つきでは常設文脈(CLAUDE.md 見出し・skill 一覧)をプロンプトに載せない(置き場所判定を
     // しないため)ので、遅延フルスキャンごとスキップして無駄な走査を払わない
@@ -1236,13 +1287,9 @@ export async function triageProject(
     /*
      * 制限つきでは wrong-project そのものを採用しないので、候補は集めない
      * (プロンプトにも parseTriage にも渡らない = 「選べる」と読める材料を一切出さない)。
-     * 加えて user scope の autoMemoryDirectory が効いている環境では、全プロジェクトの memory が
-     * 1 つの置き場を共有するため「別プロジェクトの memory dir へ移す」という移動先の概念自体が
-     * 成立しない。そのセクションが共有ストアでなくても(旧 ~/.claude/projects 側の残骸でも)
-     * 候補を組まず、wrong-project は候補なしとして keep へ格下げさせる
+     * 共有ストア環境(sharedEnv)でも同じく候補を組まず、wrong-project は候補なしとして
+     * keep へ格下げさせる(格下げ理由は環境条件なので 'shared-env' になる)
      */
-    const sharedEnv =
-      (opts.autoMemory !== undefined ? opts.autoMemory : resolveAutoMemoryDir())?.scope === 'user';
     const noDestination = restricted || sharedEnv;
     const candidatesOf = noDestination
       ? () => []
@@ -1276,7 +1323,7 @@ export async function triageProject(
         chunk.map((it) => path.basename(it.path)),
         bodies,
         candidates,
-        { orphan: restricted },
+        { orphan: restricted, sharedStore: !!sec.sharedStore, sharedEnv },
       );
       const generatedAt = new Date().toISOString();
       for (const it of chunk) {
@@ -1325,7 +1372,7 @@ export async function triageProject(
       ...(e.error ? { error: e.error } : {}),
     };
     // 制限つきセクションは表示時にも verdict 制限をかける(制限導入前のキャッシュ対策。判断 5)
-    results.push(restricted ? orphanTriage(raw) : raw);
+    results.push(restricted ? orphanTriage(raw, !!sec.sharedStore) : raw);
   }
   return results;
 }
@@ -1334,7 +1381,14 @@ export async function triageProject(
  * スキャン結果にキャッシュ済み診断を付与(内容が変わっていれば付けない)。
  * store は selectStale と同じくテストから差し替えられるよう引数にする。
  */
-export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: TriageStore): void {
+export function attachMemoryTriage(
+  memory: MemorySection[],
+  lang: Lang,
+  store?: TriageStore,
+  /* user scope の autoMemoryDirectory が効いている環境か(shared-env 格下げの解消判定。
+   * 呼び出し側の cwd で解決した値を渡す。未指定は「解消済み」として扱う) */
+  opts: { sharedEnv?: boolean } = {},
+): void {
   if (!memory.length) return;
   // memory が 0 件のときはキャッシュ読み込みごと省く(デフォルト引数だとガードより先に走る)
   const s = store ?? loadTriage();
@@ -1345,15 +1399,15 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
       const cached = s[it.path];
       // ゲート導入前の wrong-project は付与しない(= 未診断扱い)。捏造された移動先を含む
       // 指示文を表示・コピーさせないためで、未診断の CTA と selectStale の再診断に自然に乗る。
-      // orphan を理由に格下げされた診断も、そのセクションが制限つきでなくなったら同じく未診断扱い
-      // (制限つきの結果が、帰属が決まった後も居座らないように。selectStale と同じ条件)
+      // 環境条件を理由に格下げされた診断も、その条件が解消したら同じく未診断扱い
+      // (制限つきの結果が、帰属が決まった後も居座らないように。selectStale と同じ判定関数)
       if (
         cached &&
         cached.lang === lang &&
         fs.existsSync(it.path) &&
         cached.hash === triageHash(it) &&
         !isLegacyWrongProject(cached) &&
-        !(!restricted && cached.demotedBy === 'orphan')
+        !demotionExpired(cached.demotedBy, { restricted, sharedEnv: opts.sharedEnv })
       ) {
         const raw: MemoryTriage = {
           verdict: cached.verdict,
@@ -1378,7 +1432,7 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
           ...(cached.error ? { error: cached.error } : {}),
         };
         // 制限つきセクションは表示時にも verdict 制限をかける(制限導入前のキャッシュ対策。判断 5)
-        it.aiTriage = restricted ? orphanTriage(raw) : raw;
+        it.aiTriage = restricted ? orphanTriage(raw, !!sec.sharedStore) : raw;
       }
     }
   }

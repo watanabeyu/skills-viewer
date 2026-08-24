@@ -184,8 +184,10 @@ export type MemorySortKey = 'index' | 'body' | 'updated' | 'name';
 export function sortMemory<T extends SkillItem>(items: T[], sort: MemorySortKey): T[] {
   const arr = [...items];
   const byName = (a: T, b: T) => a.name.localeCompare(b.name);
-  if (sort === 'index')
-    arr.sort((a, b) => (b.indexTokens || 0) - (a.indexTokens || 0) || byName(a, b));
+  // 読み込み上限(200 行 / 25KB)の外にある索引行は実際には注入されないので 0 として並べる
+  // (「減らす価値が高い順」の意図と、セクション合計 indexTokens の数え方に揃える)
+  const indexCost = (it: T) => (it.indexBeyondLimit ? 0 : it.indexTokens || 0);
+  if (sort === 'index') arr.sort((a, b) => indexCost(b) - indexCost(a) || byName(a, b));
   else if (sort === 'body')
     arr.sort((a, b) => (b.bodyTokens || 0) - (a.bodyTokens || 0) || byName(a, b));
   // 更新が古い順(棚卸し候補が先頭に来る)。更新日不明は末尾。

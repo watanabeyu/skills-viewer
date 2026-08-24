@@ -53,6 +53,7 @@ Run it from a project directory to have that project marked as “current” and
 - Binds to `127.0.0.1` only
 - Mutating APIs require a per-run token that other origins cannot read (same-origin policy), and requests with a non-localhost `Origin` are rejected
 - Copy/delete are restricted to `.claude/skills/` / `.claude/commands/` / `.claude/agents/` paths; plugin directories are never written to; deletions go to the OS trash
+- Reads stay inside `~/.claude`, the per-project `.claude` directories and the `autoMemoryDirectory` you configured — a setting that resolves to a filesystem root, your home directory or an ancestor of it is ignored
 
 ## Development
 

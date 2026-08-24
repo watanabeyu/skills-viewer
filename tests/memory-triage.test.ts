@@ -1932,6 +1932,205 @@ describe('共有ストア(sharedStore)の制限', () => {
 });
 
 /*
+ * 計画 13 Phase D round2: 格下げ理由の区分。制限つきの格下げは
+ * 「orphan セクションなら 'orphan' / 共有ストアなら 'shared-env'」で、解消条件が違う
+ * (orphan = 帰属が決まる / shared-env = user scope の autoMemoryDirectory を外す)。
+ * 生成側(parseTriage)・表示ゲート(orphanTriage)・再診断(selectStale)で同じ区分を使う。
+ */
+describe('格下げ理由の区分(orphan / shared-env)', () => {
+  const files = ['a.md'];
+  const answer = () =>
+    JSON.stringify([
+      {
+        file: 'a.md',
+        state: 'obsolete',
+        verdict: 'delete',
+        reason: '重複',
+        issues: [],
+        instruction: '- 消す',
+      },
+    ]);
+
+  it('parseTriage: 制限の理由が共有ストアなら shared-env、プロジェクト不明なら orphan', () => {
+    const shared = parseTriage(answer(), files, new Map(), new Map(), {
+      orphan: true,
+      sharedStore: true,
+    });
+    expect(shared.get('a.md')?.demoted).toBe('delete');
+    expect(shared.get('a.md')?.demotedBy).toBe('shared-env');
+
+    const orphan = parseTriage(answer(), files, new Map(), new Map(), { orphan: true });
+    expect(orphan.get('a.md')?.demotedBy).toBe('orphan');
+  });
+
+  it('orphanTriage: sharedStore を渡した表示ゲートも shared-env で記録する(生成側と同じ区分)', () => {
+    const e: MemoryTriage = {
+      verdict: 'delete',
+      state: 'obsolete',
+      reason: '重複',
+      issues: [],
+      instruction: '- 消す',
+    };
+    expect(orphanTriage(e, true).demotedBy).toBe('shared-env');
+    expect(orphanTriage(e).demotedBy).toBe('orphan');
+  });
+
+  it('attachMemoryTriage: 共有ストアの表示ゲートは shared-env、プロジェクト不明は orphan', () => {
+    const shared = memItem('db-shared.md', 'sss');
+    const orphan = memItem('db-orphan.md', 'ooo');
+    const store: TriageStore = {
+      [shared.path]: {
+        verdict: 'delete',
+        state: 'obsolete',
+        reason: 'r',
+        issues: [],
+        instruction: '- 消す',
+        hash: triageHash(shared),
+        lang: 'ja',
+        generatedAt: '',
+      },
+      [orphan.path]: {
+        verdict: 'delete',
+        state: 'obsolete',
+        reason: 'r',
+        issues: [],
+        instruction: '- 消す',
+        hash: triageHash(orphan),
+        lang: 'ja',
+        generatedAt: '',
+      },
+    };
+    const sec = (item: SkillItem, over: Partial<MemorySection>): MemorySection => ({
+      id: 'sec-' + item.name,
+      projectPath: null,
+      projectName: 'x',
+      note: tmp,
+      usageAvailable: false,
+      indexTokens: 0,
+      items: [item],
+      ...over,
+    });
+    attachMemoryTriage(
+      [sec(shared, { autoDir: true, sharedStore: true }), sec(orphan, { orphan: true })],
+      'ja',
+      store,
+      { sharedEnv: true },
+    );
+    expect(shared.aiTriage?.demotedBy).toBe('shared-env');
+    expect(orphan.aiTriage?.demotedBy).toBe('orphan');
+  });
+
+  /* 解消条件の違い: shared-env は「制限が解ける」だけでなく「設定も外れる」まで有効 */
+  it('selectStale / attachMemoryTriage: shared-env は設定が残っている間は失効しない', () => {
+    const a = memItem('db-stale.md', 'aaa');
+    const cached: TriageStore[string] = {
+      verdict: 'keep',
+      state: 'current',
+      reason: '',
+      issues: [],
+      instruction: '',
+      demoted: 'delete',
+      demotedBy: 'shared-env',
+      hash: triageHash(a),
+      lang: 'ja',
+      generatedAt: '',
+    };
+    const store: TriageStore = { [a.path]: cached };
+    // 共有ストアのまま(制限つき)= 再診断しない
+    expect(selectStale([a], store, 'ja', false, { orphan: true, sharedEnv: true })).toHaveLength(0);
+    // 制限は解けたが user scope の設定は残っている = 同じ格下げが再現するだけなので呼び直さない
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: true })).toHaveLength(0);
+    // 設定も外れた = 環境条件が消えたので再診断へ乗せる
+    expect(selectStale([a], store, 'ja', false)).toHaveLength(1);
+
+    // 表示側も同じ判定(設定が残っていれば出す / 消えたら未診断扱い)
+    const shown = memItem('db-shown.md', 'aaa');
+    attachMemoryTriage(
+      [{ ...secOf(shown) }],
+      'ja',
+      { [shown.path]: { ...cached, hash: triageHash(shown) } },
+      { sharedEnv: true },
+    );
+    expect(shown.aiTriage?.demoted).toBe('delete');
+    const hidden = memItem('db-hidden.md', 'aaa');
+    attachMemoryTriage([{ ...secOf(hidden) }], 'ja', {
+      [hidden.path]: { ...cached, hash: triageHash(hidden) },
+    });
+    expect(hidden.aiTriage).toBeUndefined();
+  });
+
+  /* 帰属が決まった(非制限)セクションの素の並び。上のテストで使い回す */
+  function secOf(item: SkillItem): MemorySection {
+    return {
+      id: 'sec-plain-' + item.name,
+      projectPath: '/w/proj',
+      projectName: 'proj',
+      note: tmp,
+      usageAvailable: false,
+      indexTokens: 0,
+      items: [item],
+    };
+  }
+
+  it('triageProject: 共有ストアの配線でも格下げ理由は shared-env(キャッシュにも残る)', async () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'sh-home-'));
+    vi.stubEnv('HOME', home); // TRIAGE_FILE はモジュール読み込み時に決まるので import より先に差す
+    vi.resetModules();
+    const { triageProject } = await import('../src/server/memory-triage');
+    const memDir = fs.mkdtempSync(path.join(tmp, 'sh-mem-'));
+    const file = path.join(memDir, 'sh-note.md');
+    fs.writeFileSync(file, '---\nname: sh-note\n---\n本文');
+    const item: SkillItem = {
+      name: 'sh-note',
+      description: '',
+      argumentHint: '',
+      version: '',
+      kind: 'memory',
+      path: file,
+      files: [],
+    };
+    const sec: MemorySection = {
+      id: 'auto-sh',
+      projectPath: null,
+      projectName: 'mem-store',
+      note: memDir,
+      autoDir: true,
+      sharedStore: true,
+      usageAvailable: false,
+      indexTokens: 0,
+      items: [item],
+    };
+    const results = await triageProject(sec, 'ja', 'haiku', {
+      autoMemory: { dir: memDir, scope: 'user' },
+      run: async () =>
+        JSON.stringify([
+          {
+            file: 'sh-note.md',
+            state: 'obsolete',
+            verdict: 'delete',
+            reason: '重複',
+            issues: [],
+            instruction: '- 消す',
+          },
+        ]),
+    });
+    expect(results[0].verdict).toBe('keep');
+    expect(results[0].demoted).toBe('delete');
+    expect(results[0].demotedBy).toBe('shared-env');
+    expect(results[0].instruction).toBe('');
+    const store = JSON.parse(
+      fs.readFileSync(path.join(home, '.cache', 'skills-viewer', 'memory-triage.json'), 'utf8'),
+    );
+    expect(store[file].demotedBy).toBe('shared-env');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+});
+
+/*
  * 計画 13 Phase D レビュー対応 M4: user scope の autoMemoryDirectory が効いている環境では
  * 全プロジェクトの memory が 1 つの置き場を共有するので、「別プロジェクトの memory dir へ移す」
  * という移動先の概念自体が成立しない。共有ストア以外のセクションでも候補を組まない。
@@ -1998,7 +2197,8 @@ describe('triageProject の wrong-project 候補(user scope autoMemoryDirectory 
     expect(prompt).not.toContain('- /w/other(該当:');
     expect(results[0].verdict).toBe('keep');
     expect(results[0].demoted).toBe('wrong-project');
-    expect(results[0].demotedBy).toBe('no-signal');
+    // 内容側(no-signal)ではなく環境条件。設定を外せば候補が組めるので再診断に乗せられる
+    expect(results[0].demotedBy).toBe('shared-env');
     expect(results[0].target).toBeUndefined();
   });
 

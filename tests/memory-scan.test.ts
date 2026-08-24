@@ -582,13 +582,17 @@ describe('publicMemory (/api/skills 応答から内部用フィールドを落�
     ...over,
   });
 
-  it('otherProjects だけを除き、他のフィールドは保つ', () => {
-    const [out] = publicMemory([sec({ otherProjects: ['/w/other', '/w/another'] })]);
+  it('otherProjects / transcriptSlug だけを除き、他のフィールドは保つ', () => {
+    const [out] = publicMemory([
+      sec({ otherProjects: ['/w/other', '/w/another'], transcriptSlug: '-w-alpha' }),
+    ]);
     expect('otherProjects' in out).toBe(false);
+    // transcriptSlug は usageAvailable の判定にしか使わない(結果は usageAvailable に畳まれている)
+    expect('transcriptSlug' in out).toBe(false);
     expect(out).toEqual(sec());
   });
 
-  it('otherProjects を持たないセクションはそのまま', () => {
+  it('内部用フィールドを持たないセクションはそのまま', () => {
     expect(publicMemory([sec()])).toEqual([sec()]);
   });
 });
@@ -675,6 +679,32 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
       autoMemoryDirectory: 'relative/dir',
     });
     expect(autoMemoryDirOf(cwd, home)).toBeNull();
+  });
+
+  /*
+   * 計画 13 Phase D round2: 解決値は正規化し、過大な指定は無効にする。
+   * この値は読み取り許可(manage.ts の前方一致)と usage の許可ルートに使われるので、
+   * ルートや HOME 自身を指されると許可がホーム配下(実質全体)へ広がってしまう。
+   */
+  it.each([
+    ['~/ (HOME そのもの)', '~/'],
+    ['ファイルシステムのルート', '/'],
+    ['HOME の祖先', path.dirname(path.resolve(home))],
+    ['.. で HOME まで戻る指定', path.join(home, 'mem', '..')],
+  ])('過大な指定(%s)は無効', (_label, value) => {
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', { autoMemoryDirectory: value });
+    expect(autoMemoryDirOf(cwd, home)).toBeNull();
+  });
+
+  it('末尾スラッシュや .. を含む指定は正規化して返す', () => {
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', {
+      // 文字列連結で組む(path.join だと組み立て時に畳まれてしまい、解決側の正規化を試せない)
+      autoMemoryDirectory: path.resolve(home) + '/mem-store/sub/../',
+    });
+    expect(autoMemoryDirOf(cwd, home)).toEqual({
+      dir: path.join(home, 'mem-store'),
+      scope: 'project',
+    });
   });
 
   /*
@@ -1001,18 +1031,36 @@ describe('scanMemory (autoMemoryDirectory の scope 別の帰属)', () => {
     expect(sec.otherProjects).toEqual([other]);
   });
 
-  it('id は auto- 接頭辞、副題用の note は置き場の実パス、transcriptSlug は現在のプロジェクト', () => {
+  it('id は auto- 接頭辞、副題用の note は置き場の実パス、transcriptSlug は帰属先のプロジェクト', () => {
     const { autoDir, proj, root } = fixture('scope-id');
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: { dir: autoDir, scope: 'project' },
+    });
+    expect(sec.id).toBe('auto-' + encodeProjectPath(autoDir));
+    expect(sec.note).toBe(autoDir);
+    // 帰属するときだけ、そのプロジェクトの transcript で実績を測る
+    expect(sec.transcriptSlug).toBe(encodeProjectPath(proj));
+  });
+
+  /*
+   * 計画 13 Phase D round2: 共有ストアは帰属が決まらないので transcriptSlug を持たない。
+   * 現在のプロジェクトの slug を当てると、別プロジェクトが書いた memory に
+   * 「Read 0 = 読まれていない」という誤った前提(usageAvailable = true)が付く。
+   */
+  it('共有ストア(user scope)は transcriptSlug を持たない = usageAvailable は false のまま', () => {
+    const { autoDir, proj, root } = fixture('scope-id-shared');
     const [sec] = scanMemory(proj, {
       root,
       projects: [proj],
       mainWorktree: null,
       autoMemoryDir: { dir: autoDir, scope: 'user' },
     });
-    expect(sec.id).toBe('auto-' + encodeProjectPath(autoDir));
-    expect(sec.note).toBe(autoDir);
-    // 共有ストアでも transcript は現在のプロジェクトのものしか無い
-    expect(sec.transcriptSlug).toBe(encodeProjectPath(proj));
+    expect(sec.sharedStore).toBe(true);
+    expect('transcriptSlug' in sec).toBe(false);
+    expect(sec.usageAvailable).toBe(false);
   });
 
   it('worktree から起動したら帰属も transcriptSlug もメインワークツリー基準', () => {
@@ -1068,6 +1116,54 @@ describe('scanMemory (autoMemoryDirectory の scope 別の帰属)', () => {
     expect(sec.items).toHaveLength(499);
     expect(sec.items.some((it) => it.name === 'huge')).toBe(false);
     expect(sec.items.some((it) => it.name === 'f499')).toBe(false);
+  });
+
+  /*
+   * 計画 13 Phase D round2: autoDir は現に書き込まれている唯一の置き場なので先頭に置く。
+   * web は「先頭の isCurrent セクション」を現在地として拾うため、共有ストア(projectPath null で
+   * rank が最後尾)が後ろに並ぶと、旧 memory dir 側が現在地に選ばれてしまう。
+   */
+  it('autoDir セクションは(共有ストアでも)一覧の先頭に来る', () => {
+    const { autoDir, proj } = fixture('scope-order');
+    const root = path.join(tmp, 'scope-order-projects');
+    // 現在のプロジェクトの旧 memory dir(rank 0 = 本来なら最優先)も用意する
+    const legacy = path.join(root, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(legacy, { recursive: true });
+    write(legacy, 'MEMORY.md', '- [old](old.md) — 旧メモ');
+    write(legacy, 'old.md', '---\nname: old\ndescription: 旧メモ\n---\n\n本文\n');
+    const secs = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: { dir: autoDir, scope: 'user' },
+    });
+    expect(secs.map((s) => s.note)).toEqual([autoDir, legacy]);
+    // web と同じ拾い方(配列先頭優先)で置き場が選ばれる
+    expect(secs.find((s) => s.isCurrent)?.note).toBe(autoDir);
+  });
+
+  /*
+   * 計画 13 Phase D round2: 重複セクション判定は実パスで行う。symlink 経由で既定の memory dir を
+   * 指した設定を「別の置き場」と誤認すると、同じファイルが 2 セクションに出て索引も二重に数える。
+   */
+  it('symlink 経由で既定の memory dir を指していてもセクションを重ねない', () => {
+    const proj = path.join(tmp, 'scope-symlink-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const root = path.join(tmp, 'scope-symlink-projects');
+    const real = path.join(root, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(real, { recursive: true });
+    write(real, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(real, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    const link = path.join(tmp, 'scope-symlink-alias');
+    fs.symlinkSync(real, link, 'dir');
+    const secs = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: { dir: link, scope: 'project' },
+    });
+    expect(secs).toHaveLength(1);
+    expect(secs[0].autoDir).toBeUndefined();
   });
 });
 

@@ -197,7 +197,10 @@ function collect(cwd: string, lang: Lang): SkillsData {
   const aiStale = staleItems(sections, lang).length;
   // memory は「呼び出す」ものではないので sections には混ぜず、別配列で同乗させる
   const memory = memorySections(cwd);
-  attachMemoryTriage(memory, lang);
+  // 共有ストア環境かどうかは cwd から解決した値で判定する(棚卸し側と同じ事実を見る)
+  attachMemoryTriage(memory, lang, undefined, {
+    sharedEnv: resolveAutoMemoryDir(cwd)?.scope === 'user',
+  });
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
     ...listProjects(cwd)
@@ -338,6 +341,9 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
           force: !!data.force,
           files,
           sections: () => scanSections(cwd, lang),
+          // 置き場の解決は起動ディレクトリ基準。process.cwd() 任せにせず、この
+          // リクエストと同じ cwd で解決した値を渡す(スキャン・読み取り許可と同じ事実を見る)
+          autoMemory: resolveAutoMemoryDir(cwd),
         })
           .then((results) => send(200, { ok: true, results }))
           .catch((e) => send(400, toErrorBody(e)));

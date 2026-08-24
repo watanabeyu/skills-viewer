@@ -181,7 +181,7 @@ function cachedScan(fp: string): ScanResult | null {
     return null;
   }
   // 許可ルートが変わると拾う memHits も変わるので、mtime と一緒に鍵にする
-  const rootsKey = memoryRoots.join(' ');
+  const rootsKey = memoryRoots.join('\0');
   let entry = usageCache.get(fp);
   if (!entry || entry.mtimeMs !== st.mtimeMs || entry.rootsKey !== rootsKey) {
     entry = { mtimeMs: st.mtimeMs, rootsKey, ...scanTranscript(fp, undefined, memoryRoots) };
