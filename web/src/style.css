@@ -2017,6 +2017,14 @@ button {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* 格下げ件(未検証のモデルの見立て)の根拠。塗りを外した破線で、裏付けのある事実チップと区別する */
+.issue.demoted {
+  opacity: 0.75;
+  background: transparent;
+  border: 1px dashed #ddd8ce;
+  /* 枠線ぶん高さが増えて事実チップと行が揃わなくなるのを避ける */
+  padding: 3px 8px;
+}
 .instr {
   background: #f4f1ea;
   border-radius: 8px;

@@ -126,8 +126,16 @@ export interface MemoryTriage {
    *   - 機械シグナル(other-project)が無いのに wrong-project と答えた(判断 3)
    *   - プロジェクト不明(orphan)セクションで置き場所の判定(wrong-project / delete / to-*)を答えた
    *     (判断 5。逆引き先が無く前提が成立しないため keep / shrink / update しか採用しない)
+   * 型は実際に取り得る値だけに絞る: 格下げ先が keep なので keep は入らず、shrink / update は
+   * 鮮度側の行き先でどちらのゲートも通過するため、格下げの記録として現れることがない
    */
-  demoted?: MemoryVerdict;
+  demoted?: Exclude<MemoryVerdict, 'keep' | 'shrink' | 'update'>;
+  /*
+   * 格下げの理由。orphan は未マウント・登録抹消といった一時的な環境条件で起こるため、
+   * 条件が解消した(逆引きできるようになった)件を再診断へ乗せ直す判定に使う
+   * (no-signal は内容側の理由なので、内容が変わらない限り再診断しない)
+   */
+  demotedBy?: 'orphan' | 'no-signal';
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
 }
@@ -240,7 +248,7 @@ export interface MemorySection {
   id: string;
   /* 逆引きできたプロジェクトの実パス。プロジェクト不明(逆引き不可)は null */
   projectPath: string | null;
-  /* 表示名。プロジェクト不明はエンコード名そのまま(エンコードは不可逆で復元できない) */
+  /* 表示名。プロジェクト不明はエンコード名そのまま(エンコードは非可逆的に情報が落ちるため、逆引きできない場合はそのまま表示する) */
   projectName: string;
   /* memory ディレクトリの実パス */
   note: string;

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   applyIndexMismatch,
   attachMemoryTriage,
@@ -11,6 +11,7 @@ import {
   collectTriageContext,
   extractJsonArray,
   normalizeInstruction,
+  orphanTriage,
   parseBodyPlan,
   parseTriage,
   promptPath,
@@ -792,12 +793,69 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
       'verdict must be one of keep / shrink / update only',
     );
   });
+
+  /*
+   * 制限と矛盾する節を同じプロンプトに載せない(判断 5)。候補一覧・「持ち主は上のプロジェクト」・
+   * 常設文脈(重複・昇格先の材料)はいずれも置き場所の判定を促すので、orphan では出さない
+   */
+  it('orphan では候補ブロック・持ち主の断定・常設文脈を出さず、候補なしの 1 行に差し替える', () => {
+    const orphanCtx = {
+      ...ctx,
+      projectPath: null,
+      rules: '## CLAUDE.md\n# 運用ルール',
+      skills: '- skill pr-create — PR を作る',
+    };
+    // 候補を返す candidatesOf を渡しても、候補一覧そのものが出ないことを見る
+    const cands = () => ['/w/other'];
+    const ja = buildPrompt(targets, orphanCtx, 'ja', undefined, cands);
+    expect(ja).not.toContain('この memory の持ち主は');
+    expect(ja).not.toContain('# wrong-project の移動先候補');
+    expect(ja).not.toContain('/w/other');
+    expect(ja).toContain('(プロジェクト不明のため wrong-project は選べない。候補なし)');
+    expect(ja).not.toContain('# このプロジェクトで常時有効なもの');
+    expect(ja).not.toContain('# 運用ルール');
+
+    const en = buildPrompt(targets, orphanCtx, 'en', undefined, cands);
+    expect(en).not.toContain('The memories belong to the project above');
+    expect(en).not.toContain('# Destination candidates for wrong-project');
+    expect(en).toContain('(unknown project: wrong-project cannot be chosen');
+    expect(en).not.toContain('# Always-on context for this project');
+  });
+
+  /* orphan の追加文言: 鮮度の着地点(keep のまま)と、memory の実体の実パス(サーバーの確定事実) */
+  it('orphan では historical / obsolete でも keep と明示し、memory ディレクトリの実パスを渡す', () => {
+    const orphanCtx = { ...ctx, projectPath: null, memDir: '/h/.claude/projects/-w-gone/memory' };
+    const ja = buildPrompt(targets, orphanCtx, 'ja');
+    expect(ja).toContain('state が historical / obsolete でも verdict は keep とし');
+    expect(ja).toContain(
+      'このセクションの memory ディレクトリ: /h/.claude/projects/-w-gone/memory',
+    );
+    const en = buildPrompt(targets, orphanCtx, 'en');
+    expect(en).toContain('Even when the state is historical or obsolete, the verdict stays keep');
+    expect(en).toContain('memory directory of this section: /h/.claude/projects/-w-gone/memory');
+    // memDir が無ければ行ごと出さない(テンプレ表記だけ残る)
+    expect(buildPrompt(targets, { ...ctx, projectPath: null }, 'ja')).not.toContain(
+      'このセクションの memory ディレクトリ:',
+    );
+  });
+
+  /* orphan の真実源は ctx.orphan(セクション由来)。projectPath の有無で判定を分岐させない */
+  it('ctx.orphan が真なら projectPath があっても制限文言を載せる', () => {
+    const ja = buildPrompt(targets, { ...ctx, projectPath: '/w/alpha', orphan: true }, 'ja');
+    expect(ja).toContain('verdict は keep / shrink / update のみを使うこと');
+    expect(ja).not.toContain('# wrong-project の移動先候補');
+  });
 });
 
 describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
-  const section = (items: SkillItem[]): MemorySection => ({
+  /*
+   * 既定は逆引きできた(= 非 orphan)セクション。実環境ではプロジェクトが特定できている状態が
+   * 通常なので、orphan ゲートに関係しないテストが「たまたま orphan」で回らないようにする。
+   * orphan のケースは projectPath: null + orphan: true を明示して作る
+   */
+  const section = (items: SkillItem[], projectPath: string | null = '/w/proj'): MemorySection => ({
     id: '-tmp',
-    projectPath: null,
+    projectPath,
     projectName: 'tmp',
     note: tmp,
     usageAvailable: false,
@@ -926,7 +984,7 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
         instruction: '- 削除する',
       }),
     };
-    attachMemoryTriage([{ ...section([it]), orphan: true }], 'ja', store);
+    attachMemoryTriage([{ ...section([it], null), orphan: true }], 'ja', store);
     expect(it.aiTriage?.verdict).toBe('keep');
     expect(it.aiTriage?.demoted).toBe('delete');
     expect(it.aiTriage?.instruction).toBe('');
@@ -936,7 +994,7 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
 
   it('orphan セクションでも keep / shrink / update はそのまま表示する', () => {
     const it = memItem('at-orphan-shrink.md', 'ooo');
-    attachMemoryTriage([{ ...section([it]), orphan: true }], 'ja', {
+    attachMemoryTriage([{ ...section([it], null), orphan: true }], 'ja', {
       [it.path]: entry({ hash: contentHash(it.path), verdict: 'shrink', instruction: '- 縮める' }),
     });
     expect(it.aiTriage?.verdict).toBe('shrink');
@@ -950,6 +1008,99 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     });
     expect(it.aiTriage?.verdict).toBe('delete');
     expect(it.aiTriage?.demoted).toBeUndefined();
+  });
+
+  /*
+   * Phase B 形式(ゲートを通った wrong-project = target あり)のキャッシュも、
+   * orphan セクションでは置き場所の判定そのものが成立しないので移動先ごと落とす
+   */
+  it('orphan セクションでは target 付きの wrong-project キャッシュも移動先ごと落とす', () => {
+    const it = memItem('at-orphan-wp.md', 'ooo');
+    attachMemoryTriage([{ ...section([it], null), orphan: true }], 'ja', {
+      [it.path]: entry({
+        hash: contentHash(it.path),
+        state: 'current',
+        verdict: 'wrong-project',
+        instruction: '',
+        target: '/w/other',
+      }),
+    });
+    expect(it.aiTriage?.verdict).toBe('keep');
+    expect(it.aiTriage?.demoted).toBe('wrong-project');
+    expect(it.aiTriage?.target).toBeUndefined();
+    expect(it.aiTriage?.targetMemDir).toBeUndefined();
+  });
+
+  /*
+   * orphan を理由に格下げされた診断は、逆引きできるようになったセクションでは未診断扱いにする
+   * (制限つきの結果を、前提が変わった後も表示に残さない。isLegacyWrongProject と同じパターン)
+   */
+  it('非 orphan セクションでは demotedBy: "orphan" のキャッシュを付けない(再診断に乗せる)', () => {
+    const it = memItem('at-orphan-demoted.md', 'ooo');
+    const store: TriageStore = {
+      [it.path]: entry({
+        hash: contentHash(it.path),
+        state: 'current',
+        verdict: 'keep',
+        instruction: '',
+        demoted: 'delete',
+        demotedBy: 'orphan',
+      }),
+    };
+    attachMemoryTriage([section([it])], 'ja', store);
+    expect(it.aiTriage).toBeUndefined();
+    // 同じキャッシュでも orphan セクションのままなら表示する(格下げの記録つき)
+    const same = memItem('at-orphan-demoted2.md', 'ooo');
+    attachMemoryTriage([{ ...section([same], null), orphan: true }], 'ja', {
+      [same.path]: { ...store[it.path], hash: contentHash(same.path) },
+    });
+    expect(same.aiTriage?.demoted).toBe('delete');
+  });
+});
+
+/*
+ * 表示層の orphan ゲート単体(判断 5)。attachMemoryTriage / triageProject の両方が通す関数なので、
+ * 「何を落として何を残すか」をここで固定する
+ */
+describe('orphanTriage (プロジェクト不明セクションの表示ゲート)', () => {
+  const wp: MemoryTriage = {
+    verdict: 'wrong-project',
+    state: 'current',
+    reason: '別プロジェクトの話',
+    issues: ['/w/other 配下のパス'],
+    instruction: '- 移す',
+    target: '/w/other',
+    targetMemDir: '/h/.claude/projects/-w-other/memory',
+    body: { why: 'keep', how: 'keep', keepLines: [], index: 'keep' },
+  };
+
+  it('置き場所判定の産物(target / targetMemDir / body)を落として keep + 格下げ記録にする', () => {
+    const gated = orphanTriage(wp);
+    expect(gated.verdict).toBe('keep');
+    expect(gated.demoted).toBe('wrong-project');
+    expect(gated.demotedBy).toBe('orphan');
+    expect(gated.instruction).toBe('');
+    // 鍵ごと落とす(undefined を持たせない)。web の `...(x ? {} : {})` 系と同じ扱いにするため
+    expect('target' in gated).toBe(false);
+    expect('targetMemDir' in gated).toBe(false);
+    expect('body' in gated).toBe(false);
+    // 事実(state / reason / issues)は残す。行き先を採らないだけで観察は続ける
+    expect(gated.state).toBe('current');
+    expect(gated.issues).toEqual(['/w/other 配下のパス']);
+    expect(wp.target).toBe('/w/other'); // 入力は書き換えない
+  });
+
+  it('keep / shrink / update はそのまま返す(冪等)', () => {
+    const keep: MemoryTriage = { verdict: 'keep', reason: '', issues: [], instruction: '' };
+    expect(orphanTriage(keep)).toBe(keep);
+    const shrink: MemoryTriage = { ...wp, verdict: 'shrink' };
+    expect(orphanTriage(shrink)).toBe(shrink);
+  });
+
+  /* 出力不正は行き先を持たない(既存の防御節テストと同じく、素通りすることを固定する) */
+  it('出力不正(error)は素通りする', () => {
+    const broken: MemoryTriage = { ...wp, error: 'invalid-output' };
+    expect(orphanTriage(broken)).toBe(broken);
   });
 });
 
@@ -1144,6 +1295,8 @@ describe('parseTriage の wrong-project ゲート(判断 2 / 3)', () => {
       // 捏造された移動先を含みうるので指示文は捨てる(貼れるものを出さない)
       instruction: '',
       demoted: 'wrong-project',
+      // 内容側の理由。環境条件(orphan)とは区別して記録し、再診断の判定に混ぜない
+      demotedBy: 'no-signal',
     });
   });
 
@@ -1275,6 +1428,8 @@ describe('parseTriage のプロジェクト不明(orphan)verdict 制限(判断 5
       issues: ['CLAUDE.md に同じ記述'],
       instruction: '',
       demoted: 'delete',
+      // 環境条件(逆引き不能)が理由の格下げ。解消したら再診断へ乗せるための目印
+      demotedBy: 'orphan',
     });
   });
 
@@ -1315,6 +1470,44 @@ describe('parseTriage のプロジェクト不明(orphan)verdict 制限(判断 5
     const m = parseTriage(answer(), files);
     expect(m.get('a.md')?.verdict).toBe('delete');
     expect(m.get('a.md')?.demoted).toBeUndefined();
+    expect(m.get('a.md')?.demotedBy).toBeUndefined();
+  });
+
+  /* 鮮度側の行き先は orphan でも生きているので、body(残す / 削る分類)まで通ることを固定する */
+  it('shrink は body プラン(feedback テンプレの材料)を付けたまま素通りする', () => {
+    const bodyText = 'ルール行\n\n**Why:** 理由\n\n**How to apply:** 例外: 緊急時は除く';
+    const m = parseTriage(
+      answer({
+        verdict: 'shrink',
+        instruction: '- 縮める',
+        body: {
+          why: 'keep',
+          how: 'keep-lines-only',
+          keep_lines: ['例外: 緊急時は除く'],
+          index: 'keep',
+        },
+      }),
+      files,
+      new Map([['a.md', bodyText]]),
+      new Map(),
+      { orphan: true },
+    );
+    expect(m.get('a.md')?.verdict).toBe('shrink');
+    expect(m.get('a.md')?.body).toEqual({
+      why: 'keep',
+      how: 'keep-lines-only',
+      keepLines: ['例外: 緊急時は除く'],
+      index: 'keep',
+    });
+  });
+
+  /* 索引と本文の食い違いは置き場所と無関係な事実なので、格下げしても落とさない(UI の警告の材料) */
+  it('格下げした件でも index_matches_body: false は indexMatchesBody として残る', () => {
+    const m = parseTriage(answer({ index_matches_body: false }), files, new Map(), new Map(), {
+      orphan: true,
+    });
+    expect(m.get('a.md')?.indexMatchesBody).toBe(false);
+    expect(m.get('a.md')?.demotedBy).toBe('orphan');
   });
 });
 
@@ -1469,6 +1662,40 @@ describe('selectStale: ゲート導入前の wrong-project キャッシュ', () 
    * demoted / error は現状 verdict が keep になるためこの組み合わせは出ないが、
    * 防御節(!demoted / !error)が実際に効いていることを見るため verdict は wrong-project のまま与える
    */
+  /*
+   * orphan 格下げは環境条件(未マウント・登録抹消)で起きるので、条件が解消したら自動で再診断へ。
+   * orphan のままなら再診断しない(同じ制限で同じ結果になるだけで、call が無駄になる)
+   */
+  it('orphan 格下げのキャッシュは、非 orphan セクションでだけ stale になる', () => {
+    const a = memItem('ws-orphan.md', 'aaa');
+    const store: TriageStore = {
+      [a.path]: entry({
+        hash: contentHash(a.path),
+        verdict: 'keep',
+        instruction: '',
+        demoted: 'delete',
+        demotedBy: 'orphan',
+      }),
+    };
+    expect(selectStale([a], store, 'ja', false)).toHaveLength(1); // opts 省略 = 非 orphan
+    expect(selectStale([a], store, 'ja', false, { orphan: true })).toHaveLength(0);
+  });
+
+  /* no-signal(内容側の理由)の格下げは環境が変わっても再診断しない */
+  it('demotedBy: "no-signal" の格下げは非 orphan セクションでも stale にしない', () => {
+    const a = memItem('ws-nosignal.md', 'aaa');
+    const store: TriageStore = {
+      [a.path]: entry({
+        hash: contentHash(a.path),
+        verdict: 'keep',
+        instruction: '',
+        demoted: 'wrong-project',
+        demotedBy: 'no-signal',
+      }),
+    };
+    expect(selectStale([a], store, 'ja', false)).toHaveLength(0);
+  });
+
   it('target あり・格下げ済み(demoted)・出力不正(error)の wrong-project は stale にしない', () => {
     const a = memItem('ws-new.md', 'aaa');
     const b = memItem('ws-demoted.md', 'bbb');
@@ -1479,5 +1706,85 @@ describe('selectStale: ゲート導入前の wrong-project キャッシュ', () 
       [c.path]: entry({ hash: contentHash(c.path), instruction: '', error: 'invalid-output' }),
     };
     expect(selectStale([a, b, c], store, 'ja', false)).toHaveLength(0);
+  });
+});
+
+/*
+ * 配線の 1 本通し(判断 5)。プロンプト生成 → parseTriage の制限 → 表示ゲートまでが
+ * 同じ orphan フラグで動くことを、モデル呼び出しだけ差し替えて確かめる。
+ * 診断キャッシュ(~/.cache/skills-viewer)は擬似 HOME 下に切り離す(実環境のキャッシュを汚さない)。
+ */
+describe('triageProject のプロジェクト不明(orphan)配線', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('候補なしのプロンプトを作り、置き場所の verdict を格下げして返す', async () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'tp-home-'));
+    vi.stubEnv('HOME', home); // TRIAGE_FILE はモジュール読み込み時に決まるので、import より先に差す
+    vi.resetModules();
+    const { triageProject } = await import('../src/server/memory-triage');
+
+    const memDir = fs.mkdtempSync(path.join(tmp, 'tp-mem-'));
+    const file = path.join(memDir, 'tp-note.md');
+    fs.writeFileSync(file, '---\nname: tp-note\n---\n/w/other/src の設定を直した');
+    const item: SkillItem = {
+      name: 'tp-note',
+      description: '',
+      argumentHint: '',
+      version: '',
+      kind: 'memory',
+      path: file,
+      files: [],
+      // 別の登録プロジェクト配下のパス = 非 orphan なら wrong-project の候補になるシグナル
+      signals: [{ kind: 'other-project', value: '/w/other' }],
+    };
+    const sec: MemorySection = {
+      id: '-w-gone',
+      projectPath: null,
+      projectName: '-w-gone',
+      note: memDir,
+      orphan: true,
+      usageAvailable: false,
+      indexTokens: 0,
+      otherProjects: ['/w/other'],
+      items: [item],
+    };
+
+    let prompt = '';
+    const results = await triageProject(sec, 'ja', 'haiku', {
+      run: async (p: string) => {
+        prompt = p;
+        return JSON.stringify([
+          {
+            file: 'tp-note.md',
+            state: 'obsolete',
+            verdict: 'delete',
+            index_matches_body: true,
+            reason: '役目を終えている',
+            issues: ['参照パスが存在しない'],
+            instruction: '- 削除する',
+            target: '/w/other',
+          },
+        ]);
+      },
+    });
+
+    // プロンプト: 候補ブロックを出さず、memory の実体の実パスを渡す
+    expect(prompt).not.toContain('# wrong-project の移動先候補');
+    expect(prompt).toContain('(プロジェクト不明のため wrong-project は選べない。候補なし)');
+    expect(prompt).toContain('このセクションの memory ディレクトリ: ' + memDir);
+    // 結果: parseTriage の制限が効き、貼れる指示文と移動先は残らない
+    expect(results).toHaveLength(1);
+    expect(results[0].verdict).toBe('keep');
+    expect(results[0].demoted).toBe('delete');
+    expect(results[0].instruction).toBe('');
+    expect(results[0].target).toBeUndefined();
+    // キャッシュにも格下げの理由が残る(orphan 解消後の再診断の材料)
+    const store = JSON.parse(
+      fs.readFileSync(path.join(home, '.cache', 'skills-viewer', 'memory-triage.json'), 'utf8'),
+    );
+    expect(store[file].demotedBy).toBe('orphan');
   });
 });

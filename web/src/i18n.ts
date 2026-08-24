@@ -102,7 +102,7 @@ const en = {
   'memory.secMemDir': 'memory dir: {path}',
   'memory.orphan': 'unknown project',
   'memory.orphanTitle':
-    'No matching project — possible causes include an unmounted external volume, leftover files from a deleted worktree, or the project having been unregistered (the encoded directory name may not decode back into the original path)',
+    'No matching project — it may have been deleted, moved or renamed, an external volume may not be mounted, these may be leftovers from a deleted worktree, or the project may have been unregistered (the encoded directory name may not decode back into the original path)',
   'memory.type.user': 'About you',
   'memory.type.feedback': 'Guidance',
   'memory.type.project': 'Project',
@@ -509,7 +509,7 @@ const ja: Record<MsgKey, string> = {
   'memory.secMemDir': 'memory ディレクトリ: {path}',
   'memory.orphan': 'プロジェクト不明',
   'memory.orphanTitle':
-    '対応するプロジェクトが見つかりません(外部ボリューム未マウント・削除済み worktree の残骸・プロジェクトの登録抹消などが考えられます。エンコードされたディレクトリ名から元のパスを復元できるとは限りません)',
+    '対応するプロジェクトが見つかりません(プロジェクトの削除・移動・リネーム、外部ボリューム未マウント、削除済み worktree の残骸、プロジェクトの登録抹消などが考えられます。エンコードされたディレクトリ名から元のパスを復元できるとは限りません)',
   'memory.type.user': '人物像',
   'memory.type.feedback': '指示・方針',
   'memory.type.project': '進行状況',

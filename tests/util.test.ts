@@ -362,6 +362,17 @@ describe('skewedVerdict (提案の偏り検知)', () => {
       'wrong-project',
     );
   });
+
+  /*
+   * プロジェクト不明セクションでの格下げ(判断 5)も同じく元の verdict で数える。
+   * 全件が格下げされる状況こそ「診断の前提(プロジェクトの特定)を疑え」という警告の出しどころなので、
+   * 格下げ理由が orphan でもバナーを抑制しない(判断 7)
+   */
+  it('orphan で全件格下げ(delete)でも偏り警告を出す', () => {
+    const demotedDelete = (i: number) =>
+      mem('od' + i, at('keep', { demoted: 'delete' as const, demotedBy: 'orphan' as const }));
+    expect(skewedVerdict(Array.from({ length: 5 }, (_, i) => demotedDelete(i)))).toBe('delete');
+  });
 });
 
 describe('memoryListSearch (memory 一覧へ戻る URL)', () => {

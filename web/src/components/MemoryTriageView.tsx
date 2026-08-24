@@ -96,7 +96,8 @@ export function VerdictBadge({ tri }: { tri: MemoryTriage }) {
 }
 
 /*
- * 機械シグナルが無い wrong-project を keep へ格下げした件の注記。
+ * 機械シグナルが無い wrong-project を keep へ格下げした件の注記
+ * (判断 5 のプロジェクト不明セクションでの格下げも含む)。
  * 提案としては出さないが、握り潰さず「自分で確認して」と伝えるため verdict バッジの隣に置く。
  */
 export function DemotedNote({ tri }: { tri: MemoryTriage }) {
@@ -143,8 +144,14 @@ function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
       {!!tri.issues.length && (
         <div className="issues">
           {/* 同じ文言が 2 件返り得るので key は index(並びは AI 出力のまま固定) */}
+          {/* 格下げ件の issues は採用しなかった行き先の根拠なので、機械が裏付けた事実チップと
+              同じ見た目にしない(淡色 + 未検証であることを title で補う) */}
           {tri.issues.map((issue, i) => (
-            <span className="issue" key={i}>
+            <span
+              className={tri.demoted ? 'issue demoted' : 'issue'}
+              title={tri.demoted ? t('memory.triage.demotedTitle') : undefined}
+              key={i}
+            >
               {issue}
             </span>
           ))}
