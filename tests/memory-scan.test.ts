@@ -414,6 +414,35 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
     expect(sig?.value).toBe(bc);
   });
 
+  /* 変異の番犬: worktree のメイン slug にも区切り付き前方一致が効く(この節を落とすと fail) */
+  it('プロジェクト不明(メイン配下の未登録サブディレクトリ)は、登録済みの worktree に other-project が付かない', () => {
+    const pmRoot = path.join(tmp, 'pm-projects');
+    const mainRepo = path.join(tmp, 'pm-work', 'repo'); // 未登録
+    const sub = path.join(tmp, 'pm-work', 'repo', 'sub'); // 未登録(このセクションの実体)
+    const wt = path.join(tmp, 'pm-work', 'feat-y'); // mainRepo の linked worktree。これだけ登録
+    fs.mkdirSync(sub, { recursive: true });
+    fs.mkdirSync(wt, { recursive: true });
+    fs.writeFileSync(
+      path.join(wt, '.git'),
+      'gitdir: ' + path.join(mainRepo, '.git', 'worktrees', 'feat-y') + '\n',
+    );
+    const dir = path.join(pmRoot, encodeProjectPath(sub), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(wt, 'src', 'app.ts') +
+        ' を確認\n',
+    );
+    const secs = scanMemory(path.join(tmp, 'pm-work'), { root: pmRoot, projects: [wt] });
+    const sec = secs.find((s) => s.id === encodeProjectPath(sub))!;
+    expect(sec.orphan).toBe(true);
+    const item = sec.items.find((x) => x.name === 'x')!;
+    expect((item.signals || []).some((s) => s.kind === 'other-project')).toBe(false);
+  });
+
   /* 変異の番犬: orphan で other-project を全滅させる退行(return false)で fail する肯定テスト */
   it('プロジェクト不明でも、無関係な登録プロジェクトへの参照には other-project が付く(値はフルパス)', () => {
     const opRoot = path.join(tmp, 'op-projects');

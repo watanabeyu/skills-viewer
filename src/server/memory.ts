@@ -205,11 +205,12 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
     //   - 入れ子プロジェクト(親子関係。親の memory が子の配下パスに触れるだけで
     //     wrong-project 経路に乗ってしまうのを防ぐ)。プロジェクト不明(projectPath null)は
     //     実パスでの親子判定ができないため、slug の区切り付き前方一致(usage.ts の
-    //     hasTranscripts と同じパターン)で祖先・子孫を除外する。`-` を含む兄弟を過剰除外し得るが、
-    //     過剰除外は「シグナルが付かない → keep」の安全側
+    //     hasTranscripts と同じパターン)で祖先・子孫を除外する。`-` を含む兄弟を過剰除外し得るし、
+    //     メイン(pms)基準でも同じ前方一致を行うため `<main>-…` という名前の別プロジェクトも
+    //     巻き込み得るが、過剰除外は「シグナルが付かない → keep」の安全側
     const otherProjects = projects.filter((p) => {
       const ps = slugOf.get(p)!;
-      if (ps === d.name) return false; // 自分自身(登録一致はこれに包含)。mainOf(fs)を呼ぶ前に短絡
+      if (ps === d.name) return false; // 自分自身(登録一致はこれに包含)。mainOf(p)(fs 参照)を呼ぶ前に短絡
       const pMain = mainOf(p);
       const pms = pMain ? encodeProjectPath(pMain) : ps; // p の実体(worktree ならメイン)の slug
       if (pms === d.name) return false; // 自リポジトリの worktree(メインの slug が一致)
