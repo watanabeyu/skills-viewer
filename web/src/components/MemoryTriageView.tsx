@@ -45,6 +45,9 @@ function estimateLabel(it: SkillItem): string {
   if (it.aiTriage?.verdict === 'update') return t('memory.triage.estUpdate');
   const est = triageEstimate(it);
   if (!est) return '';
+  // 読み込み上限の外にある索引行は元から注入されていないので、消しても常時コストは減らない。
+  // 「索引 ±0」だけだと変更なしに見えるため、減らない理由まで書く(delete / to-docs / … 系)
+  if (it.indexBeyondLimit && est.always === 0) return t('memory.triage.estApplyBeyond');
   if (est.always > 0)
     return t('memory.triage.estApplyClaude', {
       n: signed(est.index),

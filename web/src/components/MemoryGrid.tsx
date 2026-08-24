@@ -56,7 +56,10 @@ function CostBar({
   const n = sec.items.length;
   const bodyTok = sec.items.reduce((sum, it) => sum + (it.bodyTokens || 0), 0);
   const readCount = sec.items.filter((it) => !!it.useCount).length;
-  const per = n ? Math.round(sec.indexTokens / n) : 0;
+  // 分母は上限内の件数。合計(sec.indexTokens)が上限外を除いた値なので、
+  // 全件で割ると「1 件あたり」が実際より小さく出る(0 除算にも注意)
+  const inLimit = n - (sec.indexBeyondCount || 0);
+  const per = inLimit > 0 ? Math.round(sec.indexTokens / inLimit) : 0;
   const max = Math.max(sec.indexTokens, pluginTok, userTok);
   const unit = t('memory.cost.unit');
   const beyond = sec.indexBeyondCount || 0;

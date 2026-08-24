@@ -243,13 +243,18 @@ export const memoryResolver =
  */
 export function triageEstimate(it: SkillItem): { index: number; always: number } | null {
   const v = it.aiTriage?.verdict;
-  const index = it.indexTokens || 0;
+  // 読み込み上限(200 行 / 25KB)の外にある索引行は元から注入されていないので、消しても常時コストは
+  // 減らない。セクション合計(MemorySection.indexTokens)と同じ規則にしないと、
+  // 「適用後 = 合計 + 差分」が上限外の件のぶんだけ負に振れる
+  const index = it.indexBeyondLimit ? 0 : it.indexTokens || 0;
+  // 索引行が消える分。0 のときは -0 を作らない(表示・合算では同値だが値の比較で 0 と食い違う)
+  const drop = index === 0 ? 0 : -index;
   // to-skill は SKILL.md 側(元から常時注入されている description ではなく本文)へ移すので、
   // memory 側は索引が消えるだけ = to-docs と同じ試算になる
   if (v === 'delete' || v === 'to-docs' || v === 'wrong-project' || v === 'to-skill')
-    return { index: -index, always: 0 };
+    return { index: drop, always: 0 };
   // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)
-  if (v === 'to-claude-md') return { index: -index, always: it.bodyTokens || 0 };
+  if (v === 'to-claude-md') return { index: drop, always: it.bodyTokens || 0 };
   return null;
 }
 

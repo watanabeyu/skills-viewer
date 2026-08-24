@@ -20,10 +20,10 @@ export interface MemoryScanOptions {
   /* メインワークツリーの実パス(テストで差し替える)。既定は mainWorktreeOf(cwd) */
   mainWorktree?: string | null;
   /*
-   * settings.json の autoMemoryDirectory が指す実パス(テストで差し替える)。
-   * undefined = autoMemoryDirOf(cwd) で実解決、null = 無効(この設定は無いものとして扱う)
+   * settings.json の autoMemoryDirectory の解決結果(テストで差し替える)。
+   * undefined = resolveAutoMemoryDir(cwd) で実解決、null = 無効(この設定は無いものとして扱う)
    */
-  autoMemoryDir?: string | null;
+  autoMemoryDir?: AutoMemoryDirInfo | null;
 }
 
 /*
@@ -85,9 +85,14 @@ export function repoRootOf(dir: string): string | null {
  * この設定が無いと memory が 1 件も見えない環境が生まれる。
  *
  * 読む順(優先度高い順、hooks 設定(scanHooks)と同じ readFileSync + JSON.parse の流儀):
- *   1. <現在のプロジェクト>/.claude/settings.local.json
- *   2. 同 settings.json
- *   3. <home>/.claude/settings.json
+ *   1. <cwd>/.claude/settings.local.json
+ *   2. <cwd>/.claude/settings.json
+ *   3. <メインワークツリー>/.claude/settings.local.json(cwd と異なるときだけ)
+ *   4. 同 settings.json
+ *   5. <home>/.claude/settings.json
+ * cwd 側を先に見るのは、Claude Code の settings が「起動ディレクトリ」基準だから
+ * (worktree から起動した場合、その worktree の settings.local.json が実際に効く)。
+ * cwd 側に無ければメインワークツリー側も見る(memory はリポジトリ単位で共有されるため)。
  * 値は絶対パスか `~/` 始まりのみ有効(公式仕様どおり)。相対パスや不正 JSON はスキップして次を試す。
  */
 function readAutoMemoryDirectory(fp: string, home: string): string | null {
@@ -104,19 +109,46 @@ function readAutoMemoryDirectory(fp: string, home: string): string | null {
   return null; // 相対パスは公式仕様上無効
 }
 
-export function autoMemoryDirOf(cwd: string, home: string = HOME): string | null {
-  // 「現在のプロジェクト」はメインワークツリー基準(worktree の .claude/settings は見ない)
-  const base = mainWorktreeOf(cwd) ?? path.resolve(cwd);
-  const candidates = [
-    path.join(base, '.claude', 'settings.local.json'),
-    path.join(base, '.claude', 'settings.json'),
-    path.join(home, '.claude', 'settings.json'),
-  ];
-  for (const fp of candidates) {
-    const dir = readAutoMemoryDirectory(fp, home);
-    if (dir) return dir;
+/*
+ * 設定の出どころ。user scope の設定は「全プロジェクトが 1 つの置き場を共有する」ことを意味し、
+ * その置き場の memory はどのプロジェクトのものか特定できない(公式仕様)。
+ */
+export type AutoMemoryScope = 'local' | 'project' | 'user';
+export interface AutoMemoryDirInfo {
+  /* 解決済みの絶対パス(`~/` は home 展開済み) */
+  dir: string;
+  scope: AutoMemoryScope;
+}
+
+export function autoMemoryDirOf(cwd: string, home: string = HOME): AutoMemoryDirInfo | null {
+  const cwdResolved = path.resolve(cwd);
+  const main = mainWorktreeOf(cwd);
+  const bases = [cwdResolved, ...(main && main !== cwdResolved ? [main] : [])];
+  const candidates: { file: string; scope: AutoMemoryScope }[] = [];
+  for (const base of bases) {
+    candidates.push({ file: path.join(base, '.claude', 'settings.local.json'), scope: 'local' });
+    candidates.push({ file: path.join(base, '.claude', 'settings.json'), scope: 'project' });
+  }
+  candidates.push({ file: path.join(home, '.claude', 'settings.json'), scope: 'user' });
+  for (const c of candidates) {
+    const dir = readAutoMemoryDirectory(c.file, home);
+    if (dir) return { dir, scope: c.scope };
   }
   return null;
+}
+
+/*
+ * 解決済みの autoMemoryDirectory。解決関数はこの 1 本に集約する: スキャン(scanMemory)・
+ * 読み取り許可(manage.ts)・棚卸し(memory-triage.ts)が別々に解決すると、
+ * 「一覧には出るが本文は開けない」のような食い違いが生まれるため。
+ * settings 3〜5 ファイルの読み取りは cwd ごとに 1 回だけにする(スキャンのたびには読まない)。
+ * 起動中に settings を書き換えた場合は再起動が要る。
+ */
+const autoDirMemo = new Map<string, AutoMemoryDirInfo | null>();
+export function resolveAutoMemoryDir(cwd: string = process.cwd()): AutoMemoryDirInfo | null {
+  const key = path.resolve(cwd);
+  if (!autoDirMemo.has(key)) autoDirMemo.set(key, autoMemoryDirOf(key));
+  return autoDirMemo.get(key) ?? null;
 }
 
 /*
@@ -184,15 +216,21 @@ function readIndex(memDir: string): Map<string, IndexEntry> {
   } catch {
     return map; // 索引が無い/読めない場合は索引行なし(indexTokens = 0)として扱う
   }
-  const lines = raw.split(/\r?\n/);
+  // \n だけで分割する: CRLF の行には末尾の \r が残るので、改行 1 バイトを足すと自然に +2 になり、
+  // Claude Code が読むバイト数と一致する(\r?\n で割ると CR の分を数え落とす)
+  const lines = raw.split('\n');
   let bytes = 0;
   lines.forEach((line, i) => {
-    // 改行 1 バイト分を加算(このファイルは常に \n で書かれる前提の近似。厳密な \r\n 環境は対象外)
-    bytes += Buffer.byteLength(line, 'utf8') + 1;
+    bytes += Buffer.byteLength(line, 'utf8') + 1; // 改行 1 バイト
     const m = line.match(/\(([^()]+\.md)\)/);
     if (m) {
       const lineNumber = i + 1;
-      map.set(path.basename(m[1]), {
+      const file = path.basename(m[1]);
+      // 同じファイルの索引行が複数あるときは上限内の行を優先する
+      // (実際に毎セッション注入されているのはそちらで、常時コストの真実源になる)
+      const prev = map.get(file);
+      if (prev && !prev.beyondLimit) return;
+      map.set(file, {
         line: line.trim(),
         lineNumber,
         beyondLimit: lineNumber > INDEX_MAX_LINES || bytes > INDEX_MAX_BYTES,
@@ -227,9 +265,12 @@ function readMemoryFile(
   // v2.1.214+ は書き込み時に frontmatter へ `modified`(ISO 8601)を刻む。mtime はコピー・同期・
   // チェックアウトで簡単に狂うが、modified は Claude Code 自身が書いた事実なので優先する
   const modifiedRaw = metaValue(meta, 'modified');
-  if (modifiedRaw) {
+  // 形式ガード: Date.parse は "5"(= 2001-05-01 等)や "2026"(年だけ)も通してしまい、
+  // 桁の違う値を掴むと「最終更新」が何十年もずれる。日付部分の形が合う値だけを採る。
+  // 未来日(1 日以上先)は時計ずれ・手書きの誤りなので不採用にして mtime に戻す
+  if (/^\d{4}-\d{2}-\d{2}([T ]|$)/.test(modifiedRaw)) {
     const parsed = Date.parse(modifiedRaw);
-    if (!Number.isNaN(parsed)) updatedAt = parsed;
+    if (!Number.isNaN(parsed) && parsed > 0 && parsed <= Date.now() + 86400000) updatedAt = parsed;
   }
   const description = meta.description || firstBodyLine(body);
   // 鮮度の機械シグナル(テキスト / fs 層)。正規表現と existsSync だけなのでスキャン時に払える
@@ -261,6 +302,31 @@ function readMemoryFile(
     ...(signals.length ? { signals } : {}),
   };
 }
+
+/*
+ * p が projectPath と「同じもの」と見なせる関係か(= 別の登録プロジェクトの候補から外す)。
+ * 自分自身 / worktree 同士 / 入れ子(親子)。親の memory が子の配下パスに触れるだけで
+ * wrong-project 経路に乗るのを防ぐ。既定セクションと autoDir セクションで同じ規則を使うため
+ * 1 箇所に置く(除外規則を 2 箇所に書かない)。
+ */
+function isRelatedProject(
+  p: string,
+  projectPath: string,
+  pMain: string | null,
+  mainOf: (x: string) => string | null,
+): boolean {
+  if (p === projectPath) return true;
+  if (pMain === projectPath || mainOf(projectPath) === p) return true;
+  return p.startsWith(projectPath + path.sep) || projectPath.startsWith(p + path.sep);
+}
+
+/*
+ * autoMemoryDirectory はユーザー / リポジトリが任意のディレクトリを指せるため、巨大な置き場を
+ * 指されると単一スレッドのサーバーが毎 GET でブロックする。件数と 1 ファイルのサイズに上限を置く。
+ * 超過分は黙って落とす(件数を画面へ伝える仕様は無い)。
+ */
+const AUTO_DIR_MAX_FILES = 500;
+const AUTO_FILE_MAX_BYTES = 1024 * 1024;
 
 /*
  * 列挙の起点は ~/.claude/projects/<encoded>/memory の走査(~/.claude.json の一覧ではない)。
@@ -302,6 +368,9 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
   }
 
   const sections: MemorySection[] = [];
+  // 既定走査で採ったディレクトリ(実パス)。autoMemoryDirectory が同じ場所を指しているときに
+  // 二重にセクション化しないための照合に使う
+  const scannedDirs = new Set<string>();
   for (const d of dirs) {
     const memDir = path.join(root, d.name, 'memory');
     let files: string[];
@@ -341,8 +410,7 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
           d.name.startsWith(pms + '-') ||
           pms.startsWith(d.name + '-')
         );
-      if (pMain === projectPath || mainOf(projectPath) === p) return false;
-      return !(p.startsWith(projectPath + path.sep) || projectPath.startsWith(p + path.sep));
+      return !isRelatedProject(p, projectPath, pMain, mainOf);
     });
     const items: SkillItem[] = [];
     for (const f of files) {
@@ -356,6 +424,7 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
       if (item) items.push(item);
     }
     if (!items.length) continue;
+    scannedDirs.add(path.resolve(memDir));
     const beyondCount = items.filter((it) => it.indexBeyondLimit).length;
     sections.push({
       id: d.name,
@@ -382,54 +451,75 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
 
   // autoMemoryDirectory(公式仕様)。設定されていれば <dir> 直下に MEMORY.md + 個別 *.md が
   // プロジェクト区分なしで作られる(実測 2026-08-25)。この設定が有効な環境では Claude Code が
-  // 実際に使う置き場なので、逆引き失敗ではなく明示的な現在地として orphan にはしない
-  // root 注入(テスト等の隔離環境)では実 HOME・実プロジェクトの settings を読みに行かない
-  // (実行機に autoMemoryDirectory が設定されているとテストの隔離が破れるため)。
-  // 明示指定(autoMemoryDir)が常に最優先
-  const autoDir =
-    opts.autoMemoryDir !== undefined
-      ? opts.autoMemoryDir
-      : opts.root !== undefined
-        ? null
-        : autoMemoryDirOf(cwd);
-  if (autoDir) {
+  // 実際に使う置き場なので、逆引き失敗ではなく明示的な現在地として orphan にはしない。
+  // 解決は resolveAutoMemoryDir に集約する(読み取り許可・棚卸しと必ず同じ値を見る)。
+  // 明示指定(autoMemoryDir)が常に最優先で、テストはここに null を渡して隔離する
+  const auto = opts.autoMemoryDir !== undefined ? opts.autoMemoryDir : resolveAutoMemoryDir(cwd);
+  // 既定走査と同じディレクトリを指しているなら、そちらで既にセクション化済み(重複表示・二重計上の回避)
+  if (auto && !scannedDirs.has(path.resolve(auto.dir))) {
+    const autoDir = auto.dir;
     let autoFiles: string[];
     try {
       autoFiles = fs
         .readdirSync(autoDir)
         .filter((f) => f.endsWith('.md') && f !== 'MEMORY.md')
-        .sort((a, b) => a.localeCompare(b));
+        .sort((a, b) => a.localeCompare(b))
+        .slice(0, AUTO_DIR_MAX_FILES);
     } catch {
       autoFiles = [];
     }
     if (autoFiles.length) {
       const autoIndex = readIndex(autoDir);
-      const autoProjectPath = main ?? cwdResolved;
+      /*
+       * user scope の設定では全プロジェクトが 1 つの置き場を共有する(公式仕様)ため、
+       * そこにある memory がどのプロジェクトのものかは特定できない。現在のプロジェクトを
+       * 帰属先として付けると、相対パスが誤った基準で解決され、別プロジェクトのブランチが
+       * 「消えたブランチ」になり、現在の CLAUDE.md との重複を根拠に delete / to-skill が出る
+       * ——「前提の取り違え」がそのまま破壊的な提案に化ける。よって帰属は主張せず、
+       * 棚卸しは orphan と同じ制限ゲートに乗せる(sharedStore)。
+       */
+      const shared = auto.scope === 'user';
+      const owner = main ?? cwdResolved;
+      const autoProjectPath = shared ? null : owner;
+      // 帰属するときは既定セクションと同じ規則で「別の登録プロジェクト」を算出する
+      // (空のままだと wrong-project の候補が組めず、検出そのものが働かない)
+      const autoOthers = autoProjectPath
+        ? projects.filter((p) => !isRelatedProject(p, autoProjectPath, mainOf(p), mainOf))
+        : [];
       const autoItems: SkillItem[] = [];
       for (const f of autoFiles) {
-        const item = readMemoryFile(
-          path.join(autoDir, f),
-          f,
-          autoIndex.get(f),
-          autoProjectPath,
-          [],
-        );
+        const fp = path.join(autoDir, f);
+        try {
+          // 巨大ファイルは読み飛ばす(readMemoryFile に入る前に落として毎 GET のブロックを防ぐ)
+          if (fs.statSync(fp).size > AUTO_FILE_MAX_BYTES) continue;
+        } catch {
+          continue; // stat できないものは読めないので同じくスキップ
+        }
+        const item = readMemoryFile(fp, f, autoIndex.get(f), autoProjectPath, autoOthers);
         if (item) autoItems.push(item);
       }
       if (autoItems.length) {
         const autoBeyond = autoItems.filter((it) => it.indexBeyondLimit).length;
         sections.push({
-          id: encodeProjectPath(autoDir),
+          // 既定セクション(slug がそのまま id)との衝突を避ける接頭辞。URL ルーティングも
+          // /api/memory-triage の find も文字列一致なので、id の形が変わっても影響しない
+          id: 'auto-' + encodeProjectPath(autoDir),
           projectPath: autoProjectPath,
-          projectName: path.basename(autoProjectPath),
+          projectName: autoProjectPath ? path.basename(autoProjectPath) : path.basename(autoDir),
           note: autoDir,
           isCurrent: true,
+          autoDir: true,
+          ...(shared ? { sharedStore: true } : {}),
+          // transcript は現在のプロジェクトのものしか無いので(共有ストアでも同じ)、
+          // Read / Write 実績が計測可能かは現在のプロジェクトの slug で判定する
+          transcriptSlug: encodeProjectPath(owner),
           usageAvailable: false,
           indexTokens: autoItems.reduce(
             (sum, it) => sum + (it.indexBeyondLimit ? 0 : it.indexTokens || 0),
             0,
           ),
           ...(autoBeyond ? { indexBeyondCount: autoBeyond } : {}),
+          ...(autoOthers.length ? { otherProjects: autoOthers } : {}),
           items: autoItems,
         });
       }

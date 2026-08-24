@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { autoMemoryDirOf, mainWorktreeOf, scanMemory } from '../src/server/memory';
 import { encodeProjectPath } from '../src/server/usage';
 import { estimateTokens } from '../src/server/lint';
@@ -96,7 +96,12 @@ fs.mkdirSync(path.join(root, '-Users-me-nomemory'), { recursive: true });
 // MEMORY.md(索引)だけがあるプロジェクト。アイテムが 0 件なのでセクションにしない
 write(memDir('-Users-me-indexonly'), 'MEMORY.md', '- [none](none.md) — 本文が残っていない');
 
-const sections = scanMemory(projB, { root, projects: [projA, projB], mainWorktree: null });
+const sections = scanMemory(projB, {
+  root,
+  projects: [projA, projB],
+  mainWorktree: null,
+  autoMemoryDir: null,
+});
 const secA = sections.find((s) => s.projectName === 'alpha')!;
 const secB = sections.find((s) => s.projectName === 'beta')!;
 
@@ -190,7 +195,12 @@ describe('scanMemory (自動メモリの走査)', () => {
 
   it('ルートが存在しなければ空配列', () => {
     expect(
-      scanMemory(projA, { root: path.join(tmp, 'nope'), projects: [projA], mainWorktree: null }),
+      scanMemory(projA, {
+        root: path.join(tmp, 'nope'),
+        projects: [projA],
+        mainWorktree: null,
+        autoMemoryDir: null,
+      }),
     ).toEqual([]);
   });
 });
@@ -243,6 +253,7 @@ describe('scanMemory (worktree から起動したとき)', () => {
       root: wtRoot,
       projects: [worktree],
       mainWorktree: mainProj,
+      autoMemoryDir: null,
     });
     expect(secs).toHaveLength(1);
     expect(secs[0].projectPath).toBe(mainProj);
@@ -269,6 +280,7 @@ describe('scanMemory (worktree から起動したとき)', () => {
       root: wtRoot,
       projects: [mainProj, worktree],
       mainWorktree: mainProj,
+      autoMemoryDir: null,
     });
     // 名前順(aaa-main < zzz-feat)ではなく cwd → メインワークツリーの順に並ぶ
     expect(secs.map((s) => s.projectPath)).toEqual([worktree, mainProj]);
@@ -304,6 +316,7 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
       root: nestRoot,
       projects: [parent, child],
       mainWorktree: null,
+      autoMemoryDir: null,
     });
     const sec = secs.find((s) => s.projectPath === parent)!;
     const item = sec.items.find((x) => x.name === 'x')!;
@@ -328,7 +341,12 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
         path.join(dupA, 'src', 'app.ts') +
         ' を確認\n',
     );
-    const secs = scanMemory(dupB, { root: dupRoot, projects: [dupA, dupB], mainWorktree: null });
+    const secs = scanMemory(dupB, {
+      root: dupRoot,
+      projects: [dupA, dupB],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
     const sec = secs.find((s) => s.id === slug)!;
     expect(sec.projectPath).toBe(dupB); // 後勝ちで dupB に解決される
     const item = sec.items.find((x) => x.name === 'x')!;
@@ -355,6 +373,7 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
       root: orphRoot,
       projects: [parent],
       mainWorktree: null,
+      autoMemoryDir: null,
     });
     const sec = secs.find((s) => s.id === encodeProjectPath(child))!;
     expect(sec.orphan).toBe(true);
@@ -385,7 +404,11 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
         ' を確認\n',
     );
     // mainWorktree を注入しない = mainOf が実際に .git ファイルを読む経路を通す
-    const secs = scanMemory(path.join(tmp, 'wt-work'), { root: wtRoot, projects: [wt] });
+    const secs = scanMemory(path.join(tmp, 'wt-work'), {
+      root: wtRoot,
+      projects: [wt],
+      autoMemoryDir: null,
+    });
     const sec = secs.find((s) => s.id === encodeProjectPath(mainRepo))!;
     expect(sec.orphan).toBe(true);
     const item = sec.items.find((x) => x.name === 'x')!;
@@ -409,7 +432,12 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
         path.join(bc, 'src', 'app.ts') +
         ' を確認\n',
     );
-    const secs = scanMemory(b, { root: sibRoot, projects: [b, bc], mainWorktree: null });
+    const secs = scanMemory(b, {
+      root: sibRoot,
+      projects: [b, bc],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
     const sec = secs.find((s) => s.projectPath === b)!;
     // 候補集合はセクションにも載せる(棚卸しの wrong-project 移動先候補として使い回すため)
     expect(sec.otherProjects).toEqual([bc]);
@@ -440,7 +468,11 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
         path.join(wt, 'src', 'app.ts') +
         ' を確認\n',
     );
-    const secs = scanMemory(path.join(tmp, 'pm-work'), { root: pmRoot, projects: [wt] });
+    const secs = scanMemory(path.join(tmp, 'pm-work'), {
+      root: pmRoot,
+      projects: [wt],
+      autoMemoryDir: null,
+    });
     const sec = secs.find((s) => s.id === encodeProjectPath(sub))!;
     expect(sec.orphan).toBe(true);
     const item = sec.items.find((x) => x.name === 'x')!;
@@ -468,6 +500,7 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
       root: opRoot,
       projects: [elsewhere],
       mainWorktree: null,
+      autoMemoryDir: null,
     });
     const sec = secs.find((s) => s.id === encodeProjectPath(mine))!;
     expect(sec.orphan).toBe(true);
@@ -497,6 +530,7 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
       root: swRoot,
       projects: [app],
       mainWorktree: null,
+      autoMemoryDir: null,
     });
     const sec = secs.find((s) => s.id === encodeProjectPath(appx))!;
     expect(sec.orphan).toBe(true);
@@ -524,6 +558,7 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
       root: revRoot,
       projects: [parent, child],
       mainWorktree: null,
+      autoMemoryDir: null,
     });
     const sec = secs.find((s) => s.projectPath === child)!;
     const item = sec.items.find((x) => x.name === 'x')!;
@@ -571,6 +606,11 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(cwd, { recursive: true, force: true });
   });
+  // temp を共有しているので、書き残した settings が次のテストの前提を崩さないよう毎回消す
+  afterEach(() => {
+    fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true });
+    fs.rmSync(path.join(cwd, '.claude'), { recursive: true, force: true });
+  });
 
   function writeSettings(dir: string, file: string, content: unknown): void {
     fs.mkdirSync(dir, { recursive: true });
@@ -579,44 +619,39 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
       typeof content === 'string' ? content : JSON.stringify(content),
     );
   }
-  function clearSettings(dir: string, file: string): void {
-    fs.rmSync(path.join(dir, file), { force: true });
-  }
 
   it('どのファイルにも設定が無ければ null', () => {
     expect(autoMemoryDirOf(cwd, home)).toBeNull();
   });
 
-  it('user scope(<home>/.claude/settings.json)を読み、~/ は home で展開する', () => {
+  it('user scope(<home>/.claude/settings.json)を読み、~/ は home で展開する。scope は user', () => {
     writeSettings(path.join(home, '.claude'), 'settings.json', {
       autoMemoryDirectory: '~/mem-store',
     });
-    expect(autoMemoryDirOf(cwd, home)).toBe(path.join(home, 'mem-store'));
-    clearSettings(path.join(home, '.claude'), 'settings.json');
+    expect(autoMemoryDirOf(cwd, home)).toEqual({
+      dir: path.join(home, 'mem-store'),
+      scope: 'user',
+    });
   });
 
-  it('現在のプロジェクトの settings.json が user scope より優先される', () => {
+  it('現在のプロジェクトの settings.json が user scope より優先される(scope は project)', () => {
     writeSettings(path.join(home, '.claude'), 'settings.json', {
       autoMemoryDirectory: '/from-user',
     });
     writeSettings(path.join(cwd, '.claude'), 'settings.json', {
       autoMemoryDirectory: '/from-project',
     });
-    expect(autoMemoryDirOf(cwd, home)).toBe('/from-project');
-    clearSettings(path.join(cwd, '.claude'), 'settings.json');
-    clearSettings(path.join(home, '.claude'), 'settings.json');
+    expect(autoMemoryDirOf(cwd, home)).toEqual({ dir: '/from-project', scope: 'project' });
   });
 
-  it('settings.local.json が同プロジェクトの settings.json より優先される', () => {
+  it('settings.local.json が同プロジェクトの settings.json より優先される(scope は local)', () => {
     writeSettings(path.join(cwd, '.claude'), 'settings.json', {
       autoMemoryDirectory: '/from-settings',
     });
     writeSettings(path.join(cwd, '.claude'), 'settings.local.json', {
       autoMemoryDirectory: '/from-local',
     });
-    expect(autoMemoryDirOf(cwd, home)).toBe('/from-local');
-    clearSettings(path.join(cwd, '.claude'), 'settings.local.json');
-    clearSettings(path.join(cwd, '.claude'), 'settings.json');
+    expect(autoMemoryDirOf(cwd, home)).toEqual({ dir: '/from-local', scope: 'local' });
   });
 
   it('不正 JSON はスキップして次の優先度のファイルを試す', () => {
@@ -624,9 +659,7 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
     writeSettings(path.join(home, '.claude'), 'settings.json', {
       autoMemoryDirectory: '/fallback',
     });
-    expect(autoMemoryDirOf(cwd, home)).toBe('/fallback');
-    clearSettings(path.join(cwd, '.claude'), 'settings.local.json');
-    clearSettings(path.join(home, '.claude'), 'settings.json');
+    expect(autoMemoryDirOf(cwd, home)).toEqual({ dir: '/fallback', scope: 'user' });
   });
 
   it('キー欠落もスキップして次の候補を試す', () => {
@@ -634,9 +667,7 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
     writeSettings(path.join(home, '.claude'), 'settings.json', {
       autoMemoryDirectory: '/fallback2',
     });
-    expect(autoMemoryDirOf(cwd, home)).toBe('/fallback2');
-    clearSettings(path.join(cwd, '.claude'), 'settings.json');
-    clearSettings(path.join(home, '.claude'), 'settings.json');
+    expect(autoMemoryDirOf(cwd, home)).toEqual({ dir: '/fallback2', scope: 'user' });
   });
 
   it('相対パスは公式仕様上無効(絶対パスか ~/ のみ有効)', () => {
@@ -644,10 +675,14 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
       autoMemoryDirectory: 'relative/dir',
     });
     expect(autoMemoryDirOf(cwd, home)).toBeNull();
-    clearSettings(path.join(cwd, '.claude'), 'settings.json');
   });
 
-  it('worktree から呼んでもメインワークツリーの設定を見る(worktree 自身の .claude/settings は読まない)', () => {
+  /*
+   * Claude Code の settings は起動ディレクトリ基準なので、worktree から起動したときは
+   * worktree 自身の settings.local.json が実際に効く。cwd 側を最優先にし、
+   * cwd 側に無いときだけメインワークツリー側へ降りる。
+   */
+  describe('worktree から呼んだとき', () => {
     const gitTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-automem-wt-'));
     const main = path.join(gitTmp, 'main');
     const wt = path.join(gitTmp, 'wt');
@@ -657,14 +692,28 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
       path.join(wt, '.git'),
       'gitdir: ' + path.join(main, '.git', 'worktrees', 'wt'),
     );
-    writeSettings(path.join(main, '.claude'), 'settings.json', {
-      autoMemoryDirectory: '/from-main',
+    afterAll(() => fs.rmSync(gitTmp, { recursive: true, force: true }));
+    afterEach(() => {
+      fs.rmSync(path.join(main, '.claude'), { recursive: true, force: true });
+      fs.rmSync(path.join(wt, '.claude'), { recursive: true, force: true });
     });
-    writeSettings(path.join(wt, '.claude'), 'settings.json', {
-      autoMemoryDirectory: '/from-worktree',
+
+    it('cwd(worktree)側の settings.local.json が最優先(取りこぼさない)', () => {
+      writeSettings(path.join(main, '.claude'), 'settings.local.json', {
+        autoMemoryDirectory: '/from-main-local',
+      });
+      writeSettings(path.join(wt, '.claude'), 'settings.local.json', {
+        autoMemoryDirectory: '/from-worktree-local',
+      });
+      expect(autoMemoryDirOf(wt, home)).toEqual({ dir: '/from-worktree-local', scope: 'local' });
     });
-    expect(autoMemoryDirOf(wt, home)).toBe('/from-main');
-    fs.rmSync(gitTmp, { recursive: true, force: true });
+
+    it('cwd 側に無ければメインワークツリー側も見る', () => {
+      writeSettings(path.join(main, '.claude'), 'settings.json', {
+        autoMemoryDirectory: '/from-main',
+      });
+      expect(autoMemoryDirOf(wt, home)).toEqual({ dir: '/from-main', scope: 'project' });
+    });
   });
 });
 
@@ -681,12 +730,12 @@ describe('scanMemory (autoMemoryDirectory: 置き場所を丸ごと差し替え�
       root: path.join(tmp, 'auto-mem-projects-empty'), // 既定の走査先は空(旧 memory dir 無し)
       projects: [proj],
       mainWorktree: null,
-      autoMemoryDir: autoDir,
+      autoMemoryDir: { dir: autoDir, scope: 'project' },
     });
 
     expect(secs).toHaveLength(1);
     const sec = secs[0];
-    expect(sec.id).toBe(encodeProjectPath(autoDir));
+    expect(sec.id).toBe('auto-' + encodeProjectPath(autoDir));
     expect(sec.note).toBe(autoDir);
     expect(sec.projectPath).toBe(proj);
     expect(sec.isCurrent).toBe(true);
@@ -705,7 +754,7 @@ describe('scanMemory (autoMemoryDirectory: 置き場所を丸ごと差し替え�
       root: path.join(tmp, 'auto-mem-projects-empty2'),
       projects: [proj],
       mainWorktree: null,
-      autoMemoryDir: autoDir,
+      autoMemoryDir: { dir: autoDir, scope: 'project' },
     });
     expect(secs).toEqual([]);
   });
@@ -745,7 +794,7 @@ describe('scanMemory (autoMemoryDirectory: 置き場所を丸ごと差し替え�
       root: root2,
       projects: [proj],
       mainWorktree: null,
-      autoMemoryDir: autoDir,
+      autoMemoryDir: { dir: autoDir, scope: 'project' },
     });
     expect(secs.map((s) => s.note).sort()).toEqual([autoDir, legacyDir].sort());
   });
@@ -895,5 +944,266 @@ describe('scanMemory (frontmatter の modified を updatedAt に優先使用)', 
     });
     const item = secs[0].items[0];
     expect(item.updatedAt).toBe(fs.statSync(path.join(dir, 'x.md')).mtimeMs);
+  });
+});
+
+/*
+ * 計画 13 Phase D レビュー対応:
+ *   - autoMemoryDirectory の scope(user = 全プロジェクト共有 / project・local = 現在のプロジェクト)
+ *   - autoDir セクションの id・所在・transcriptSlug・件数上限
+ *   - 読み込み上限の外にある索引行を合算から除く(auto セクション / 混在セクション)
+ *   - MEMORY.md の重複索引行と CRLF のバイト計算
+ */
+describe('scanMemory (autoMemoryDirectory の scope 別の帰属)', () => {
+  function fixture(name: string): { autoDir: string; proj: string; root: string } {
+    const autoDir = path.join(tmp, name + '-store');
+    fs.mkdirSync(autoDir, { recursive: true });
+    write(autoDir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(autoDir, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    const proj = path.join(tmp, name + '-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    return { autoDir, proj, root: path.join(tmp, name + '-projects-empty') };
+  }
+
+  it('user scope は共有ストア: 帰属を主張せず(projectPath null + sharedStore)、orphan にはしない', () => {
+    const { autoDir, proj, root } = fixture('scope-user');
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: { dir: autoDir, scope: 'user' },
+    });
+    expect(sec.projectPath).toBeNull();
+    expect(sec.sharedStore).toBe(true);
+    expect(sec.orphan).toBeUndefined();
+    expect(sec.autoDir).toBe(true);
+    expect(sec.projectName).toBe(path.basename(autoDir));
+    // 帰属が無いので「別の登録プロジェクト」候補も持たない(wrong-project の材料を作らない)
+    expect(sec.otherProjects).toBeUndefined();
+    // 本文側も projectPath null 扱い(相対パスの誤解決を起こさない)
+    expect(sec.items[0].signals).toBeUndefined();
+  });
+
+  it('project scope は現在のプロジェクトへ帰属し、otherProjects を既定と同じ規則で算出する', () => {
+    const { autoDir, proj, root } = fixture('scope-project');
+    const other = path.join(tmp, 'scope-project-other');
+    const child = path.join(proj, 'sub'); // 入れ子は除外される
+    for (const d of [other, child]) fs.mkdirSync(d, { recursive: true });
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj, other, child],
+      mainWorktree: null,
+      autoMemoryDir: { dir: autoDir, scope: 'project' },
+    });
+    expect(sec.projectPath).toBe(proj);
+    expect(sec.sharedStore).toBeUndefined();
+    expect(sec.projectName).toBe('proj');
+    expect(sec.otherProjects).toEqual([other]);
+  });
+
+  it('id は auto- 接頭辞、副題用の note は置き場の実パス、transcriptSlug は現在のプロジェクト', () => {
+    const { autoDir, proj, root } = fixture('scope-id');
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: { dir: autoDir, scope: 'user' },
+    });
+    expect(sec.id).toBe('auto-' + encodeProjectPath(autoDir));
+    expect(sec.note).toBe(autoDir);
+    // 共有ストアでも transcript は現在のプロジェクトのものしか無い
+    expect(sec.transcriptSlug).toBe(encodeProjectPath(proj));
+  });
+
+  it('worktree から起動したら帰属も transcriptSlug もメインワークツリー基準', () => {
+    const { autoDir, root } = fixture('scope-wt');
+    const mainProj = path.join(tmp, 'scope-wt-main');
+    const worktree = path.join(tmp, 'scope-wt-feat');
+    for (const d of [mainProj, worktree]) fs.mkdirSync(d, { recursive: true });
+    const [sec] = scanMemory(worktree, {
+      root,
+      projects: [worktree],
+      mainWorktree: mainProj,
+      autoMemoryDir: { dir: autoDir, scope: 'local' },
+    });
+    expect(sec.projectPath).toBe(mainProj);
+    expect(sec.transcriptSlug).toBe(encodeProjectPath(mainProj));
+  });
+
+  it('既定走査と同じディレクトリを指していたらセクションを重ねない', () => {
+    const proj = path.join(tmp, 'scope-dup-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const root = path.join(tmp, 'scope-dup-projects');
+    const dir = path.join(root, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(dir, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    const secs = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: { dir, scope: 'project' },
+    });
+    expect(secs).toHaveLength(1);
+    expect(secs[0].autoDir).toBeUndefined();
+  });
+
+  it('置き場の走査には件数(500)と 1 ファイル 1MB の上限がある', () => {
+    const autoDir = path.join(tmp, 'scope-limit-store');
+    fs.mkdirSync(autoDir, { recursive: true });
+    for (let i = 0; i < 501; i++) {
+      write(autoDir, `f${String(i).padStart(3, '0')}.md`, `---\nname: f${i}\n---\n本文\n`);
+    }
+    // 1MB 超(readMemoryFile へ行く前に statSync で落とす)。名前は走査順の先頭に来るようにする
+    write(autoDir, 'aaa-huge.md', '---\nname: huge\n---\n' + 'あ'.repeat(400_000));
+    const proj = path.join(tmp, 'scope-limit-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const [sec] = scanMemory(proj, {
+      root: path.join(tmp, 'scope-limit-projects'),
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: { dir: autoDir, scope: 'user' },
+    });
+    // 走査対象は名前順の先頭 500 件(= 巨大 1 件 + f000..f498)。巨大ファイルはそこから落ちる
+    expect(sec.items).toHaveLength(499);
+    expect(sec.items.some((it) => it.name === 'huge')).toBe(false);
+    expect(sec.items.some((it) => it.name === 'f499')).toBe(false);
+  });
+});
+
+describe('scanMemory (読み込み上限外の索引行をセクション合計から除く)', () => {
+  /* 索引行が n 行目に来る MEMORY.md(それ以外はリンクを含まないフィラー) */
+  function indexAt(total: number, links: { line: number; file: string }[]): string {
+    const lines: string[] = [];
+    for (let i = 1; i <= total; i++) {
+      const hit = links.find((l) => l.line === i);
+      lines.push(hit ? `- [${hit.file}](${hit.file}) — メモ` : `filler ${i}`);
+    }
+    return lines.join('\n') + '\n';
+  }
+
+  it('auto セクションでも上限外は合算から除き、件別 indexTokens は残す(混在)', () => {
+    const autoDir = path.join(tmp, 'auto-beyond-store');
+    fs.mkdirSync(autoDir, { recursive: true });
+    write(
+      autoDir,
+      'MEMORY.md',
+      indexAt(201, [
+        { line: 1, file: 'in.md' },
+        { line: 201, file: 'out.md' },
+      ]),
+    );
+    for (const f of ['in.md', 'out.md']) {
+      write(autoDir, f, `---\nname: ${f}\ndescription: メモ\n---\n\n本文\n`);
+    }
+    const proj = path.join(tmp, 'auto-beyond-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const [sec] = scanMemory(proj, {
+      root: path.join(tmp, 'auto-beyond-projects'),
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: { dir: autoDir, scope: 'project' },
+    });
+    const inItem = sec.items.find((it) => it.path.endsWith('in.md'))!;
+    const outItem = sec.items.find((it) => it.path.endsWith('out.md'))!;
+    expect(inItem.indexBeyondLimit).toBeUndefined();
+    expect(outItem.indexBeyondLimit).toBe(true);
+    // 件別の索引 tok は上限外でも保持する(「元々いくらの行か」は事実として出す)
+    expect(outItem.indexTokens).toBeGreaterThan(0);
+    expect(sec.indexTokens).toBe(inItem.indexTokens);
+    expect(sec.indexBeyondCount).toBe(1);
+  });
+});
+
+describe('readIndex (同名の索引行と CRLF)', () => {
+  it('同じファイルの索引行が複数あるときは上限内の行を採る', () => {
+    const proj = path.join(tmp, 'idx-dup-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const root = path.join(tmp, 'idx-dup-projects');
+    const dir = path.join(root, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    const lines: string[] = [];
+    for (let i = 1; i <= 250; i++) {
+      lines.push(
+        i === 1 ? '- [x](x.md) — 短い' : i === 250 ? '- [x](x.md) — 上限外の重複行' : `filler ${i}`,
+      );
+    }
+    write(dir, 'MEMORY.md', lines.join('\n') + '\n');
+    write(dir, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
+    const item = sec.items[0];
+    expect(item.indexBeyondLimit).toBeUndefined();
+    expect(item.indexLine).toBe('- [x](x.md) — 短い');
+    expect(sec.indexTokens).toBe(item.indexTokens);
+  });
+
+  it('CRLF の \\r もバイト数に数える(25KB 判定が \\n だけの計算からずれない)', () => {
+    const proj = path.join(tmp, 'idx-crlf-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const root = path.join(tmp, 'idx-crlf-projects');
+    const dir = path.join(root, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    // LF だけで数えるとちょうど 25KB(= 上限内)、CRLF の \r を数えると 25KB + 2 で上限外になる長さ
+    const linkLine = '- [x](x.md) — メモ';
+    const fillerBytes = 25 * 1024 - (Buffer.byteLength(linkLine, 'utf8') + 1) - 1;
+    const filler = 'x'.repeat(fillerBytes);
+    write(dir, 'MEMORY.md', filler + '\r\n' + linkLine + '\r\n');
+    write(dir, 'x.md', '---\nname: x\ndescription: メモ\n---\n\n本文\n');
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
+    expect(sec.items[0].indexBeyondLimit).toBe(true);
+    expect(sec.indexTokens).toBe(0);
+    // 索引行の文字列に \r は残さない(trim 済み)
+    expect(sec.items[0].indexLine).toBe(linkLine);
+  });
+});
+
+describe('scanMemory (modified の検証強化)', () => {
+  function scanWith(name: string, modified: string) {
+    const proj = path.join(tmp, name + '-work', 'proj');
+    fs.mkdirSync(proj, { recursive: true });
+    const root = path.join(tmp, name + '-projects');
+    const dir = path.join(root, encodeProjectPath(proj), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(dir, 'x.md', `---\nname: x\ndescription: メモ\nmodified: ${modified}\n---\n\n本文\n`);
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
+    return { item: sec.items[0], mtime: fs.statSync(path.join(dir, 'x.md')).mtimeMs };
+  }
+
+  it('日付の形をしていない値(5 / 2026)は採らず mtime にフォールバックする', () => {
+    for (const [name, value] of [
+      ['mod-num', '5'],
+      ['mod-year', '2026'],
+    ] as const) {
+      const { item, mtime } = scanWith(name, value);
+      expect(item.updatedAt).toBe(mtime);
+    }
+  });
+
+  it('未来日(1 日より先)は採らず mtime にフォールバックする', () => {
+    const future = new Date(Date.now() + 7 * 86400000).toISOString();
+    const { item, mtime } = scanWith('mod-future', future);
+    expect(item.updatedAt).toBe(mtime);
+  });
+
+  it('1 日以内の未来(時計ずれの範囲)は採用する', () => {
+    const soon = new Date(Date.now() + 3600_000).toISOString();
+    const { item } = scanWith('mod-soon', soon);
+    expect(item.updatedAt).toBe(Date.parse(soon));
   });
 });

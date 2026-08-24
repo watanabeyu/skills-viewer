@@ -114,7 +114,12 @@ describe('extractSignals (テキスト / fs 層のまとめ)', () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'stale.md'), '---\nname: stale\n---\n`src/gone.ts` はマージ済');
     fs.writeFileSync(path.join(dir, 'fresh.md'), '---\nname: fresh\n---\n方針のみ');
-    const [sec] = scanMemory(proj, { root, projects: [proj], mainWorktree: null });
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
     const stale = sec.items.find((it) => it.name === 'stale')!;
     expect(stale.signals?.map((s) => s.kind)).toEqual(['path-missing', 'done-words']);
     expect(sec.items.find((it) => it.name === 'fresh')!.signals).toBeUndefined();
@@ -264,7 +269,11 @@ describe('otherProjectRefs / other-project (別プロジェクトの配下パス
       path.join(dir, 'a.md'),
       `---\nname: a\n---\n${wt}/apps は自分の worktree、${other}/src は別プロジェクト`,
     );
-    const [sec] = scanMemory(main, { root, projects: [main, wt, other] });
+    const [sec] = scanMemory(main, {
+      root,
+      projects: [main, wt, other],
+      autoMemoryDir: null,
+    });
     expect(sec.items[0].signals).toEqual([{ kind: 'other-project', value: other }]);
   });
 });

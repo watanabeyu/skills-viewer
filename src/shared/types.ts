@@ -130,15 +130,16 @@ export interface MemoryTriage {
    * verdict を keep へ格下げした記録(元の verdict を残す)。誤判定を握り潰さず「要確認」として
    * 観察を続けるためのもので、2 系統ある:
    *   - 機械シグナル(other-project)が無いのに wrong-project と答えた(判断 3)
-   *   - プロジェクト不明(orphan)セクションで置き場所の判定(wrong-project / delete / to-*)を答えた
-   *     (判断 5。逆引き先が無く前提が成立しないため keep / shrink / update しか採用しない)
+   *   - 制限つきセクション(プロジェクト不明 / 共有ストア)で置き場所の判定(wrong-project /
+   *     delete / to-*)を答えた(判断 5。帰属先が決まらず前提が成立しないため
+   *     keep / shrink / update しか採用しない)
    * 型は実際に取り得る値だけに絞る: 格下げ先が keep なので keep は入らず、shrink / update は
    * 鮮度側の行き先でどちらのゲートも通過するため、格下げの記録として現れることがない
    */
   demoted?: Exclude<MemoryVerdict, 'keep' | 'shrink' | 'update'>;
   /*
-   * 格下げの理由。orphan は未マウント・登録抹消といった一時的な環境条件で起こるため、
-   * 条件が解消した(逆引きできるようになった)件を再診断へ乗せ直す判定に使う
+   * 格下げの理由。'orphan' は帰属が決まらない環境条件(未マウント・登録抹消・共有ストア)を指し、
+   * 条件が解消した(帰属が決まった)件を再診断へ乗せ直す判定に使う
    * (no-signal は内容側の理由なので、内容が変わらない限り再診断しない)
    */
   demotedBy?: 'orphan' | 'no-signal';
@@ -252,7 +253,10 @@ export interface SkillItem {
  * (memory は「呼び出す」ものではなく、Section.source に置き場が無いため)。
  */
 export interface MemorySection {
-  /* ~/.claude/projects 配下のエンコード済みディレクトリ名 */
+  /*
+   * ~/.claude/projects 配下のエンコード済みディレクトリ名。
+   * autoMemoryDirectory の置き場は `auto-` + 置き場パスのエンコード名(slug との衝突回避)
+   */
   id: string;
   /* 逆引きできたプロジェクトの実パス。プロジェクト不明(逆引き不可)は null */
   projectPath: string | null;
@@ -262,6 +266,20 @@ export interface MemorySection {
   note: string;
   isCurrent?: boolean;
   orphan?: boolean;
+  /* settings の autoMemoryDirectory が指す置き場のセクション(~/.claude/projects 配下ではない) */
+  autoDir?: true;
+  /*
+   * user scope の autoMemoryDirectory による「全プロジェクト共有の置き場」か。
+   * どのプロジェクトの memory かを特定できないため projectPath は null になり、棚卸しは
+   * orphan と同じ制限(keep / shrink / update のみ)に乗る。逆引き失敗ではないので orphan にはしない
+   */
+  sharedStore?: true;
+  /*
+   * usageAvailable(そのプロジェクトの transcript があるか)の判定に使う slug。
+   * 既定セクションは id 自身が slug なので持たず、autoDir セクションだけが持つ
+   * (置き場のパスと transcript のディレクトリ名は無関係なため)
+   */
+  transcriptSlug?: string;
   usageAvailable: boolean;
   /*
    * items の indexTokens 合計(= このプロジェクトで毎セッション注入される索引の量)。

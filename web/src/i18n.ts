@@ -101,6 +101,9 @@ const en = {
   'memory.secPath': 'Path: {path}',
   'memory.secMemDir': 'memory dir: {path}',
   'memory.orphan': 'unknown project',
+  'memory.sharedStore': 'shared store',
+  'memory.sharedStoreTitle':
+    'This directory is set as autoMemoryDirectory in your user settings, so every project stores its auto memory here. Which project a memory belongs to cannot be determined, so triage is limited to keep / shrink / rewrite.',
   'memory.orphanTitle':
     'No matching project — it may have been deleted, moved or renamed, an external volume may not be mounted, these may be leftovers from a deleted worktree, or the project may have been unregistered (the encoded directory name may not decode back into the original path)',
   'memory.type.user': 'About you',
@@ -115,6 +118,8 @@ const en = {
   'memory.body': 'body',
   'memory.indexTokTitle':
     'Always-on cost: this memory’s line in MEMORY.md, injected into every session (0 = not listed in the index)',
+  'memory.indexTokBeyondTitle':
+    'This line is outside MEMORY.md’s read limit (first 200 lines / 25KB) and is NOT injected into every session, so it costs nothing today',
   'memory.bodyTokTitle': 'Pay-per-use cost: the whole body, charged only when it is Read',
   'memory.readsTitle':
     'Times this memory was Read within the transcript retention window (default 30 days). 0 does not mean it has never been read.',
@@ -254,6 +259,7 @@ const en = {
   'memory.triage.unseen': 'no reads',
   'memory.triage.estApply': 'applied: index {n} tok/session',
   'memory.triage.estApplyClaude': 'applied: index {n} · always-on +{m} tok',
+  'memory.triage.estApplyBeyond': 'applied: index ±0 (it is not injected in the first place)',
   'memory.triage.estShrink': 'applied: index ±0 · proposes shrinking the body',
   'memory.triage.estUpdate': 'applied: index ±0 · proposes rewriting the body',
   'memory.triage.instruction': 'Instruction to paste into Claude Code',
@@ -510,6 +516,9 @@ const ja: Record<MsgKey, string> = {
   'memory.secPath': 'パス: {path}',
   'memory.secMemDir': 'memory ディレクトリ: {path}',
   'memory.orphan': 'プロジェクト不明',
+  'memory.sharedStore': '共有ストア',
+  'memory.sharedStoreTitle':
+    'user scope の settings で autoMemoryDirectory に指定された置き場です。全プロジェクトの自動メモリがここに集まるため、どのプロジェクトの memory かは特定できません(棚卸しは keep / 本文を縮める / 書き直す に限定されます)',
   'memory.orphanTitle':
     '対応するプロジェクトが見つかりません(プロジェクトの削除・移動・リネーム、外部ボリューム未マウント、削除済み worktree の残骸、プロジェクトの登録抹消などが考えられます。エンコードされたディレクトリ名から元のパスを復元できるとは限りません)',
   'memory.type.user': '人物像',
@@ -524,6 +533,8 @@ const ja: Record<MsgKey, string> = {
   'memory.body': '本文',
   'memory.indexTokTitle':
     '常時コスト: このメモリの MEMORY.md 上の索引行。毎セッション注入されます(0 = 索引に載っていない)',
+  'memory.indexTokBeyondTitle':
+    'この索引行は MEMORY.md の読み込み上限(先頭 200 行 / 25KB)の外にあり、毎セッションは注入されていません(現状の常時コストは 0)',
   'memory.bodyTokTitle': '従量コスト: 本文全体。Read されたときだけかかります',
   'memory.readsTitle':
     'トランスクリプト保持期間内(既定30日)にこのメモリが Read された回数。0 でも「一度も読まれていない」ことは意味しません',
@@ -650,6 +661,7 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.unseen': '参照なし',
   'memory.triage.estApply': '適用で 索引 {n} tok/セッション',
   'memory.triage.estApplyClaude': '適用で 索引 {n} · 常時 +{m} tok',
+  'memory.triage.estApplyBeyond': '適用で 索引 ±0(元から注入されていない)',
   'memory.triage.estShrink': '適用で 索引 ±0 · 本文を縮める提案',
   'memory.triage.estUpdate': '適用で 索引 ±0 · 本文を書き直す提案',
   'memory.triage.instruction': 'Claude Code への指示文',

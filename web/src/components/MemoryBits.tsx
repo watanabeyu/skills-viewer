@@ -36,7 +36,11 @@ export function TokFacts({ it, cls, bold }: { it: SkillItem; cls?: string; bold?
   const body = (it.bodyTokens || 0).toLocaleString();
   return (
     <>
-      <span className={cls} title={t('memory.indexTokTitle')}>
+      {/* 上限外の件は数値こそ同じでも「毎セッション注入されていない」ので、チップは増やさず tooltip で言い分ける */}
+      <span
+        className={cls}
+        title={t(it.indexBeyondLimit ? 'memory.indexTokBeyondTitle' : 'memory.indexTokTitle')}
+      >
         {t('memory.idx')} {bold ? <b>{idx}</b> : idx}
       </span>
       <span className={cls} title={t('memory.bodyTokTitle')}>
@@ -53,10 +57,13 @@ export function TokFacts({ it, cls, bold }: { it: SkillItem; cls?: string; bold?
  * memory ディレクトリの実パス(note)を、プロジェクトのパスと誤読されないよう別ラベルで出す。
  */
 export function MemoryPathSub({ sec }: { sec: MemorySection }) {
-  const p = sec.projectPath ?? sec.note;
+  // autoMemoryDirectory の置き場は ~/.claude/projects の外にあるので、プロジェクトへ帰属していても
+  // 所在(memory ディレクトリ)を出す。プロジェクト不明も同じく置き場を出す
+  const showMemDir = !sec.projectPath || !!sec.autoDir;
+  const p = showMemDir ? sec.note : sec.projectPath!;
   return (
     <div className="path-sub" title={p}>
-      {t(sec.projectPath ? 'memory.secPath' : 'memory.secMemDir', { path: p })}
+      {t(showMemDir ? 'memory.secMemDir' : 'memory.secPath', { path: p })}
     </div>
   );
 }
@@ -86,6 +93,12 @@ export function MemoryHeading({
         {sec.orphan && (
           <span className="orphan-badge" title={t('memory.orphanTitle')}>
             {t('memory.orphan')}
+          </span>
+        )}
+        {/* 共有ストア(user scope の autoMemoryDirectory)。帰属が決まらないので棚卸しは orphan と同じ制限になる */}
+        {sec.sharedStore && (
+          <span className="orphan-badge" title={t('memory.sharedStoreTitle')}>
+            {t('memory.sharedStore')}
           </span>
         )}
         <span className="ln" />

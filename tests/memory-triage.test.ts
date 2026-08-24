@@ -534,6 +534,37 @@ describe('triageHash (本文 + 索引行)', () => {
     ).toHaveLength(1);
     expect(selectStale([withIndex], store, 'ja', false)).toHaveLength(0);
   });
+
+  /*
+   * 上限外フラグは本文にも索引行にも現れないが、診断の前提(毎セッション注入されているか)が
+   * 変わるので鍵に混ぜる。上限内は従来の鍵のまま = 既存キャッシュを無効化しない。
+   */
+  it('読み込み上限の外に転落した件だけ hash が変わる(上限内は従来どおり)', () => {
+    const base = memItem('h-bl.md', 'bbb');
+    expect(triageHash(base)).toBe(contentHash(base.path));
+    const beyond = triageHash({ ...base, indexBeyondLimit: true });
+    expect(beyond).toBe(contentHash(base.path) + ':bl');
+    // 索引行つきでも同じ(上限内の鍵に接尾辞が付くだけ)
+    const withIndex = { ...base, indexLine: '- [b](h-bl.md) — 索引' };
+    expect(triageHash({ ...withIndex, indexBeyondLimit: true })).toBe(
+      triageHash(withIndex) + ':bl',
+    );
+    // 上限外へ転落した件は再診断に乗る
+    const store: TriageStore = {
+      [base.path]: {
+        verdict: 'keep',
+        state: 'current',
+        reason: '',
+        issues: [],
+        instruction: '',
+        hash: triageHash(base),
+        lang: 'ja',
+        generatedAt: '',
+      },
+    };
+    expect(selectStale([{ ...base, indexBeyondLimit: true }], store, 'ja', false)).toHaveLength(1);
+    expect(selectStale([base], store, 'ja', false)).toHaveLength(0);
+  });
 });
 
 describe('selectStale (差分 call の対象選定)', () => {
@@ -620,6 +651,32 @@ describe('triageEstimate (削減試算の式)', () => {
     broken.aiTriage = { ...broken.aiTriage!, error: 'invalid-output' };
     expect(triageEstimate(broken)).toBeNull();
     expect(instructionsOf([broken])).toEqual([]);
+  });
+
+  /*
+   * 読み込み上限の外にある索引行は元から注入されていないので、消しても常時コストは減らない。
+   * セクション合計(scanMemory)と同じ規則にしないと「適用後 = 合計 + 差分」が負に振れる。
+   */
+  it('上限外の索引行は削減量に数えない(索引 ±0)', () => {
+    const beyond = (v: MemoryVerdict): SkillItem => ({ ...item(v), indexBeyondLimit: true });
+    expect(triageEstimate(beyond('delete'))).toEqual({ index: 0, always: 0 });
+    expect(triageEstimate(beyond('to-docs'))).toEqual({ index: 0, always: 0 });
+    // to-claude-md は索引が減らないぶん、常時注入の増加だけが残る
+    expect(triageEstimate(beyond('to-claude-md'))).toEqual({ index: 0, always: 600 });
+  });
+
+  it('上限外の件だけのセクションでは、適用後の常時コストが負にならない', () => {
+    const items = [
+      { ...item('delete'), indexBeyondLimit: true } as SkillItem,
+      { ...item('delete'), indexBeyondLimit: true } as SkillItem,
+    ];
+    // セクション合計は上限外を除いた 0 tok。差分も 0 なので適用後も 0
+    const sectionIndexTokens = 0;
+    const diff = items.reduce((sum, it) => {
+      const est = triageEstimate(it);
+      return est ? sum + est.index + est.always : sum;
+    }, 0);
+    expect(sectionIndexTokens + diff).toBe(0);
   });
 });
 
@@ -742,6 +799,7 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
           { kind: 'date', value: '2026-06-01', days: 83 },
           { kind: 'path-missing', value: 'src/old.ts' },
           { kind: 'other-project', value: '/w/other' },
+          { kind: 'index-beyond-limit', value: '201' },
         ],
       }),
       targets[0],
@@ -756,11 +814,17 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(ja).toContain('- ブランチ feat/x はマージ済み');
     // other-project の値はフルパスのままプロンプトに載る(Phase B のゲート条件の前提)
     expect(ja).toContain('- 本文が別の登録プロジェクト「/w/other」配下のパスを指している');
+    expect(ja).toContain(
+      '- この索引行は MEMORY.md の読み込み上限(200 行 / 25KB)の外にあり、毎セッション読まれていない',
+    );
     expect(ja).toContain('signals(機械が拾った鮮度の事実):\n(なし)');
     const en = buildPrompt(withSig, ctx, 'en', extra);
     expect(en).toContain('- latest date in body: 2026-06-01 (83 days ago)');
     expect(en).toContain('- branch feat/x is already merged');
     expect(en).toContain('- the body points at a path under another registered project "/w/other"');
+    expect(en).toContain(
+      "- this index line is outside MEMORY.md's read limit (200 lines / 25KB) and is not read every session",
+    );
     expect(en).toContain('signals (freshness facts collected mechanically):\n(none)');
   });
 
@@ -1799,5 +1863,149 @@ describe('triageProject のプロジェクト不明(orphan)配線', () => {
       fs.readFileSync(path.join(home, '.cache', 'skills-viewer', 'memory-triage.json'), 'utf8'),
     );
     expect(store[file].demotedBy).toBe('orphan');
+  });
+});
+
+/*
+ * 計画 13 Phase D レビュー対応: user scope の autoMemoryDirectory による「共有ストア」。
+ * 全プロジェクトが 1 つの置き場を共有するため帰属を特定できず、棚卸しは orphan と同じ制限に乗る。
+ */
+describe('共有ストア(sharedStore)の制限', () => {
+  const targets = [memItem('sh-a.md', '---\nname: sh-a\n---\n本文')];
+  const baseCtx = {
+    projectName: 'mem-store',
+    index: '',
+    usageAvailable: true,
+    memDir: '/h/mem-store',
+  };
+
+  it('buildPrompt: 共有ストアの理由を ja / en とも書き、逆引き失敗の文面は出さない', () => {
+    const ctx = { ...baseCtx, projectPath: null, orphan: true, sharedStore: true };
+    const ja = buildPrompt(targets, ctx, 'ja');
+    expect(ja).toContain('autoMemoryDirectory(user scope)の設定による全プロジェクト共有');
+    expect(ja).not.toContain('逆引きに失敗している');
+    // 制限そのもの(verdict 3 値・置き場所の判定なし)は orphan と同じ
+    expect(ja).toContain('verdict は keep / shrink / update のみを使うこと');
+    expect(ja).toContain('このセクションの memory ディレクトリ: /h/mem-store');
+    const en = buildPrompt(targets, ctx, 'en');
+    expect(en).toContain('shared by every project (autoMemoryDirectory configured in user scope)');
+    expect(en).not.toContain('failed to resolve back to a registered project');
+    expect(en).toContain('verdict must be one of keep / shrink / update only');
+  });
+
+  it('buildPrompt: sharedStore でない制限(プロジェクト不明)は従来の文面のまま', () => {
+    const ja = buildPrompt(targets, { ...baseCtx, projectPath: null, orphan: true }, 'ja');
+    expect(ja).toContain('逆引きに失敗している');
+    expect(ja).not.toContain('全プロジェクト共有');
+  });
+
+  it('attachMemoryTriage: 共有ストアのセクションにも表示ゲートがかかる', () => {
+    const it0 = memItem('sh-gate.md', 'ggg');
+    const store: TriageStore = {
+      [it0.path]: {
+        verdict: 'delete',
+        state: 'obsolete',
+        reason: 'r',
+        issues: [],
+        instruction: '- 消す',
+        hash: triageHash(it0),
+        lang: 'ja',
+        generatedAt: '',
+      },
+    };
+    const sec: MemorySection = {
+      id: 'auto-h-mem-store',
+      projectPath: null,
+      projectName: 'mem-store',
+      note: '/h/mem-store',
+      autoDir: true,
+      sharedStore: true,
+      usageAvailable: false,
+      indexTokens: 0,
+      items: [it0],
+    };
+    attachMemoryTriage([sec], 'ja', store);
+    expect(it0.aiTriage?.verdict).toBe('keep');
+    expect(it0.aiTriage?.demoted).toBe('delete');
+    expect(it0.aiTriage?.instruction).toBe('');
+  });
+});
+
+/*
+ * 計画 13 Phase D レビュー対応 M4: user scope の autoMemoryDirectory が効いている環境では
+ * 全プロジェクトの memory が 1 つの置き場を共有するので、「別プロジェクトの memory dir へ移す」
+ * という移動先の概念自体が成立しない。共有ストア以外のセクションでも候補を組まない。
+ */
+describe('triageProject の wrong-project 候補(user scope autoMemoryDirectory 環境)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function run(autoMemory: { dir: string; scope: 'user' | 'project' } | null) {
+    const home = fs.mkdtempSync(path.join(tmp, 'wp-home-'));
+    vi.stubEnv('HOME', home);
+    vi.resetModules();
+    const { triageProject } = await import('../src/server/memory-triage');
+    const memDir = fs.mkdtempSync(path.join(tmp, 'wp-mem-'));
+    const file = path.join(memDir, 'wp-note.md');
+    fs.writeFileSync(file, '---\nname: wp-note\n---\n/w/other/src の設定を直した');
+    const item: SkillItem = {
+      name: 'wp-note',
+      description: '',
+      argumentHint: '',
+      version: '',
+      kind: 'memory',
+      path: file,
+      files: [],
+      signals: [{ kind: 'other-project', value: '/w/other' }],
+    };
+    const sec: MemorySection = {
+      id: 'wp-sec',
+      projectPath: '/w/here',
+      projectName: 'here',
+      note: memDir,
+      usageAvailable: false,
+      indexTokens: 0,
+      otherProjects: ['/w/other'],
+      items: [item],
+    };
+    let prompt = '';
+    const results = await triageProject(sec, 'ja', 'haiku', {
+      autoMemory,
+      run: async (p: string) => {
+        prompt = p;
+        return JSON.stringify([
+          {
+            file: 'wp-note.md',
+            state: 'current',
+            verdict: 'wrong-project',
+            index_matches_body: true,
+            reason: '別プロジェクトの話',
+            issues: [],
+            instruction: '- 移す',
+            target: '/w/other',
+          },
+        ]);
+      },
+    });
+    return { prompt, results };
+  }
+
+  it('user scope なら候補を組まず、wrong-project は候補なしとして keep に格下げされる', async () => {
+    const { prompt, results } = await run({ dir: '/h/mem-store', scope: 'user' });
+    expect(prompt).toContain('(候補なし。どの件にも');
+    expect(prompt).not.toContain('- /w/other(該当:');
+    expect(results[0].verdict).toBe('keep');
+    expect(results[0].demoted).toBe('wrong-project');
+    expect(results[0].demotedBy).toBe('no-signal');
+    expect(results[0].target).toBeUndefined();
+  });
+
+  it('project scope(または未設定)なら従来どおり候補を組み、移動先が確定する', async () => {
+    const { prompt, results } = await run({ dir: '/w/here/mem', scope: 'project' });
+    expect(prompt).toContain('- /w/other(該当: wp-note.md)');
+    expect(results[0].verdict).toBe('wrong-project');
+    expect(results[0].target).toBe('/w/other');
   });
 });
