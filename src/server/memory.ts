@@ -209,9 +209,17 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
     //     過剰除外は「シグナルが付かない → keep」の安全側
     const otherProjects = projects.filter((p) => {
       const ps = slugOf.get(p)!;
+      if (ps === d.name) return false; // 自分自身(登録一致はこれに包含)。mainOf(fs)を呼ぶ前に短絡
       const pMain = mainOf(p);
-      if (ps === d.name || (pMain && encodeProjectPath(pMain) === d.name)) return false;
-      if (!projectPath) return !(d.name.startsWith(ps + '-') || ps.startsWith(d.name + '-'));
+      const pms = pMain ? encodeProjectPath(pMain) : ps; // p の実体(worktree ならメイン)の slug
+      if (pms === d.name) return false; // 自リポジトリの worktree(メインの slug が一致)
+      if (!projectPath)
+        return !(
+          d.name.startsWith(ps + '-') ||
+          ps.startsWith(d.name + '-') ||
+          d.name.startsWith(pms + '-') ||
+          pms.startsWith(d.name + '-')
+        );
       if (pMain === projectPath || mainOf(projectPath) === p) return false;
       return !(p.startsWith(projectPath + path.sep) || projectPath.startsWith(p + path.sep));
     });

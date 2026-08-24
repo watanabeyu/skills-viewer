@@ -414,6 +414,64 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
     expect(sig?.value).toBe(bc);
   });
 
+  /* 変異の番犬: orphan で other-project を全滅させる退行(return false)で fail する肯定テスト */
+  it('プロジェクト不明でも、無関係な登録プロジェクトへの参照には other-project が付く(値はフルパス)', () => {
+    const opRoot = path.join(tmp, 'op-projects');
+    const mine = path.join(tmp, 'op-work', 'mine'); // 未登録(このセクションの実体)
+    const elsewhere = path.join(tmp, 'op-work', 'elsewhere'); // 登録済み・無関係
+    fs.mkdirSync(mine, { recursive: true });
+    fs.mkdirSync(elsewhere, { recursive: true });
+    const dir = path.join(opRoot, encodeProjectPath(mine), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(elsewhere, 'src', 'app.ts') +
+        ' を確認\n',
+    );
+    const secs = scanMemory(path.join(tmp, 'op-work'), {
+      root: opRoot,
+      projects: [elsewhere],
+      mainWorktree: null,
+    });
+    const sec = secs.find((s) => s.id === encodeProjectPath(mine))!;
+    expect(sec.orphan).toBe(true);
+    const item = sec.items.find((x) => x.name === 'x')!;
+    const sig = (item.signals || []).find((s) => s.kind === 'other-project');
+    expect(sig?.value).toBe(elsewhere);
+  });
+
+  /* 変異の番犬: slug 前方一致の区切り `-` を落とす過剰除外(…-appx が …-app の配下扱い)で fail する */
+  it('プロジェクト不明の slug 前方一致は区切り付き: 兄弟 …/app(orphan は …/appx)は除外されない', () => {
+    const swRoot = path.join(tmp, 'sw-projects');
+    const appx = path.join(tmp, 'sw-work', 'appx'); // 未登録(このセクションの実体)
+    const app = path.join(tmp, 'sw-work', 'app'); // 登録済みの兄弟(slug は区切り無しなら appx の前方一致)
+    fs.mkdirSync(appx, { recursive: true });
+    fs.mkdirSync(app, { recursive: true });
+    const dir = path.join(swRoot, encodeProjectPath(appx), 'memory');
+    fs.mkdirSync(dir, { recursive: true });
+    write(dir, 'MEMORY.md', '- [x](x.md) — メモ');
+    write(
+      dir,
+      'x.md',
+      '---\nname: x\ndescription: メモ\n---\n\n本文: ' +
+        path.join(app, 'src', 'app.ts') +
+        ' を確認\n',
+    );
+    const secs = scanMemory(path.join(tmp, 'sw-work'), {
+      root: swRoot,
+      projects: [app],
+      mainWorktree: null,
+    });
+    const sec = secs.find((s) => s.id === encodeProjectPath(appx))!;
+    expect(sec.orphan).toBe(true);
+    const item = sec.items.find((x) => x.name === 'x')!;
+    const sig = (item.signals || []).find((s) => s.kind === 'other-project');
+    expect(sig?.value).toBe(app);
+  });
+
   it('入れ子の逆方向: 子プロジェクトの memory が親配下のパスを参照しても other-project は付かない', () => {
     const revRoot = path.join(tmp, 'rev-projects');
     const parent = path.join(tmp, 'rev-work', 'parent');

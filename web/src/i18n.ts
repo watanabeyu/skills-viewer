@@ -226,7 +226,7 @@ const en = {
   'memory.triage.tpl.indexAlign':
     '- The MEMORY.md index line and the body say different things: check which one is right and align them',
   'memory.signal.index-mismatch': 'Index line and body disagree',
-  'memory.signal.other-project': 'Points at another registered project: "{value}"',
+  'memory.signal.other-project': 'Points at a path under another registered project: "{value}"',
   'memory.triage.verdict.error': 'Invalid output — re-run to retry',
   'memory.triage.seen': 'read {n}×',
   'memory.triage.unseen': 'no reads',
