@@ -13,7 +13,7 @@ import { execFile } from 'node:child_process';
 import type { Lang, MemorySection, Section, SkillsData } from '../shared/types';
 import { scanSections, listProjects, HOME } from './scan';
 import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, hasTranscripts } from './usage';
-import { scanMemory } from './memory';
+import { publicMemory, scanMemory } from './memory';
 import {
   loadSummaries,
   contentHash,
@@ -144,20 +144,6 @@ function memorySections(cwd: string): MemorySection[] {
   const memory = scanMemory(cwd);
   attributeMemoryUsage(memory);
   return memory;
-}
-
-/*
- * web へ返す直前に、サーバー内部でしか使わないフィールドを memory セクションから落とす。
- * otherProjects は wrong-project の候補算出(triageProject)専用で web には参照が無く、
- * セクション × 登録プロジェクト数だけ payload を膨らませるだけ。
- * /api/memory-triage は自前で memorySections() を再スキャンするので影響しない。
- */
-export function publicMemory(memory: MemorySection[]): MemorySection[] {
-  return memory.map((sec) => {
-    const out = { ...sec };
-    delete out.otherProjects;
-    return out;
-  });
 }
 
 function collect(cwd: string, lang: Lang): SkillsData {

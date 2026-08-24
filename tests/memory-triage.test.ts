@@ -1196,6 +1196,32 @@ describe('targetMemDirOf (移動先の memory ディレクトリ)', () => {
   const memDir = (project: string) =>
     path.join(os.homedir(), '.claude', 'projects', encodeProjectPath(project), 'memory');
 
+  it('実在する memory dir を算出より優先する(登録パス自身の slug に memory が既にあるならそれが正)', () => {
+    // 擬似 HOME を注入: 親リポジトリ配下のサブディレクトリだが、自身の slug に memory が実在する
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-tmd-home-'));
+    const repo = path.join(tmp, 'tm-own-repo');
+    const sub = path.join(repo, 'frontend');
+    fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+    fs.mkdirSync(sub, { recursive: true });
+    const own = path.join(home, '.claude', 'projects', encodeProjectPath(sub), 'memory');
+    fs.mkdirSync(own, { recursive: true });
+    expect(targetMemDirOf(sub, home)).toBe(own); // repoRootOf(= repo)より実在を優先
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('submodule は親リポジトリに束ねない(.git がリポジトリ境界。自身の slug になる)', () => {
+    const parent = path.join(tmp, 'tm-sm-parent');
+    const sm = path.join(parent, 'vendor', 'sub');
+    fs.mkdirSync(path.join(parent, '.git'), { recursive: true });
+    fs.mkdirSync(sm, { recursive: true });
+    // submodule の .git ファイル(gitdir が .git/modules/... を指す = mainWorktreeOf は null)
+    fs.writeFileSync(
+      path.join(sm, '.git'),
+      'gitdir: ' + path.join(parent, '.git', 'modules', 'sub') + '\n',
+    );
+    expect(targetMemDirOf(sm)).toBe(memDir(sm)); // 親(tm-sm-parent)の slug にならない
+  });
+
   it('worktree はメインワークツリーの slug になる(memory はリポジトリ単位で共有されるため)', () => {
     const main = path.join(tmp, 'tm-repo');
     const wt = path.join(tmp, 'tm-repo-feat');

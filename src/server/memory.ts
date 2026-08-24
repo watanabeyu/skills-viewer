@@ -64,10 +64,28 @@ export function repoRootOf(dir: string): string | null {
   for (;;) {
     const main = mainWorktreeOf(cur);
     if (main) return main;
+    // .git があるのに mainWorktreeOf が null(submodule の gitdir 等)なら、そこも
+    // リポジトリ境界として遡上を止める(submodule は別リポジトリなので、
+    // 親リポジトリの memory に誤って束ねない)
+    if (fs.existsSync(path.join(cur, '.git'))) return cur;
     const parent = path.dirname(cur);
     if (parent === cur) return null; // ファイルシステムのルートまで .git が無かった
     cur = parent;
   }
+}
+
+/*
+ * web へ返す直前に、サーバー内部でしか使わないフィールドを memory セクションから落とす。
+ * otherProjects は wrong-project の候補算出(triageProject)専用で web には参照が無く、
+ * セクション × 登録プロジェクト数だけ payload を膨らませるだけ。
+ * /api/memory-triage は自前で再スキャンするので影響しない。
+ */
+export function publicMemory(memory: MemorySection[]): MemorySection[] {
+  return memory.map((sec) => {
+    const out = { ...sec };
+    delete out.otherProjects;
+    return out;
+  });
 }
 
 const MEMORY_TYPES: MemoryType[] = ['user', 'feedback', 'project', 'reference'];

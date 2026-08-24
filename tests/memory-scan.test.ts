@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { mainWorktreeOf, scanMemory } from '../src/server/memory';
 import { encodeProjectPath } from '../src/server/usage';
 import { estimateTokens } from '../src/server/lint';
-import { publicMemory } from '../src/server/index';
+import { publicMemory } from '../src/server/memory';
 import type { MemorySection } from '../src/shared/types';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-memory-'));

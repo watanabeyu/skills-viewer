@@ -230,14 +230,13 @@ export function candidatesFor(sec: MemorySection, signals: MemorySignal[]): stri
  * 表記は絶対パス。web の事実ヘッダ(sec.note)も一覧の副題も絶対パスなので、
  * コピー文の中でパス表記が `~/` と絶対パスに混在しないように揃える。
  */
-export function targetMemDirOf(project: string): string {
-  return path.join(
-    HOME,
-    '.claude',
-    'projects',
-    encodeProjectPath(repoRootOf(project) ?? project),
-    'memory',
-  );
+export function targetMemDirOf(project: string, home: string = HOME): string {
+  const projectsDir = path.join(home, '.claude', 'projects');
+  // 算出より観測を優先: 登録パス自身の slug に memory が既に実在するなら、それが正
+  // (scanMemory がディレクトリの実在を起点にする設計と揃える。home はテスト注入用)
+  const own = path.join(projectsDir, encodeProjectPath(project), 'memory');
+  if (fs.existsSync(own)) return own;
+  return path.join(projectsDir, encodeProjectPath(repoRootOf(project) ?? project), 'memory');
 }
 
 /* シグナルをプロンプト用の 1 行ずつに(言語別)。無ければ「(なし)」で節を落とさない */
@@ -307,6 +306,8 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
  * 1 件分の事実 + 本文。本文は diagnose.ts と同じく 12,000 字で切る。
  * `## file:` の basename は parseTriage が出力を突き合わせる照合キーなので promptPath を通さない
  * (加工すると返ってきた file 名と一致しなくなり、全件が対象外として捨てられる)。
+ * 既知の限界: 改行入りのファイル名はプロンプト構造を崩し得るが、それにはローカル書き込みが
+ * 必要(= その時点で memory 本文も書ける)ため、target と同様の表示写像化はしていない。
  */
 function itemBlock(
   it: SkillItem,
@@ -395,8 +396,10 @@ export function buildPrompt(
         '- ' +
         promptPath(p) +
         (lang === 'ja' ? '(該当: ' : ' (seen in: ') +
-        // ファイル名もディレクトリ名由来の外部入力なので、候補行が 1 行を超えないよう通す
-        promptPath(hits.join(', ')) +
+        // ファイル名も FS 由来の外部入力。要素ごとに 1 行化し、件数は上限で切る
+        // (結合後にまとめて切るとファイル名が途中で壊れるため)
+        hits.slice(0, 8).map(promptPath).join(', ') +
+        (hits.length > 8 ? ', …' : '') +
         ')',
     )
     .join('\n');
@@ -841,7 +844,8 @@ export function parseTriage(
       const byDisplay = new Map<string, string | null>();
       for (const c of cands) {
         const d = promptPath(c);
-        byDisplay.set(d, byDisplay.has(d) ? null : c);
+        // 表示が同じでも生パスまで同じなら衝突ではない(candidates は重複排除済みだが、公開関数として防御)
+        byDisplay.set(d, byDisplay.has(d) && byDisplay.get(d) !== c ? null : c);
       }
       const answer = typeof e?.target === 'string' ? e.target.trim() : '';
       const target = byDisplay.get(promptPath(answer)) ?? null;
@@ -1062,6 +1066,9 @@ export async function triageProject(
           model,
           generatedAt,
         };
+        // 移動先ディレクトリは保存しない。読み手(attach / 結果組み立て)は常に target から
+        // 都度算出するので、キャッシュに古い移動先を残すと誤参照の余地だけが増える
+        delete store[it.path].targetMemDir;
       }
       // チャンクごとに保存する(後続チャンクが失敗しても済んだ分の call を無駄にしない)
       saveTriage(store);
