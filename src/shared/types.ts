@@ -38,6 +38,12 @@ export type MemoryVerdict =
   | 'keep'
   | 'shrink'
   | 'to-claude-md'
+  /*
+   * user scope の ~/.claude/CLAUDE.md へ。auto memory はリポジトリ単位でしか存在しないため、
+   * プロジェクト横断で効かせたい user / feedback 型の置き場はここしかない(判断 11)。
+   * 全プロジェクトの毎セッションに本文が乗るので、to-claude-md より適用は控えめに倒す
+   */
+  | 'to-user-claude-md'
   | 'to-docs'
   | 'delete'
   | 'wrong-project'

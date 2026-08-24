@@ -232,6 +232,42 @@ describe('parseTriage', () => {
     expect(m.get('a.md')?.verdict).toBe('to-skill');
   });
 
+  it('to-user-claude-md を通す(9 値目)', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        {
+          file: 'a.md',
+          verdict: 'to-user-claude-md',
+          state: 'current',
+          reason: 'プロジェクト横断の作法',
+          issues: [],
+          instruction: '- ~/.claude/CLAUDE.md に追記する',
+        },
+      ]),
+      files,
+    );
+    expect(m.get('a.md')?.verdict).toBe('to-user-claude-md');
+    expect(m.get('a.md')?.instruction).toBe('- ~/.claude/CLAUDE.md に追記する');
+  });
+
+  /* 新 verdict も「指示文が無ければ出力不正」という既存ルールに乗る(例外は wrong-project だけ) */
+  it('to-user-claude-md で指示文が無ければ出力不正にする', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        {
+          file: 'a.md',
+          verdict: 'to-user-claude-md',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: '',
+        },
+      ]),
+      files,
+    );
+    expect(m.get('a.md')?.error).toBe('invalid-output');
+  });
+
   it('instruction の体裁を「- 」箇条書きに正規化する(番号付き・散文)', () => {
     const m = parseTriage(
       JSON.stringify([
@@ -646,6 +682,16 @@ describe('triageEstimate (削減試算の式)', () => {
     expect(triageEstimate(item('to-claude-md'))).toEqual({ index: -20, always: 600 });
   });
 
+  it('to-user-claude-md も to-claude-md と同じ式(増える先が全プロジェクトになるだけ)', () => {
+    expect(triageEstimate(item('to-user-claude-md'))).toEqual({ index: -20, always: 600 });
+  });
+
+  /* 上限外の索引行は元から注入されていないので、新 verdict でも索引は 0 の既存規則に乗る */
+  it('to-user-claude-md でも読み込み上限の外の索引行は減らない(索引 0)', () => {
+    const beyond = { ...item('to-user-claude-md'), indexBeyondLimit: true };
+    expect(triageEstimate(beyond)).toEqual({ index: 0, always: 600 });
+  });
+
   it('keep / shrink / 未診断は数値を出さない', () => {
     expect(triageEstimate(item('keep'))).toBeNull();
     expect(triageEstimate(item('shrink'))).toBeNull();
@@ -730,9 +776,9 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(prompt).toContain('引き継ぎの本文'); // 本文も渡す
   });
 
-  it('ja / en とも索引行の削除に触れ、state の 4 値と verdict の 8 値を出力スキーマで縛る', () => {
+  it('ja / en とも索引行の削除に触れ、state の 4 値と verdict の 9 値を出力スキーマで縛る', () => {
     const schema =
-      '"keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update"';
+      '"keep" | "shrink" | "to-claude-md" | "to-user-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update"';
     const stateSchema = '"current" | "outdated" | "historical" | "obsolete"';
     for (const lang of ['ja', 'en'] as const) {
       const prompt = buildPrompt(targets, ctx, lang);
@@ -740,7 +786,7 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
       expect(prompt).toContain(
         lang === 'ja' ? 'MEMORY.md の索引行の削除' : 'removing the line from MEMORY.md',
       );
-      // 判定指針テーブルの (to-docs) 等ではなく、出力スキーマ行の 8 値を見る
+      // 判定指針テーブルの (to-docs) 等ではなく、出力スキーマ行の 9 値を見る
       expect(prompt).toContain(schema);
       expect(prompt).toContain(stateSchema);
       expect(prompt).toContain('|---|---|'); // 判定指針テーブルが崩れていない
@@ -758,6 +804,48 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     const en = buildPrompt(targets, ctx, 'en');
     expect(en).toContain('  "target": "required for wrong-project only');
     expect(en).toContain('Never use wrong-project without ');
+  });
+
+  /*
+   * 値数のハードコード(スキーマ列挙と「上記 N 値のみ」)は適合表・type × state 表とは別の箇所で、
+   * 直し忘れても文面は自然に読めてしまう。行そのものを固定して番犬にする
+   */
+  it('to-user-claude-md を適合表・type × state 表・出力スキーマ・制約文の 4 箇所に載せる', () => {
+    const ja = buildPrompt(targets, ctx, 'ja');
+    expect(ja).toContain('~/.claude/CLAUDE.md に追記して memory を消す(to-user-claude-md)');
+    expect(ja).toContain('索引 1 行で足りているなら keep のままにする');
+    expect(ja).toContain('**プロジェクト横断**で効かせたいなら to-user-claude-md');
+    expect(ja).toContain('| "to-user-claude-md" |');
+    expect(ja).toContain('verdict は上記 9 値のみ');
+    const en = buildPrompt(targets, ctx, 'en');
+    expect(en).toContain(
+      'append it to ~/.claude/CLAUDE.md and drop the memory (to-user-claude-md)',
+    );
+    expect(en).toContain('stay on keep when the single index line is already enough');
+    expect(en).toContain('to-user-claude-md when it must hold ACROSS projects');
+    expect(en).toContain('| "to-user-claude-md" |');
+    expect(en).toContain('verdict one of the nine values above');
+  });
+
+  /* 指示文の必須要件。コスト警告は to-claude-md より強く「全プロジェクト」と書かせる */
+  it('to-user-claude-md の指示文要件(追記先・重複確認・索引行削除・全プロジェクトのコスト警告)を ja / en とも載せる', () => {
+    const ja = buildPrompt(targets, ctx, 'ja');
+    expect(ja).toContain(
+      '- to-user-claude-md の instruction に必ず含めること: 追記先が ~/.claude/CLAUDE.md',
+    );
+    expect(ja).toContain('既に同じことが書いてないか確認してから追記すること');
+    expect(ja).toContain('「**全プロジェクト**の毎セッションに +(本文 tok) tok」というコスト警告');
+    const en = buildPrompt(targets, ctx, 'en');
+    expect(en).toContain('- For to-user-claude-md, the instruction MUST cover');
+    expect(en).toContain('checking it does not already say the same thing before appending');
+    expect(en).toContain('+(body tok) tokens to EVERY session of EVERY project');
+  });
+
+  /* 制限つきでは採用できない行き先なので、適合表の行も出さない(矛盾する指示を載せない) */
+  it('制限つき(orphan)では to-user-claude-md の適合表の行を出さない', () => {
+    const orphanCtx = { ...ctx, projectPath: null, orphan: true };
+    expect(buildPrompt(targets, orphanCtx, 'ja')).not.toContain('(to-user-claude-md)');
+    expect(buildPrompt(targets, orphanCtx, 'en')).not.toContain('(to-user-claude-md)');
   });
 
   /* パスは外部入力。promptPath を通し忘れると節や箇条書きを偽装した指示を注入できる */
@@ -1585,11 +1673,15 @@ describe('parseTriage のプロジェクト不明(orphan)verdict 制限(判断 5
     expect(m.get('a.md')?.target).toBeUndefined();
   });
 
-  it.each(['to-claude-md', 'to-docs', 'to-skill'] as const)('%s も格下げする', (verdict) => {
-    const m = parseTriage(answer({ verdict }), files, new Map(), new Map(), { orphan: true });
-    expect(m.get('a.md')?.verdict).toBe('keep');
-    expect(m.get('a.md')?.demoted).toBe(verdict);
-  });
+  it.each(['to-claude-md', 'to-user-claude-md', 'to-docs', 'to-skill'] as const)(
+    '%s も格下げする',
+    (verdict) => {
+      const m = parseTriage(answer({ verdict }), files, new Map(), new Map(), { orphan: true });
+      expect(m.get('a.md')?.verdict).toBe('keep');
+      expect(m.get('a.md')?.demoted).toBe(verdict);
+      expect(m.get('a.md')?.demotedBy).toBe('orphan');
+    },
+  );
 
   it.each(['keep', 'shrink', 'update'] as const)('%s はそのまま素通りする', (verdict) => {
     const m = parseTriage(

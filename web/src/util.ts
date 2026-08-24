@@ -255,8 +255,11 @@ export function triageEstimate(it: SkillItem): { index: number; always: number }
   // memory 側は索引が消えるだけ = to-docs と同じ試算になる
   if (v === 'delete' || v === 'to-docs' || v === 'wrong-project' || v === 'to-skill')
     return { index: drop, always: 0 };
-  // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)
-  if (v === 'to-claude-md') return { index: drop, always: it.bodyTokens || 0 };
+  // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)。
+  // user scope の CLAUDE.md 行きも 1 プロジェクト分の会計としては同じ式(増える先が全プロジェクトに
+  // 変わるだけで、この画面が見ているプロジェクトの毎セッション増分は本文 tok)
+  if (v === 'to-claude-md' || v === 'to-user-claude-md')
+    return { index: drop, always: it.bodyTokens || 0 };
   return null;
 }
 

@@ -57,6 +57,7 @@ const VERDICTS: readonly MemoryVerdict[] = [
   'keep',
   'shrink',
   'to-claude-md',
+  'to-user-claude-md',
   'to-docs',
   'delete',
   'wrong-project',
@@ -68,6 +69,8 @@ const STATES: readonly MemoryState[] = ['current', 'outdated', 'historical', 'ob
  * 制限つきセクション(プロジェクト不明 / 共有ストア)で採用できる verdict(判断 5)。置き場所の判定
  * (wrong-project / 重複による delete / to-claude-md・to-docs・to-skill への昇格)は
  * 帰属先のプロジェクトが決まらないと前提が成立しないため、鮮度に関する 3 値だけを許す。
+ * to-user-claude-md は帰属先を問わない行き先なので「制限しなくてよいのでは」という論点はあるが、
+ * 判断 5 の確定仕様(採用は 3 値のみ)を変えずに許可リスト方式のまま格下げ対象に含める。
  */
 const ORPHAN_ALLOWED_VERDICTS: readonly MemoryVerdict[] = ['keep', 'shrink', 'update'];
 /*
@@ -567,6 +570,12 @@ export function buildPrompt(
           'そのパスを "target" にそのまま返す) | wrong-project |\n') +
       '| 内容が特定の skill / command の手順や挙動に対する好み(例: PR 作成前に止まる、ブランチ名の確認) | ' +
       'その skill の SKILL.md に追記して memory を消す(to-skill)。全プロジェクトで効くようになる |\n' +
+      // 制限つきでは to-* への昇格自体を禁じている(restrictedNote)ので、この行き先の説明も載せない
+      (restricted
+        ? ''
+        : '| user / feedback 型で、内容がプロジェクトに依存しない(プロジェクト横断の趣向・作法)かつ' +
+          '全プロジェクトで強制力を持たせたい | ~/.claude/CLAUDE.md に追記して memory を消す(to-user-claude-md)。' +
+          '索引 1 行で足りているなら keep のままにする |\n') +
       '| CLAUDE.md や skill に既に同じことが書いてある | delete |\n' +
       '| 一次情報(wiki / issue / PR / docs)が既に外にあり、memory はその目次コピー | delete(移す先は無い。to-docs にしない) |\n\n' +
       '## 2. state(鮮度)を事実で判定する\n' +
@@ -585,7 +594,8 @@ export function buildPrompt(
       '## 3. verdict は type × state から決める\n' +
       '| type \\ state | current | outdated | historical | obsolete |\n' +
       '|---|---|---|---|---|\n' +
-      '| user / feedback | keep(本文が長ければ shrink。強制力が要るなら to-claude-md) | update | delete(方針の履歴を残す意味は薄い) | delete |\n' +
+      '| user / feedback | keep(本文が長ければ shrink。強制力が要るなら、**単一プロジェクト**でよければ to-claude-md / ' +
+      '**プロジェクト横断**で効かせたいなら to-user-claude-md。置き場所適合表を優先) | update | delete(方針の履歴を残す意味は薄い) | delete |\n' +
       '| project | keep(制約のみ。進捗メモは issue / PR へ = to-docs) | update | to-docs | delete |\n' +
       '| reference | keep(Read あり)/ to-docs(長期 Read 0) | update(参照先の張り替え) | delete | delete |\n\n' +
       '# 注意\n' +
@@ -613,7 +623,7 @@ export function buildPrompt(
       '[{"file": "対象のファイル名(入力の file をそのまま)",\n' +
       '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
       '  "index_matches_body": true | false(索引行の description と本文が同じ境界・段階・内容を言っていれば true、違うことを言っていれば false。全件必須),\n' +
-      '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
+      '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-user-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
       (restricted
         ? ''
         : '  "target": "wrong-project のときのみ必須。移動先候補の一覧から選んだパスをそのまま(他の verdict では省略)",\n') +
@@ -628,7 +638,7 @@ export function buildPrompt(
       '- 対象ファイル(' +
       files +
       ')それぞれについて 1 要素ずつ、過不足なく出すこと\n' +
-      '- state は上記 4 値、verdict は上記 8 値のみ。それ以外の値は使わない。state を省略しない\n' +
+      '- state は上記 4 値、verdict は上記 9 値のみ。それ以外の値は使わない。state を省略しない\n' +
       (restricted
         ? '- verdict は keep / shrink / update のみを使う(それ以外はその件ごと不採用になる)\n'
         : '- wrong-project は signals に「別の登録プロジェクトの配下パス」がある件だけに使い、' +
@@ -645,6 +655,9 @@ export function buildPrompt(
       '- to-skill の instruction に必ず含めること: 追記先の skill / command 名' +
       '(~/.claude/skills/<name>/SKILL.md か .claude/skills/... かの別も書く)/ 追記する 1〜2 行の要旨 / ' +
       'MEMORY.md の該当索引行の削除\n' +
+      '- to-user-claude-md の instruction に必ず含めること: 追記先が ~/.claude/CLAUDE.md であること / ' +
+      '既に同じことが書いてないか確認してから追記すること / MEMORY.md の該当索引行の削除 / ' +
+      '「**全プロジェクト**の毎セッションに +(本文 tok) tok」というコスト警告\n' +
       '- 6 行に収まらない提案は複雑すぎるサインです。より単純な行き先を選ぶこと\n' +
       '- 出力の文章はすべて日本語で書くこと\n\n' +
       '# プロジェクト: ' +
@@ -686,6 +699,12 @@ export function buildPrompt(
     '| a preference about how a specific skill / command behaves (e.g. stop before creating the PR, ' +
     'confirm the branch name) | add it to that skill SKILL.md and drop the memory (to-skill); ' +
     'it then applies in every project |\n' +
+    // 制限つきでは to-* への昇格自体を禁じている(restrictedNote)ので、この行き先の説明も載せない
+    (restricted
+      ? ''
+      : '| type user / feedback whose content does not depend on the project (a cross-project taste or way of ' +
+        'working) AND has to be binding in every project | append it to ~/.claude/CLAUDE.md and drop the memory ' +
+        '(to-user-claude-md); stay on keep when the single index line is already enough |\n') +
     '| CLAUDE.md or a skill already says the same thing | delete |\n' +
     '| the primary source already lives outside (wiki / issue / PR / docs) and the memory is just an index copy | delete — there is nothing to move; do not use to-docs |\n\n' +
     '## 2. Judge the state (freshness) from facts\n' +
@@ -706,7 +725,9 @@ export function buildPrompt(
     '## 3. Derive the verdict from type x state\n' +
     '| type \\ state | current | outdated | historical | obsolete |\n' +
     '|---|---|---|---|---|\n' +
-    '| user / feedback | keep (shrink if the body is long; to-claude-md if it must be binding) | update | delete (history of a policy has little value) | delete |\n' +
+    '| user / feedback | keep (shrink if the body is long; if it must be binding, to-claude-md when ONE project ' +
+    'is enough / to-user-claude-md when it must hold ACROSS projects — the placement fit table wins) | update | ' +
+    'delete (history of a policy has little value) | delete |\n' +
     '| project | keep (constraints only; progress notes go to an issue / PR = to-docs) | update | to-docs | delete |\n' +
     '| reference | keep (has Reads) / to-docs (no Read for a long time) | update (re-point the reference) | delete | delete |\n\n' +
     '# Notes\n' +
@@ -740,7 +761,7 @@ export function buildPrompt(
     '[{"file": "the target file name, exactly as given",\n' +
     '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
     '  "index_matches_body": true | false (true when the description in the index line says the same boundary / stage / content as the body, false when they differ; required for every element),\n' +
-    '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
+    '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-user-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
     (restricted
       ? ''
       : '  "target": "required for wrong-project only: a path copied verbatim from the candidate list (omit for other verdicts)",\n') +
@@ -755,7 +776,7 @@ export function buildPrompt(
     '- Emit exactly one element for each target file (' +
     files +
     '), no more, no less.\n' +
-    '- state must be one of the four values and verdict one of the eight values above; never invent ' +
+    '- state must be one of the four values and verdict one of the nine values above; never invent ' +
     'another value, never omit state.\n' +
     (restricted
       ? '- verdict must be one of keep / shrink / update; anything else makes that element unusable.\n'
@@ -775,6 +796,9 @@ export function buildPrompt(
     '- For to-skill, the instruction MUST cover: the target skill / command name (and whether it is ' +
     '~/.claude/skills/<name>/SKILL.md or .claude/skills/...); the gist of the 1-2 lines to add; ' +
     'removing the matching line from MEMORY.md.\n' +
+    '- For to-user-claude-md, the instruction MUST cover: that the target file is ~/.claude/CLAUDE.md; ' +
+    'checking it does not already say the same thing before appending; removing the matching line from ' +
+    'MEMORY.md; the cost warning that this adds +(body tok) tokens to EVERY session of EVERY project.\n' +
     '- A proposal that does not fit in 6 lines is too complex; pick a simpler destination.\n' +
     '- Write all prose in English.\n\n' +
     '# Project: ' +
@@ -1139,6 +1163,9 @@ export function demotionExpired(
  * stale。未マウント・登録抹消・共有ストアといった環境条件が消えたのに、制限つきの診断結果が
  * 居座り続けないようにする(条件ごとの解消判定は demotionExpired が持つ)。
  * 全件を stale にはしない(安全化と無関係な旧エントリに再診断コストを払わせない)。
+ * 行き先の追加(to-user-claude-md)は stale の条件にしない: keep は安全側の既定で、新しい行き先へ
+ * 上がらないことは機会損失に留まる(force 再診断で拾えばよい)。Phase B の wrong-project 例外は
+ * 「捏造した移動先を出していた」危険な誤判定の是正で、トリガーの性質が違う。
  */
 export function selectStale(
   items: SkillItem[],
