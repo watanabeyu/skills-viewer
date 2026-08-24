@@ -207,12 +207,16 @@ export function MemoryGrid({
     }))
     .filter((s) => s.items.length > 0);
 
-  if (!sections.length)
+  if (!sections.length) {
+    // フィルタ前から 0 件(環境に memory が無い)なら「壊れている」誤解を防ぐため公式仕様を案内する。
+    // 検索・参照フィルタで絞った結果 0 件になっただけなら従来どおり list.empty を出す
+    const envEmpty = !(data.memory || []).some((sec) => sec.items.length > 0);
     return (
       <div className="grid-pad">
-        <div className="empty">{t('list.empty')}</div>
+        <div className="empty">{t(envEmpty ? 'memory.emptyEnv' : 'list.empty')}</div>
       </div>
     );
+  }
 
   return (
     <div className="grid-pad">

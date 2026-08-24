@@ -106,6 +106,9 @@ const en = {
     'This directory is set as autoMemoryDirectory in your user settings, so every project stores its auto memory here. Which project a memory belongs to cannot be determined, so triage is limited to keep / shrink / rewrite.',
   'memory.orphanTitle':
     'No matching project — it may have been deleted, moved or renamed, an external volume may not be mounted, these may be leftovers from a deleted worktree, or the project may have been unregistered (the encoded directory name may not decode back into the original path)',
+  /* 判断12: memory 0件の環境で「壊れている」と誤解されないよう、公式仕様(4点)を案内する。フィルタで0件の場合は list.empty のまま */
+  'memory.emptyEnv':
+    'No auto memory found in this environment. Auto memory is enabled by default, but Claude Code only creates the memory directory the first time it saves something — this may simply mean nothing has been saved yet. It could also be disabled via autoMemoryEnabled: false in settings or the CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 environment variable. Run /memory in a session to check or toggle it.',
   'memory.type.user': 'About you',
   'memory.type.feedback': 'Guidance',
   'memory.type.project': 'Project',
@@ -521,6 +524,8 @@ const ja: Record<MsgKey, string> = {
     'user scope の settings で autoMemoryDirectory に指定された置き場です。全プロジェクトの自動メモリがここに集まるため、どのプロジェクトの memory かは特定できません(棚卸しは keep / 本文を縮める / 書き直す に限定されます)',
   'memory.orphanTitle':
     '対応するプロジェクトが見つかりません(プロジェクトの削除・移動・リネーム、外部ボリューム未マウント、削除済み worktree の残骸、プロジェクトの登録抹消などが考えられます。エンコードされたディレクトリ名から元のパスを復元できるとは限りません)',
+  'memory.emptyEnv':
+    'この環境には auto memory が見つかりません。auto memory は既定で有効ですが、Claude Code が初めて保存するまでディレクトリは作られないため、単にまだ何も保存されていないだけかもしれません。settings の autoMemoryEnabled: false や環境変数 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 で無効化されている可能性もあります。セッション内で /memory コマンドを実行すると確認・切り替えができます',
   'memory.type.user': '人物像',
   'memory.type.feedback': '指示・方針',
   'memory.type.project': '進行状況',
