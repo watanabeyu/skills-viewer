@@ -409,6 +409,8 @@ describe('scanMemory (otherProjects フィルタの安全化)', () => {
     );
     const secs = scanMemory(b, { root: sibRoot, projects: [b, bc], mainWorktree: null });
     const sec = secs.find((s) => s.projectPath === b)!;
+    // 候補集合はセクションにも載せる(棚卸しの wrong-project 移動先候補として使い回すため)
+    expect(sec.otherProjects).toEqual([bc]);
     const item = sec.items.find((x) => x.name === 'x')!;
     const sig = (item.signals || []).find((s) => s.kind === 'other-project');
     expect(sig?.value).toBe(bc);

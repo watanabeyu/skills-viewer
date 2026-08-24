@@ -225,6 +225,22 @@ const en = {
     '- Rewrite the description in the MEMORY.md index line to: "{text}" (it says something different from the body)',
   'memory.triage.tpl.indexAlign':
     '- The MEMORY.md index line and the body say different things: check which one is right and align them',
+  /* wrong-project: the paths are decided by the server (from mechanical signals), only the wording lives here */
+  'memory.triage.tpl.wpMove': '- This memory is about {target}, so move {file} to {dir}',
+  'memory.triage.tpl.wpCheck':
+    '- Before moving, check the destination does not already hold the same content',
+  'memory.triage.tpl.wpIndex':
+    '- Remove the matching line from the MEMORY.md index of this project',
+  'memory.triage.tpl.wpLink': '- Re-point [[link]] references from other memories',
+  /* コピー本文の先頭に置く事実ヘッダ(モデル出力ではなくスキャン結果から機械生成) */
+  'memory.triage.hdr.dir': 'Target: {dir} (project: {project})',
+  'memory.triage.hdr.files': 'Target files: {files}',
+  'memory.triage.hdr.unknownProject': 'unknown',
+  'memory.triage.demoted': 'Needs checking',
+  'memory.triage.demotedTitle':
+    'The model answered "belongs elsewhere", but no mechanical signal (a path under another registered project) backs it, so the destination would have been guesswork. Held at "keep as is" — check which project this memory belongs to yourself.',
+  'memory.triage.skew':
+    'The proposals are concentrated on a single destination. Check first whether the project identification (a mistaken path, or being treated as an unknown project) is wrong',
   'memory.signal.index-mismatch': 'Index line and body disagree',
   'memory.signal.other-project': 'Points at a path under another registered project: "{value}"',
   'memory.triage.verdict.error': 'Invalid output — re-run to retry',
@@ -605,6 +621,18 @@ const ja: Record<MsgKey, string> = {
     '- MEMORY.md の索引行の description を「{text}」に書き換える(本文と異なる境界を言っているため)',
   'memory.triage.tpl.indexAlign':
     '- MEMORY.md の索引行と本文が違うことを言っている。どちらが正しいか確認して揃える',
+  'memory.triage.tpl.wpMove': '- この memory は {target} の話なので、{file} を {dir} へ移す',
+  'memory.triage.tpl.wpCheck': '- 移動先に同じ内容が無いか確認してから移す',
+  'memory.triage.tpl.wpIndex': '- このプロジェクトの MEMORY.md の該当索引行を削除する',
+  'memory.triage.tpl.wpLink': '- 他メモリからの [[link]] を張り替える',
+  'memory.triage.hdr.dir': '対象: {dir}(プロジェクト: {project})',
+  'memory.triage.hdr.files': '対象ファイル: {files}',
+  'memory.triage.hdr.unknownProject': '不明',
+  'memory.triage.demoted': '要確認',
+  'memory.triage.demotedTitle':
+    'AI は「別プロジェクトの話」と答えましたが、機械シグナル(別の登録プロジェクト配下のパス)が無く、移動先が推測になるため「このまま」に留めました。このメモリがどのプロジェクトのものかはご自身で確認してください。',
+  'memory.triage.skew':
+    '提案が 1 種類に偏っています。プロジェクトの特定(パスの取り違え・プロジェクト不明扱い)が誤っている可能性を先に確認してください',
   'memory.signal.index-mismatch': '索引行と本文が食い違っています',
   'memory.signal.other-project': '別の登録プロジェクト「{value}」配下のパスを指しています',
   'memory.triage.verdict.error': '出力不正 — 再診断で再試行',

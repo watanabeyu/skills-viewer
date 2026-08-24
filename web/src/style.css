@@ -1336,6 +1336,13 @@ button {
   font-weight: 700;
   flex: none;
 }
+/* 注意色のバナー(棚卸しの偏り警告)。骨格は chg-banner のまま、色は warnline に合わせる */
+.chg-banner.warn {
+  margin: 0 0 14px;
+  border-color: rgba(200, 72, 48, 0.35);
+  background: rgba(200, 72, 48, 0.07);
+  color: #b0432f;
+}
 .chg-group {
   display: inline-flex;
   align-items: center;

@@ -1,4 +1,12 @@
-import type { FeedbackBodyPlan, Section, SkillGroup, SkillItem, Source } from './api';
+import type {
+  FeedbackBodyPlan,
+  MemorySection,
+  MemoryVerdict,
+  Section,
+  SkillGroup,
+  SkillItem,
+  Source,
+} from './api';
 import { itemKey } from './api';
 import { t } from './i18n';
 
@@ -275,12 +283,32 @@ export function buildFeedbackInstruction(it: SkillItem, plan: FeedbackBodyPlan):
   return lines.join('\n');
 }
 
+/*
+ * wrong-project の指示文もテンプレートで組む。移動先(target / targetMemDir)は機械シグナルを
+ * 根拠に server が確定させた事実で、モデルには候補からの選択しかさせていない。ここでは
+ * 言語文面だけを足す(捏造された移動先が指示文に混ざらないように、散文は使わない)。
+ */
+export function buildWrongProjectInstruction(
+  it: SkillItem,
+  target: string,
+  targetMemDir: string,
+): string {
+  return [
+    t('memory.triage.tpl.wpMove', { file: fileName(it.path), target, dir: targetMemDir }),
+    t('memory.triage.tpl.wpCheck'),
+    t('memory.triage.tpl.wpIndex'),
+    t('memory.triage.tpl.wpLink'),
+  ].join('\n');
+}
+
 /* 表示・コピーに使う指示文。分類(body)があればテンプレート、無ければ AI の散文 */
 export function effectiveInstruction(it: SkillItem): string {
   const tri = it.aiTriage;
   if (!tri || tri.error || tri.verdict === 'keep') return '';
   if (tri.body && (tri.verdict === 'shrink' || tri.verdict === 'update'))
     return buildFeedbackInstruction(it, tri.body);
+  if (tri.verdict === 'wrong-project' && tri.target && tri.targetMemDir)
+    return buildWrongProjectInstruction(it, tri.target, tri.targetMemDir);
   return tri.instruction;
 }
 
@@ -294,13 +322,56 @@ export const instructionsOf = (items: SkillItem[]) =>
  */
 export const withPreamble = (body: string) => t('memory.triage.copyPreamble') + '\n\n' + body;
 
-/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用)。前置きは先頭に 1 回だけ */
-export const joinInstructions = (items: SkillItem[]) =>
-  withPreamble(
-    instructionsOf(items)
-      .map((it) => '## ' + it.name + '\n\n' + effectiveInstruction(it))
-      .join('\n\n'),
+/*
+ * コピー本文の事実ヘッダ。どの memory ディレクトリ・どのプロジェクトの・どのファイルの話かは
+ * スキャン結果から機械生成する(AI に書かせない)。貼り先が対象を取り違えないための土台なので、
+ * まとめコピーにも単件コピーにも同じ形で付ける。
+ */
+export const factHeader = (sec: MemorySection, files: string[]) =>
+  t('memory.triage.hdr.dir', {
+    dir: sec.note,
+    project: sec.projectPath ?? t('memory.triage.hdr.unknownProject'),
+  }) +
+  '\n' +
+  t('memory.triage.hdr.files', { files: files.join(', ') });
+
+/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用)。前置き + 事実ヘッダは先頭に 1 回だけ */
+export const joinInstructions = (sec: MemorySection) => {
+  const items = instructionsOf(sec.items);
+  return withPreamble(
+    factHeader(
+      sec,
+      items.map((it) => fileName(it.path)),
+    ) +
+      '\n\n' +
+      items.map((it) => '## ' + it.name + '\n\n' + effectiveInstruction(it)).join('\n\n'),
   );
+};
+
+/* 単件コピーの本文(前置き + 事実ヘッダ + その 1 件の指示文) */
+export const copyInstruction = (sec: MemorySection, it: SkillItem) =>
+  withPreamble(factHeader(sec, [fileName(it.path)]) + '\n\n' + effectiveInstruction(it));
+
+/*
+ * 提案が 1 種類に偏っているか(非 keep が 5 件以上で、その 8 割以上が同じ行き先)。
+ * v0.8.0 で全件に誤った wrong-project が出た事故のような「プロジェクトの特定ミス」は
+ * 偏りとして現れるため、verdict は上書きせず警告だけを出す材料にする。
+ * 出力不正(error)は行き先を持たないので母数から外す。
+ * 格下げ済み(demoted)は verdict 上は keep だが、モデルの答えとしては偏りの証拠そのものなので
+ * 元の verdict として数える(発端の「全件シグナル無し wrong-project」でもバナーが出るように)。
+ */
+export function skewedVerdict(items: SkillItem[]): MemoryVerdict | null {
+  const verdicts = items
+    .map((it) => it.aiTriage)
+    .filter((tri) => tri && !tri.error)
+    .map((tri) => tri!.demoted ?? tri!.verdict)
+    .filter((v) => v !== 'keep');
+  if (verdicts.length < 5) return null;
+  const counts = new Map<MemoryVerdict, number>();
+  for (const v of verdicts) counts.set(v, (counts.get(v) || 0) + 1);
+  const [top] = [...counts].sort((a, b) => b[1] - a[1]);
+  return top[1] / verdicts.length >= 0.8 ? top[0] : null;
+}
 
 /* memory 一覧(view=memory)へ戻る URL。詳細のタブ状態は持ち越さない(次のカードが本文タブで開くのを防ぐ) */
 export function memoryListSearch(params: URLSearchParams): string {

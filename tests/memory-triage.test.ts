@@ -12,12 +12,15 @@ import {
   normalizeInstruction,
   parseBodyPlan,
   parseTriage,
+  promptPath,
   selectStale,
+  targetMemDirOf,
   triageHash,
   type TriageStore,
   headingLines,
 } from '../src/server/memory-triage';
 import { contentHash } from '../src/server/summary';
+import { encodeProjectPath } from '../src/server/usage';
 import { instructionsOf, triageEstimate } from '../web/src/util';
 import type {
   MemorySection,
@@ -976,5 +979,178 @@ describe('collectTriageContext の上限ガード', () => {
     );
     const { rules } = collectTriageContext(sec, [], { home });
     expect(rules.split('\n')).toHaveLength(80);
+  });
+});
+
+/*
+ * 計画 13 Phase B: wrong-project の安全化。
+ * 「サーバー確定事実はモデルに書かせない」ため、移動先は機械シグナル(other-project)を根拠に
+ * 候補からの選択だけを受け取り、シグナルが無い件は keep へ格下げして観察を続ける。
+ */
+describe('parseTriage の wrong-project ゲート(判断 2 / 3)', () => {
+  const files = ['a.md'];
+  const wp = (over: Record<string, unknown> = {}) =>
+    JSON.stringify([
+      {
+        file: 'a.md',
+        state: 'current',
+        verdict: 'wrong-project',
+        reason: '別プロジェクトの話',
+        issues: ['/w/other 配下のパス'],
+        instruction: '- 別プロジェクトへ移す',
+        ...over,
+      },
+    ]);
+
+  it('other-project シグナルが無い件は keep へ格下げし、demoted に元の verdict を残す', () => {
+    const m = parseTriage(wp({ target: '/w/other' }), files); // 候補マップを渡さない = シグナル無し
+    expect(m.get('a.md')).toEqual({
+      verdict: 'keep',
+      state: 'current',
+      reason: '別プロジェクトの話',
+      issues: ['/w/other 配下のパス'],
+      // 捏造された移動先を含みうるので指示文は捨てる(貼れるものを出さない)
+      instruction: '',
+      demoted: 'wrong-project',
+    });
+  });
+
+  it('候補があれば target を採用し、移動先の memory ディレクトリを server が組む', () => {
+    const m = parseTriage(
+      wp({ target: '/w/other' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]),
+    );
+    const r = m.get('a.md')!;
+    expect(r.verdict).toBe('wrong-project');
+    expect(r.target).toBe('/w/other');
+    expect(r.targetMemDir).toBe('~/.claude/projects/-w-other/memory/');
+    expect(r.demoted).toBeUndefined();
+  });
+
+  it('移動先が確定していれば instruction が空でも採用する(指示文は web がテンプレートで組む)', () => {
+    const m = parseTriage(
+      wp({ target: '/w/other', instruction: '' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]),
+    );
+    expect(m.get('a.md')?.verdict).toBe('wrong-project');
+    expect(m.get('a.md')?.error).toBeUndefined();
+  });
+
+  it('target が候補外・欠落なら出力不正(誤った移動先を出すより欠けるほうが安全)', () => {
+    const cands = new Map([['a.md', ['/w/other']]]);
+    expect(
+      parseTriage(wp({ target: '/w/guess' }), files, new Map(), cands).get('a.md')?.error,
+    ).toBe('invalid-output');
+    expect(parseTriage(wp(), files, new Map(), cands).get('a.md')?.error).toBe('invalid-output');
+  });
+
+  it('wrong-project 以外の verdict は候補の有無に関係なく従来どおり', () => {
+    const m = parseTriage(
+      wp({ verdict: 'delete', target: '/w/guess' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]),
+    );
+    expect(m.get('a.md')?.verdict).toBe('delete');
+    expect(m.get('a.md')?.target).toBeUndefined(); // 移動先を持つのは wrong-project だけ
+  });
+});
+
+describe('targetMemDirOf (移動先の memory ディレクトリ)', () => {
+  it('worktree はメインワークツリーの slug になる(memory はリポジトリ単位で共有されるため)', () => {
+    const main = path.join(tmp, 'tm-repo');
+    const wt = path.join(tmp, 'tm-repo-feat');
+    fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+    fs.mkdirSync(wt, { recursive: true });
+    fs.writeFileSync(
+      path.join(wt, '.git'),
+      'gitdir: ' + path.join(main, '.git', 'worktrees', 'feat') + '\n',
+    );
+    const expected = '~/.claude/projects/' + encodeProjectPath(main) + '/memory/';
+    expect(targetMemDirOf(wt)).toBe(expected);
+    expect(targetMemDirOf(main)).toBe(expected); // メイン自身も同じ
+  });
+
+  it('git 管理下でないパスはそのパス自身の slug', () => {
+    const plain = path.join(tmp, 'tm-plain');
+    fs.mkdirSync(plain, { recursive: true });
+    expect(targetMemDirOf(plain)).toBe(
+      '~/.claude/projects/' + encodeProjectPath(plain) + '/memory/',
+    );
+  });
+});
+
+describe('promptPath (プロンプトに埋めるパスの無害化)', () => {
+  it('改行を落として 1 行にし、長さも切る(節や箇条書きの偽装を防ぐ)', () => {
+    expect(promptPath('/w/a\n- 偽の指示\r\n/w/b')).toBe('/w/a - 偽の指示 /w/b');
+    expect(promptPath('/w/' + 'x'.repeat(300))).toHaveLength(200);
+  });
+});
+
+describe('buildPrompt の移動先候補(wrong-project は候補からの選択にする)', () => {
+  const ctx = { projectName: 'alpha', index: '', usageAvailable: true };
+  const withSig = memItem('c-sig.md', '---\nname: sig\n---\n本文', {
+    signals: [{ kind: 'other-project', value: '/w/other' }],
+  });
+  const plain = memItem('c-plain.md', '---\nname: plain\n---\n本文');
+
+  it('シグナルのあるパスを「どの件で出たか」と一緒に列挙し、target を出力スキーマに足す', () => {
+    for (const lang of ['ja', 'en'] as const) {
+      const prompt = buildPrompt([withSig, plain], ctx, lang);
+      expect(prompt).toContain(
+        '- /w/other' + (lang === 'ja' ? '(該当: ' : ' (seen in: ') + 'c-sig.md)',
+      );
+      expect(prompt).toContain('"target"');
+    }
+  });
+
+  it('候補が 1 件も無ければ「wrong-project は選べない」と明示する(節ごと落とさない)', () => {
+    expect(buildPrompt([plain], ctx, 'ja')).toContain('wrong-project は選べない');
+    expect(buildPrompt([plain], ctx, 'en')).toContain('wrong-project cannot be chosen');
+  });
+
+  it('候補は呼び出し側の絞り込み(登録プロジェクト)を通す', () => {
+    const prompt = buildPrompt([withSig], ctx, 'ja', undefined, () => []);
+    expect(prompt).not.toContain('- /w/other(該当:');
+    expect(prompt).toContain('候補なし');
+  });
+});
+
+describe('selectStale: ゲート導入前の wrong-project キャッシュ', () => {
+  const entry = (over: Partial<TriageStore[string]> = {}): TriageStore[string] => ({
+    verdict: 'wrong-project',
+    state: 'current',
+    reason: '',
+    issues: [],
+    instruction: '- 移す',
+    hash: null,
+    lang: 'ja',
+    generatedAt: '',
+    ...over,
+  });
+
+  it('target も demoted も無い wrong-project は hash が一致しても再診断に乗せる', () => {
+    const a = memItem('ws-old.md', 'aaa');
+    const store: TriageStore = { [a.path]: entry({ hash: contentHash(a.path) }) };
+    expect(selectStale([a], store, 'ja', false)).toHaveLength(1);
+  });
+
+  it('ゲートを通った wrong-project(target あり)と格下げ済み(demoted)は stale にしない', () => {
+    const a = memItem('ws-new.md', 'aaa');
+    const b = memItem('ws-demoted.md', 'bbb');
+    const store: TriageStore = {
+      [a.path]: entry({ hash: contentHash(a.path), target: '/w/other' }),
+      [b.path]: entry({
+        hash: contentHash(b.path),
+        verdict: 'keep',
+        instruction: '',
+        demoted: 'wrong-project',
+      }),
+    };
+    expect(selectStale([a, b], store, 'ja', false)).toHaveLength(0);
   });
 });

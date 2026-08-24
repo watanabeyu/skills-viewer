@@ -10,6 +10,7 @@ import {
   type SkillsData,
 } from '../api';
 import {
+  copyInstruction,
   copyText,
   effectiveInstruction,
   fileName,
@@ -17,8 +18,8 @@ import {
   joinInstructions,
   memoryListSearch,
   memoryResolver,
+  skewedVerdict,
   triageEstimate,
-  withPreamble,
 } from '../util';
 import { memoryVerdictLabel, t } from '../i18n';
 import { splitFrontmatter } from '../md';
@@ -95,10 +96,23 @@ export function VerdictBadge({ tri }: { tri: MemoryTriage }) {
 }
 
 /*
+ * 機械シグナルが無い wrong-project を keep へ格下げした件の注記。
+ * 提案としては出さないが、握り潰さず「自分で確認して」と伝えるため verdict バッジの隣に置く。
+ */
+export function DemotedNote({ tri }: { tri: MemoryTriage }) {
+  if (!tri.demoted) return null;
+  return (
+    <span className="issue warn" title={t('memory.triage.demotedTitle')}>
+      ⚠ {t('memory.triage.demoted')}
+    </span>
+  );
+}
+
+/*
  * 診断結果の本体(棚卸し行 / 詳細ブロックで共用)。理由 → issues → 指示文。
  * 指示文は折りたたまず全文を出す(貼るかどうかの判断がここで完結するように)。
  */
-function TriageResult({ it }: { it: SkillItem }) {
+function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
   const tri = it.aiTriage;
   // 出力不正の件は理由・根拠・指示文・試算のいずれも信用できないので何も出さない
   if (!tri || tri.error) return null;
@@ -135,7 +149,8 @@ function TriageResult({ it }: { it: SkillItem }) {
           <div className="instr-h">
             <span className="instr-t">{t('memory.triage.instruction')}</span>
             <span className="instr-d">{estimateLabel(it)}</span>
-            <CopyButton className="copybtn" text={withPreamble(instruction)} />
+            {/* コピー本文は前置き + 事実ヘッダ(対象ディレクトリ・プロジェクト・ファイル)付き */}
+            <CopyButton className="copybtn" text={copyInstruction(sec, it)} />
           </div>
           <div className="instr-body">{instruction}</div>
         </div>
@@ -158,8 +173,9 @@ export function MemoryTriageBox({ it, sec }: { it: SkillItem; sec: MemorySection
     <div className="diag-box triage-box">
       <div className="nmline">
         <VerdictBadge tri={tri} />
+        <DemotedNote tri={tri} />
       </div>
-      <TriageResult it={it} />
+      <TriageResult it={it} sec={sec} />
       <button
         className="triage-whole"
         onClick={() =>
@@ -293,6 +309,8 @@ export function MemoryTriageView({
 
   const untriagedCount = sec.items.filter((it) => !it.aiTriage).length;
   const proposals = instructionsOf(sec.items);
+  // 提案が 1 種類に偏っているときは、行き先より先に「プロジェクトの特定」を疑ってもらう
+  const skew = skewedVerdict(sec.items);
   // 出力不正は verdict keep / 指示文なしで入っているので、現状維持の件数から除いて別に数える
   const errorCount = sec.items.filter((it) => it.aiTriage?.error).length;
   const keepCount = sec.items.length - untriagedCount - proposals.length - errorCount;
@@ -354,6 +372,13 @@ export function MemoryTriageView({
                 e: errorCount,
               })}
         </div>
+        {/* 偏り警告。verdict は上書きせず、確認の順序(まずプロジェクトの特定)だけを促す */}
+        {skew && !busy && (
+          <div className="chg-banner warn">
+            <span className="chg-title">⚠ {memoryVerdictLabel(skew)}</span>
+            <span>{t('memory.triage.skew')}</span>
+          </div>
+        )}
         {/* 入口の「✦ 棚卸し診断」は遷移だけで AI は走らない。未診断・診断中は行の上で状態を明示する */}
         {busy ? (
           <div className="triage-cta busy">
@@ -410,6 +435,7 @@ export function MemoryTriageView({
                 <MemoryTypeBadge it={it} />
                 {/* 未診断の行は verdict 無しで事実だけを出す */}
                 {it.aiTriage && <VerdictBadge tri={it.aiTriage} />}
+                {it.aiTriage && <DemotedNote tri={it.aiTriage} />}
                 <span className="toks">
                   <TokFacts it={it} bold />
                   {/* 参照回数はトランスクリプトが無いプロジェクトでは判定不能なので出さない */}
@@ -422,7 +448,7 @@ export function MemoryTriageView({
                   )}
                 </span>
               </div>
-              <TriageResult it={it} />
+              <TriageResult it={it} sec={sec} />
             </div>
           ))}
         </div>
@@ -451,7 +477,7 @@ export function MemoryTriageView({
             <span className="note">{t('memory.triage.footNote')}</span>
             <CopyButton
               className="apply"
-              text={joinInstructions(sec.items)}
+              text={joinInstructions(sec)}
               label={t('memory.triage.copyAll', { n: proposals.length })}
             />
           </div>

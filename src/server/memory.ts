@@ -247,6 +247,8 @@ export function scanMemory(cwd: string, opts: MemoryScanOptions = {}): MemorySec
       ...(projectPath ? {} : { orphan: true }),
       usageAvailable: false, // 実測は Phase B で算出する
       indexTokens: items.reduce((sum, it) => sum + (it.indexTokens || 0), 0),
+      // 棚卸し診断(wrong-project の移動先候補)でも同じ集合が要るので、計算元からそのまま運ぶ
+      ...(otherProjects.length ? { otherProjects } : {}),
       items,
     });
   }

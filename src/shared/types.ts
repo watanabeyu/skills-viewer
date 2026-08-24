@@ -110,6 +110,18 @@ export interface MemoryTriage {
   body?: FeedbackBodyPlan;
   /* 索引行(description)と本文が同じことを言っているか(全件で AI に答えさせる。欠落は undefined) */
   indexMatchesBody?: boolean;
+  /*
+   * wrong-project の移動先プロジェクトのフルパス。AI には候補(other-project シグナルの値)からの
+   * 「選択」だけをさせ、パスの文字列自体は書かせない(捏造した移動先を出させないため)
+   */
+  target?: string;
+  /* target の memory ディレクトリ(~/.claude/projects/<slug>/memory/)。slug はメインワークツリー基準で server が算出 */
+  targetMemDir?: string;
+  /*
+   * 機械シグナル(other-project)が無いのに wrong-project と答えたので keep へ格下げした記録。
+   * 誤判定を握り潰さず「要確認」として観察を続けるため、元の verdict を残す
+   */
+  demoted?: 'wrong-project';
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
 }
@@ -231,6 +243,12 @@ export interface MemorySection {
   usageAvailable: boolean;
   /* items の indexTokens 合計(= このプロジェクトで毎セッション注入される索引の量) */
   indexTokens: number;
+  /*
+   * other-project シグナルの判定に使った「別の登録プロジェクト」候補(フルパス)。
+   * wrong-project の移動先を AI に選ばせるときの候補集合でもあるので、計算元(scanMemory)から
+   * そのまま運ぶ(同じ除外規則を 2 箇所で書かない)。候補が無ければ省略
+   */
+  otherProjects?: string[];
   items: SkillItem[];
 }
 
