@@ -145,7 +145,7 @@ function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
         <div className="issues">
           {/* 同じ文言が 2 件返り得るので key は index(並びは AI 出力のまま固定) */}
           {/* 格下げ件の issues は採用しなかった行き先の根拠なので、機械が裏付けた事実チップと
-              同じ見た目にしない(淡色 + 未検証であることを title で補う) */}
+              同じ見た目にしない(左アクセントで区別し、未検証であることを title で補う) */}
           {tri.issues.map((issue, i) => (
             <span
               className={tri.demoted ? 'issue demoted' : 'issue'}
