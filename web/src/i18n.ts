@@ -283,7 +283,7 @@ const en = {
     'Copied instructions start with a "check first, then execute" preamble and include the destination path, removing the MEMORY.md index line and rewriting [[link]]s. To do only part of it, say so in the conversation you paste into.',
   'memory.triage.preambleLabel': 'Preamble for pasting (the copy buttons add it automatically)',
   'memory.triage.copyPreamble':
-    'The following is a proposal from the skills-viewer memory triage. First inspect the current state read-only and present the exact work you would do. Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. Execute only after I approve.',
+    'The following is a proposal from the skills-viewer memory triage. First check that your working directory matches the project in the header below — if it does not (e.g. this session was started from the home directory), say so and confirm with me before continuing, because relative paths (especially under .claude/) would resolve against the wrong place. Then inspect the current state read-only and present the exact work you would do. Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. Execute only after I approve.',
   'memory.triage.whole': 'Triage the whole project →',
   'memory.triage.menu': 'Memory triage (current project)',
   'memory.triage.menuTitle':
@@ -691,7 +691,7 @@ const ja: Record<MsgKey, string> = {
     'コピーした指示文には「まず確認してから実行」の前置きが付き、移動先パス・MEMORY.md の索引行の削除・[[link]] の張り替えまで含まれます。一部だけやりたいときは、貼った先の会話でそう伝えてください。',
   'memory.triage.preambleLabel': '貼るときの前置き(コピーボタンでは自動で付きます)',
   'memory.triage.copyPreamble':
-    '以下は skills-viewer の memory 棚卸し診断からの提案です。まず読み取りだけで現状を確認し、実行する作業内容を提示してください。判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認してください。実行は承認を得てからにしてください。',
+    '以下は skills-viewer の memory 棚卸し診断からの提案です。最初に、このセッションの作業ディレクトリが下のヘッダのプロジェクトと一致するか確認してください。一致しない場合(ホームディレクトリから起動したセッション等)は、相対パス(特に .claude/ 配下)の解決を誤るため、その旨を指摘して続行の可否を私に確認してください。次に読み取りだけで現状を確認し、実行する作業内容を提示してください。判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認してください。実行は承認を得てからにしてください。',
   'memory.triage.whole': 'プロジェクト全体を棚卸し →',
   'memory.triage.menu': 'memory 棚卸し(現在のプロジェクト)',
   'memory.triage.menuTitle':
