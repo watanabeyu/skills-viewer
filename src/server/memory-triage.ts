@@ -799,7 +799,7 @@ export function buildPrompt(
       ? '- verdict must be one of keep / shrink / update; anything else makes that element unusable.\n'
       : '- Use wrong-project only for a memory whose own signals show a path under another registered project, ' +
         'and put that path into "target" exactly as listed in the candidates. Never use wrong-project without ' +
-        'that signal (never guess a destination); a missing or unlisted "target" makes the whole element unusable.\n') +
+        'that signal (never guess a destination); an unlisted or missing "target" means the wrong-project verdict is dropped for that memory.\n') +
     '- For update, the instruction says concretely which statements change to what (dates, paths, steps, ' +
     'the type tag). The index line stays, but if the description is stale, also say to rewrite the MEMORY.md line.\n' +
     '- instruction is a bullet list of 3 to 6 lines, every line starting with "- ", one point per line, ' +

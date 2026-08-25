@@ -17,7 +17,7 @@ import {
   TokFacts,
   UnreadBadge,
   readsLine,
-  readsTitle,
+  usageTitle,
 } from './MemoryBits';
 
 /* 比較バーの最大幅(モック実測)。最大値のバーをこの幅にして他を比例させる */
@@ -90,7 +90,7 @@ function CostBar({
           <span className="u"> {unit}</span>
         </span>
         {/* 参照件数も transcript 由来なので、共有ストアでは全プロジェクト合算であることを添える */}
-        <span className="note" title={readsTitle(sec)}>
+        <span className="note" title={usageTitle(sec)}>
           {sec.usageAvailable
             ? t('memory.cost.bodyNote', { k: readCount, n })
             : t('memory.cost.bodyNoteNA')}
@@ -167,7 +167,7 @@ function MemoryCard({
         <UnreadBadge show={sec.usageAvailable && !it.useCount} />
       </div>
       <p className="desc">{it.description}</p>
-      <div className="usage" title={readsTitle(sec)}>
+      <div className="usage" title={usageTitle(sec)}>
         {readsLine(it, sec.usageAvailable)}
       </div>
       <div className="meta">

@@ -804,6 +804,7 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     const en = buildPrompt(targets, ctx, 'en');
     expect(en).toContain('  "target": "required for wrong-project only');
     expect(en).toContain('Never use wrong-project without ');
+    expect(en).toContain('the wrong-project verdict is dropped for that memory');
   });
 
   /*

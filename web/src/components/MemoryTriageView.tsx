@@ -27,7 +27,7 @@ import {
 import { memoryVerdictLabel, t } from '../i18n';
 import { splitFrontmatter } from '../md';
 import { KindBadge } from './GridView';
-import { MemoryPathSub, MemoryTypeBadge, TokFacts, readsTitle } from './MemoryBits';
+import { MemoryPathSub, MemoryTypeBadge, TokFacts, usageTitle } from './MemoryBits';
 import { renderMemoryBody } from './MemoryDetail';
 
 /*
@@ -107,7 +107,8 @@ function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
   const instruction = effectiveInstruction(it);
   // 行き先に関わらず必ず見せる事実(置き場所の誤り・索引と本文の食い違い)。verdict が keep でも消えない。
   // 型述語で kind を絞るのは i18n キー(memory.signal.<kind>)を型で結び付けるため。
-  // 文言を消す / kind を増やすと typecheck が落ちる(server の signalLines の assertNever と同じ狙い)
+  // 文言を消す / この一覧へ kind を足して文言を書き忘れると typecheck が落ちる。
+  // MemorySignalKind への追加自体は web では検出できない(警告に出したい kind はここへ手で足す)
   const warns = [...(it.signals || []), ...(tri.signals || [])].filter(
     (s): s is MemorySignal & { kind: WarnSignalKind } =>
       s.kind === 'other-project' || s.kind === 'index-mismatch',
@@ -442,7 +443,7 @@ export function MemoryTriageView({
                   <TokFacts it={it} bold />
                   {/* 参照回数はトランスクリプトが無いプロジェクトでは判定不能なので出さない */}
                   {sec.usageAvailable && (
-                    <span title={readsTitle(sec, t('memory.readsTitle'))}>
+                    <span title={usageTitle(sec, t('memory.readsTitle'))}>
                       {it.useCount
                         ? t('memory.triage.seen', { n: it.useCount })
                         : t('memory.triage.unseen')}

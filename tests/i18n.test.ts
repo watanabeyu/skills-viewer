@@ -78,3 +78,28 @@ describe('headingOf / scopeLabelOf (構造化 Section から見出しを組み�
     expect(scopeLabelOf(user)).toBe('user');
   });
 });
+
+/*
+ * usageTitle(共有ストアの合算注記)。表示ヘルパだが純関数なのでここで固定する
+ * (関数を消す・注記を落とす退行で 742 テストが緑のままだった穴を塞ぐ番犬)
+ */
+import { usageTitle } from '../web/src/components/MemoryBits';
+import type { MemorySection } from '../src/shared/types';
+
+describe('usageTitle (共有ストアの合算注記)', () => {
+  const sec = () => ({ items: [] }) as unknown as MemorySection;
+  it('共有ストアなら base に合算注記を連結する(2 行)', () => {
+    const title = usageTitle({ sharedStore: true } as unknown as MemorySection, 'base');
+    expect(title!.split('\n')[0]).toBe('base');
+    expect(title).toContain(t('memory.usage.sharedTitle'));
+  });
+  it('共有ストアで base 無しなら注記だけを返す', () => {
+    expect(usageTitle({ sharedStore: true } as unknown as MemorySection)).toBe(
+      t('memory.usage.sharedTitle'),
+    );
+  });
+  it('共有ストアでなければ base をそのまま / base も無ければ undefined(title="" を吐かない)', () => {
+    expect(usageTitle(sec(), 'base')).toBe('base');
+    expect(usageTitle(sec())).toBeUndefined();
+  });
+});
