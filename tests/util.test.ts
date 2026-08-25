@@ -273,8 +273,15 @@ describe('joinInstructions / withPreamble (まとめコピーの本文)', () => 
 
   it('各件は「## name」見出しで区切る', () => {
     const text = joinInstructions(sec);
-    expect(text).toContain('## alpha\n\n- alpha を消す');
-    expect(text).toContain('## gamma\n\n- gamma を docs/ へ');
+    // 指示文の先頭には機械生成のフルパスアンカーが付く(手選択コピー対策)
+    expect(text).toContain(
+      '## alpha\n\n' + t('memory.triage.tpl.target', { path: '/m/alpha.md' }) + '\n- alpha を消す',
+    );
+    expect(text).toContain(
+      '## gamma\n\n' +
+        t('memory.triage.tpl.target', { path: '/m/gamma.md' }) +
+        '\n- gamma を docs/ へ',
+    );
   });
 
   it('指示文が空の件・未診断の件は含めない', () => {
@@ -286,7 +293,10 @@ describe('joinInstructions / withPreamble (まとめコピーの本文)', () => 
   /* instruction が空でも移動先が確定していればテンプレートで指示文が組まれるので、母集団に入る */
   it('instruction が空の wrong-project も見出し・対象ファイル一覧・テンプレート行が載る', () => {
     const text = joinInstructions(sec);
-    expect(text).toContain('## epsilon\n\n- This memory is about /w/other');
+    expect(text).toContain(
+      '## epsilon\n\n' + t('memory.triage.tpl.target', { path: '/m/epsilon.md' }),
+    );
+    expect(text).toContain('- This memory is about /w/other');
     expect(text).toContain('/h/.claude/projects/-w-other/memory');
     expect(text).toContain(factHeader(sec, ['alpha.md', 'gamma.md', 'epsilon.md']));
   });
@@ -318,7 +328,9 @@ describe('factHeader / copyInstruction (コピー本文の事実ヘッダ)', () 
       t('memory.triage.copyPreamble') +
         '\n\n' +
         factHeader(sec, ['alpha.md']) +
-        '\n\n## alpha\n\n- alpha を消す',
+        '\n\n## alpha\n\n' +
+        t('memory.triage.tpl.target', { path: '/m/alpha.md' }) +
+        '\n- alpha を消す',
     );
   });
 
@@ -328,7 +340,9 @@ describe('factHeader / copyInstruction (コピー本文の事実ヘッダ)', () 
       t('memory.triage.copyPreamble') +
         '\n\n' +
         factHeader(sec, ['alpha.md']) +
-        '\n\n- alpha を消す',
+        '\n\n' +
+        t('memory.triage.tpl.target', { path: '/m/alpha.md' }) +
+        '\n- alpha を消す',
     );
   });
 });
@@ -515,6 +529,7 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
   it('wrong-project は target / targetMemDir があれば散文でなくテンプレートを使う', () => {
     setLang('ja');
     expect(effectiveInstruction(wpItem).split('\n')).toEqual([
+      t('memory.triage.tpl.target', { path: wpItem.path }),
       '- この memory は /w/other の話なので、feedback_worktree_reuse.md を /h/.claude/projects/-w-other/memory へ移す',
       '- 移動先に同じ内容が無いか確認してから移す',
       '- このプロジェクトの MEMORY.md の該当索引行を削除する',
@@ -528,7 +543,10 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
         ...wpItem,
         aiTriage: { ...wpItem.aiTriage, target: undefined, targetMemDir: undefined },
       }),
-    ).toBe('- モデルの散文(捏造した移動先を含みうる)');
+    ).toBe(
+      t('memory.triage.tpl.target', { path: wpItem.path }) +
+        '\n- モデルの散文(捏造した移動先を含みうる)',
+    );
   });
 
   it('effectiveInstruction: body があればテンプレート、無ければ AI の散文、keep や出力不正は空', () => {
@@ -540,7 +558,7 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
         ...base,
         aiTriage: { verdict: 'to-docs', reason: '', issues: [], instruction: '- 散文' },
       }),
-    ).toBe('- 散文');
+    ).toBe(t('memory.triage.tpl.target', { path: base.path }) + '\n- 散文');
     expect(
       effectiveInstruction({
         ...base,

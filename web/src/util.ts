@@ -318,11 +318,19 @@ export function buildWrongProjectInstruction(
 export function effectiveInstruction(it: SkillItem): string {
   const tri = it.aiTriage;
   if (!tri || tri.error || tri.verdict === 'keep') return '';
-  if (tri.body && (tri.verdict === 'shrink' || tri.verdict === 'update'))
-    return buildFeedbackInstruction(it, tri.body);
-  if (tri.verdict === 'wrong-project' && tri.target && tri.targetMemDir)
-    return buildWrongProjectInstruction(it, tri.target, tri.targetMemDir);
-  return tri.instruction;
+  const body =
+    tri.body && (tri.verdict === 'shrink' || tri.verdict === 'update')
+      ? buildFeedbackInstruction(it, tri.body)
+      : tri.verdict === 'wrong-project' && tri.target && tri.targetMemDir
+        ? buildWrongProjectInstruction(it, tri.target, tri.targetMemDir)
+        : tri.instruction;
+  /*
+   * 先頭に対象ファイルのフルパスを機械生成で付ける(モデル出力ではない)。
+   * コピーボタンを使わず画面の文面を手で選択して貼る利用があり、その場合は前置きも
+   * 事実ヘッダも欠落する。どのセッションに貼られても対象の同一性だけは崩れないよう、
+   * 指示文そのものにアンカーを持たせる(テンプレ・散文とも一律)
+   */
+  return body ? t('memory.triage.tpl.target', { path: it.path }) + '\n' + body : body;
 }
 
 /* 試算の符号付き表記(0 は増減なしを明示するため ±0) */
