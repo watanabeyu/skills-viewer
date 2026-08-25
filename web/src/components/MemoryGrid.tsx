@@ -11,7 +11,14 @@ import {
 } from '../util';
 import { t } from '../i18n';
 import { KindBadge } from './GridView';
-import { MemoryHeading, MemoryTypeBadge, TokFacts, UnreadBadge, readsLine } from './MemoryBits';
+import {
+  MemoryHeading,
+  MemoryTypeBadge,
+  TokFacts,
+  UnreadBadge,
+  readsLine,
+  readsTitle,
+} from './MemoryBits';
 
 /* 比較バーの最大幅(モック実測)。最大値のバーをこの幅にして他を比例させる */
 const CMP_MAX_PX = 122;
@@ -82,7 +89,8 @@ function CostBar({
           {bodyTok.toLocaleString()}
           <span className="u"> {unit}</span>
         </span>
-        <span className="note">
+        {/* 参照件数も transcript 由来なので、共有ストアでは全プロジェクト合算であることを添える */}
+        <span className="note" title={readsTitle(sec)}>
           {sec.usageAvailable
             ? t('memory.cost.bodyNote', { k: readCount, n })
             : t('memory.cost.bodyNoteNA')}
@@ -159,7 +167,9 @@ function MemoryCard({
         <UnreadBadge show={sec.usageAvailable && !it.useCount} />
       </div>
       <p className="desc">{it.description}</p>
-      <div className="usage">{readsLine(it, sec.usageAvailable)}</div>
+      <div className="usage" title={readsTitle(sec)}>
+        {readsLine(it, sec.usageAvailable)}
+      </div>
       <div className="meta">
         <span>{relDaysLabel(it.updatedAt)}</span>
         <span className="meta-r">

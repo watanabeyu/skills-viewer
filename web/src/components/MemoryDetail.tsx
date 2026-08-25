@@ -24,7 +24,7 @@ import { editorUrl, loadEditorSetting } from '../settings';
 import { esc, mdRender, splitFrontmatter } from '../md';
 import { t } from '../i18n';
 import { KindBadge } from './GridView';
-import { MemoryHeading, MemoryTypeBadge, TokFacts, UnreadBadge } from './MemoryBits';
+import { MemoryHeading, MemoryTypeBadge, TokFacts, UnreadBadge, readsTitle } from './MemoryBits';
 import { MemoryTriageBox, runTriageOne } from './MemoryTriageView';
 
 /*
@@ -304,14 +304,17 @@ function OverviewTab({
             {(it.bodyTokens || 0).toLocaleString()}
             <small> {t('memory.cost.unit')}</small>
           </span>
-          <span className="n">{bodyNote}</span>
+          {/* 本文コストの注記も Read 回数を含むので、共有ストアでは同じ合算注記を添える */}
+          <span className="n" title={readsTitle(sec)}>
+            {bodyNote}
+          </span>
         </div>
       </div>
 
       <div className="sec-t mem">{t('memory.sec.reads')}</div>
       <div className="f-row mem">
         <span className="rk">{t('memory.f.reads')}</span>
-        <span title={t('memory.readsTitle')}>
+        <span title={readsTitle(sec, t('memory.readsTitle'))}>
           {!sec.usageAvailable ? (
             t('memory.f.na')
           ) : it.useCount ? (
@@ -329,7 +332,8 @@ function OverviewTab({
       </div>
       <div className="f-row mem">
         <span className="rk">{t('memory.f.writes')}</span>
-        <span title={t('memory.writesTitle')}>
+        {/* Write も共有ストアでは全プロジェクト合算なので、Read と同じ注記を付ける */}
+        <span title={readsTitle(sec, t('memory.writesTitle'))}>
           {!sec.usageAvailable
             ? t('memory.f.na')
             : it.writeCount

@@ -834,7 +834,9 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
       '- to-user-claude-md の instruction に必ず含めること: 追記先が ~/.claude/CLAUDE.md',
     );
     expect(ja).toContain('既に同じことが書いてないか確認してから追記すること');
-    expect(ja).toContain('「全プロジェクトの毎セッションに +(本文 tok) tok 増える」というコスト警告');
+    expect(ja).toContain(
+      '「全プロジェクトの毎セッションに +(本文 tok) tok 増える」というコスト警告',
+    );
     const en = buildPrompt(targets, ctx, 'en');
     expect(en).toContain('- For to-user-claude-md, the instruction MUST cover');
     expect(en).toContain('checking it does not already say the same thing before appending');
@@ -1556,12 +1558,38 @@ describe('parseTriage の wrong-project ゲート(判断 2 / 3)', () => {
     expect(m.get('a.md')?.error).toBeUndefined();
   });
 
-  it('target が候補外・欠落なら出力不正(誤った移動先を出すより欠けるほうが安全)', () => {
+  /*
+   * 2026-08-25 変更: 候補外・欠落 target は「出力不正」から候補なしと同じ格下げへ。
+   * 出力不正だと state・reason・issues まで消えて force 再診断まで固定されるため、
+   * 移動先を 1 回取り違えただけで診断情報が全部失われていた(捏造遮断は格下げでも成立する)
+   */
+  it.each([
+    ['候補外', { target: '/w/guess' }],
+    ['欠落', {}],
+  ])('target が%sなら keep + demoted へ格下げし、state・reason は残す', (_label, over) => {
     const cands = new Map([['a.md', ['/w/other']]]);
-    expect(
-      parseTriage(wp({ target: '/w/guess' }), files, new Map(), cands).get('a.md')?.error,
-    ).toBe('invalid-output');
-    expect(parseTriage(wp(), files, new Map(), cands).get('a.md')?.error).toBe('invalid-output');
+    const r = parseTriage(wp(over), files, new Map(), cands).get('a.md')!;
+    expect(r).toEqual({
+      verdict: 'keep',
+      state: 'current',
+      reason: '別プロジェクトの話',
+      issues: ['/w/other 配下のパス'],
+      instruction: '', // 捏造された移動先を含みうるので指示文は捨てる
+      demoted: 'wrong-project',
+      demotedBy: 'no-signal',
+    });
+    expect(r.error).toBeUndefined();
+  });
+
+  it('候補外の target でも共有ストア環境なら demotedBy は shared-env(環境が解消したら再診断)', () => {
+    const m = parseTriage(
+      wp({ target: '/w/guess' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]),
+      { sharedEnv: true },
+    );
+    expect(m.get('a.md')?.demotedBy).toBe('shared-env');
   });
 
   /*
@@ -1580,12 +1608,17 @@ describe('parseTriage の wrong-project ゲート(判断 2 / 3)', () => {
     expect(m.get('a.md')?.target).toBe(long); // 切り詰めた表示ではなく生パスを採用
   });
 
-  it('切り詰めが衝突する 2 候補はどちらも解決不能(出力不正)', () => {
+  it('切り詰めが衝突する 2 候補はどちらも解決不能(格下げ)', () => {
     const base = '/w/' + 'x'.repeat(300);
     const cands = [base + '/alpha', base + '/beta']; // 200 字で切ると同じ表示になる
     for (const target of [promptPath(cands[0]), cands[0]]) {
-      const m = parseTriage(wp({ target }), files, new Map(), new Map([['a.md', cands]]));
-      expect(m.get('a.md')?.error).toBe('invalid-output');
+      const r = parseTriage(wp({ target }), files, new Map(), new Map([['a.md', cands]])).get(
+        'a.md',
+      )!;
+      expect(r.error).toBeUndefined();
+      expect(r.verdict).toBe('keep');
+      expect(r.demoted).toBe('wrong-project');
+      expect(r.target).toBeUndefined(); // どちらか決められない移動先は採らない
     }
   });
 

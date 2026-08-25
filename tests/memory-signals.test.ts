@@ -241,7 +241,7 @@ describe('otherProjectRefs / other-project (別プロジェクトの配下パス
   const viewer = path.join(home, 'work', 'skills-viewer');
   const others = [viewer, path.join(home, 'work', 'cheap-trick')];
 
-  it('絶対パス・~/ の両方で、登録プロジェクトの配下を指していればフルパスを返す(重複なし・最大 2)', () => {
+  it('絶対パス・~/ の両方で、登録プロジェクトの配下を指していればフルパスを返す(重複なし)', () => {
     const body = `このツールは ~/work/skills-viewer/ で開発。実体は ${viewer}/src/cli.ts。関係ない ${weall}/apps は自分`;
     expect(otherProjectRefs(body, home, others)).toEqual([viewer]);
     expect(
@@ -249,6 +249,26 @@ describe('otherProjectRefs / other-project (別プロジェクトの配下パス
     ).toEqual([]);
     expect(otherProjectRefs('何もない', home, others)).toEqual([]);
     expect(otherProjectRefs('~/work/skills-viewer/a', home, [])).toEqual([]);
+  });
+
+  /*
+   * 入れ子で登録されたプロジェクト(親と子が両方 ~/.claude.json にある)では、
+   * 子配下への参照 1 つが親子 2 候補を生んでいた。粗い親は移動先の判断を誤らせるので最長一致だけ採る
+   */
+  it('親子ともに登録されていても、1 つの参照が採るのは最長一致(子)だけ', () => {
+    const parent = path.join(home, 'work', 'mono');
+    const child = path.join(parent, 'packages', 'app');
+    expect(otherProjectRefs(`${child}/src/index.ts を見る`, home, [parent, child])).toEqual([
+      child,
+    ]);
+    // 親そのものを指す参照なら親が最長一致
+    expect(otherProjectRefs(`${parent}/README.md を見る`, home, [parent, child])).toEqual([parent]);
+  });
+
+  it('候補は最大 3 件(4 件目以降は落とす)', () => {
+    const projects = ['a', 'b', 'c', 'd'].map((n) => path.join(home, 'work', n));
+    const body = projects.map((p) => `${p}/src/x.ts`).join(' と ');
+    expect(otherProjectRefs(body, home, projects)).toEqual(projects.slice(0, 3));
   });
 
   it('scanMemory は自分自身と worktree 関係のプロジェクトを候補から外す', () => {

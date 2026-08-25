@@ -109,6 +109,17 @@ export function MemoryHeading({
 }
 
 /*
+ * Read 回数の tooltip。共有ストア(user scope の autoMemoryDirectory)の回数は
+ * 全プロジェクトの transcript を横断した合算なので、「このプロジェクトでの回数」と
+ * 誤読されないよう注記を添える(表示する数値・文言そのものは変えない)。
+ * base が無く共有ストアでもなければ undefined(title="" を吐かない)。
+ */
+export function readsTitle(sec: MemorySection, base?: string): string | undefined {
+  const parts = [base, sec.sharedStore ? t('memory.reads.sharedTitle') : ''].filter(Boolean);
+  return parts.length ? parts.join('\n') : undefined;
+}
+
+/*
  * 参照実績の 1 行(カードの usage 行)。Read 0 は異常ではないので言い切らず、
  * feedback 型は「索引行だけで機能している」と添える。計測不能なら数値を出さない。
  */

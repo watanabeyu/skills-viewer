@@ -5,6 +5,7 @@ import {
   toId,
   triageMemory,
   type MemorySection,
+  type MemorySignal,
   type MemoryTriage,
   type SkillItem,
   type SkillsData,
@@ -26,7 +27,7 @@ import {
 import { memoryVerdictLabel, t } from '../i18n';
 import { splitFrontmatter } from '../md';
 import { KindBadge } from './GridView';
-import { MemoryPathSub, MemoryTypeBadge, TokFacts } from './MemoryBits';
+import { MemoryPathSub, MemoryTypeBadge, TokFacts, readsTitle } from './MemoryBits';
 import { renderMemoryBody } from './MemoryDetail';
 
 /*
@@ -91,6 +92,9 @@ export function DemotedNote({ tri }: { tri: MemoryTriage }) {
   );
 }
 
+/* 行き先に関わらず出す警告シグナルの kind。Extract で綴りの間違いもコンパイル時に落ちる */
+type WarnSignalKind = Extract<MemorySignal['kind'], 'other-project' | 'index-mismatch'>;
+
 /*
  * 診断結果の本体(棚卸し行 / 詳細ブロックで共用)。理由 → issues → 指示文。
  * 指示文は折りたたまず全文を出す(貼るかどうかの判断がここで完結するように)。
@@ -101,9 +105,12 @@ function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
   if (!tri || tri.error) return null;
   // 分類(body)があればテンプレートの指示文、無ければ AI の散文
   const instruction = effectiveInstruction(it);
-  // 行き先に関わらず必ず見せる事実(置き場所の誤り・索引と本文の食い違い)。verdict が keep でも消えない
+  // 行き先に関わらず必ず見せる事実(置き場所の誤り・索引と本文の食い違い)。verdict が keep でも消えない。
+  // 型述語で kind を絞るのは i18n キー(memory.signal.<kind>)を型で結び付けるため。
+  // 文言を消す / kind を増やすと typecheck が落ちる(server の signalLines の assertNever と同じ狙い)
   const warns = [...(it.signals || []), ...(tri.signals || [])].filter(
-    (s) => s.kind === 'other-project' || s.kind === 'index-mismatch',
+    (s): s is MemorySignal & { kind: WarnSignalKind } =>
+      s.kind === 'other-project' || s.kind === 'index-mismatch',
   );
   return (
     <>
@@ -118,7 +125,7 @@ function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
         <div className="issues">
           {warns.map((s, i) => (
             <span className="issue warn" key={'w' + i}>
-              ⚠ {t(`memory.signal.${s.kind}` as 'memory.signal.other-project', { value: s.value })}
+              ⚠ {t(`memory.signal.${s.kind}`, { value: s.value })}
             </span>
           ))}
         </div>
@@ -435,7 +442,7 @@ export function MemoryTriageView({
                   <TokFacts it={it} bold />
                   {/* 参照回数はトランスクリプトが無いプロジェクトでは判定不能なので出さない */}
                   {sec.usageAvailable && (
-                    <span title={t('memory.readsTitle')}>
+                    <span title={readsTitle(sec, t('memory.readsTitle'))}>
                       {it.useCount
                         ? t('memory.triage.seen', { n: it.useCount })
                         : t('memory.triage.unseen')}

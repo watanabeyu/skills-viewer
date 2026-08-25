@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { apiErrorMessage, getLang, setLang, t } from '../web/src/i18n';
+import { DICTS, apiErrorMessage, getLang, setLang, t } from '../web/src/i18n';
+import type { MsgKey } from '../web/src/i18n';
 import { headingOf, scopeLabelOf } from '../web/src/util';
 import type { Section } from '../src/shared/types';
 
@@ -20,6 +21,21 @@ describe('t (辞書引き + 置換)', () => {
 
   it('params に無いプレースホルダはそのまま残す(設定例文の {path} など)', () => {
     expect(t('settings.customNeedsPath')).toContain('{path}');
+  });
+});
+
+/*
+ * 文言だけを訳したときに {name} を落とす / 綴り違いで置換されないまま出す事故を止める。
+ * t は params に無いプレースホルダをそのまま残す実装なので、片方の言語でだけ壊れていても
+ * 画面に「{n}」が出るまで気づけない。キー単位で集合比較して機械的に落とす。
+ */
+describe('辞書のプレースホルダ整合', () => {
+  const placeholders = (s: string) => new Set([...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+
+  it.each(Object.keys(DICTS.en) as MsgKey[])('%s の {name} が en / ja で一致する', (key) => {
+    expect([...placeholders(DICTS.ja[key])].sort()).toEqual(
+      [...placeholders(DICTS.en[key])].sort(),
+    );
   });
 });
 

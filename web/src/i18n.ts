@@ -126,6 +126,8 @@ const en = {
   'memory.bodyTokTitle': 'Pay-per-use cost: the whole body, charged only when it is Read',
   'memory.readsTitle':
     'Times this memory was Read within the transcript retention window (default 30 days). 0 does not mean it has never been read.',
+  'memory.reads.sharedTitle':
+    'Summed over the sessions of every project (this is a shared store) — not the count for this project alone.',
   'memory.writesTitle':
     'Times this memory was created or updated (Write / Edit) within the transcript retention window',
   'memory.unread': 'no recent reads',
@@ -545,6 +547,8 @@ const ja: Record<MsgKey, string> = {
   'memory.bodyTokTitle': '従量コスト: 本文全体。Read されたときだけかかります',
   'memory.readsTitle':
     'トランスクリプト保持期間内(既定30日)にこのメモリが Read された回数。0 でも「一度も読まれていない」ことは意味しません',
+  'memory.reads.sharedTitle':
+    '全プロジェクトのセッションの合算です(このプロジェクトだけの回数ではありません)',
   'memory.writesTitle':
     'トランスクリプト保持期間内にこのメモリが作成・更新された回数(Write / Edit)',
   'memory.unread': '直近未参照',
@@ -845,7 +849,8 @@ const ja: Record<MsgKey, string> = {
   'apiError.internal': 'サーバーエラー: {detail}',
 };
 
-const DICTS: Record<Lang, Record<MsgKey, string>> = { en, ja };
+/* テストが全キーを走査(プレースホルダ整合の検証)できるように公開する。UI からは t 経由で引く */
+export const DICTS: Record<Lang, Record<MsgKey, string>> = { en, ja };
 
 /* ---- 言語の状態 ---- */
 

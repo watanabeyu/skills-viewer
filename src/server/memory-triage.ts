@@ -288,6 +288,15 @@ export function targetMemDirOf(project: string, home: string = HOME): string {
   return path.join(projectsDir, encodeProjectPath(repoRootOf(project) ?? project), 'memory');
 }
 
+/*
+ * switch の網羅漏れをコンパイル時に落とすための番人。MemorySignalKind に kind を足して
+ * 文言(ja / en)を書き忘れると、ここへ never でない値が渡って typecheck が失敗する。
+ * signals は機械が組み立てた値しか通らない(外部入力ではない)ので、実行時は throw でよい。
+ */
+function assertNever(x: never): never {
+  throw new Error('unhandled signal kind: ' + JSON.stringify(x));
+}
+
 /* シグナルをプロンプト用の 1 行ずつに(言語別)。無ければ「(なし)」で節を落とさない */
 function signalLines(signals: MemorySignal[], lang: Lang): string {
   if (!signals.length) return lang === 'ja' ? '(なし)' : '(none)';
@@ -322,6 +331,7 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
           case 'index-beyond-limit':
             return `- この索引行は MEMORY.md の読み込み上限(200 行 / 25KB)の外にあり、毎セッション読まれていない`;
         }
+        return assertNever(s.kind);
       }
       switch (s.kind) {
         case 'date':
@@ -351,6 +361,7 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
         case 'index-beyond-limit':
           return `- this index line is outside MEMORY.md's read limit (200 lines / 25KB) and is not read every session`;
       }
+      return assertNever(s.kind);
     })
     .join('\n');
 }
@@ -1008,29 +1019,31 @@ export function parseTriage(
     /*
      * wrong-project のゲート。移動先は事実(機械シグナル)からしか決められないので:
      *   - シグナルが無い件は keep へ格下げし、demoted に元の verdict を残す(観察は続ける)
-     *   - シグナルがある件も移動先は候補からの選択だけを受け取る(候補外・欠落は出力不正)
+     *   - シグナルがある件も移動先は候補からの選択だけを受け取り、候補外・欠落なら同じく格下げ
      * 格下げでは指示文を捨てる。捏造した移動先を含んでいるため貼れない
      */
     const cands = candidates.get(file) || [];
     let dest: Pick<MemoryTriage, 'target' | 'targetMemDir'> = {};
     if (verdict === 'wrong-project') {
+      /*
+       * 移動先を確定できない wrong-project の格下げ形。demotedBy は理由で分ける:
+       *   - 共有ストア環境(sharedEnv): 移動先の概念そのものが設定で消えている環境条件。
+       *     設定を外せば候補が組めるようになるので、そのときに再診断へ乗せる
+       *   - それ以外: 内容側の理由(機械シグナルが無い / 候補と噛み合わない)。
+       *     本文が変わらない限り再診断しない
+       */
+      const demoted = (): MemoryTriage => ({
+        verdict: 'keep',
+        state,
+        reason,
+        issues,
+        instruction: '',
+        demoted: 'wrong-project',
+        demotedBy: opts.sharedEnv ? 'shared-env' : 'no-signal',
+        ...idxMatch,
+      });
       if (!cands.length) {
-        out.set(file, {
-          verdict: 'keep',
-          state,
-          reason,
-          issues,
-          instruction: '',
-          demoted: 'wrong-project',
-          /*
-           * 候補が無い理由で分ける:
-           *   - 共有ストア環境(sharedEnv): 移動先の概念そのものが設定で消えている環境条件。
-           *     設定を外せば候補が組めるようになるので、そのときに再診断へ乗せる
-           *   - それ以外: 内容側の理由(機械シグナルが無い)。本文が変わらない限り再診断しない
-           */
-          demotedBy: opts.sharedEnv ? 'shared-env' : 'no-signal',
-          ...idxMatch,
-        });
+        out.set(file, demoted());
         continue;
       }
       /*
@@ -1048,7 +1061,13 @@ export function parseTriage(
       const answer = typeof e?.target === 'string' ? e.target.trim() : '';
       const target = byDisplay.get(promptPath(answer)) ?? null;
       if (!target) {
-        out.set(file, invalidTriage());
+        /*
+         * 2026-08-25 変更: 候補外・欠落・表示衝突の target は「出力不正」から候補なしと同じ格下げへ。
+         * 出力不正は state・reason・issues まで捨てて force 再診断まで固定するため、モデルが
+         * 移動先を 1 回取り違えただけで診断情報が全部消えるという、候補なしとの非対称があった。
+         * 捏造した移動先を採らない目的は格下げでも同じく達成でき、鮮度と理由は観察用に残せる。
+         */
+        out.set(file, demoted());
         continue;
       }
       dest = { target, targetMemDir: targetMemDirOf(target) };

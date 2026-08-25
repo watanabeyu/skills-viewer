@@ -133,11 +133,20 @@ export function otherProjectRefs(body: string, home: string, others: string[]): 
   for (const m of body.matchAll(/(~\/[^\s)）」'"`<>]+|\/[\w.@-]+(?:\/[\w.@-]+)+)/g)) {
     const raw = m[1].replace(/[/.,:;。、)）」]+$/, '');
     const resolved = raw.startsWith('~/') ? path.join(home, raw.slice(2)) : raw;
+    /*
+     * 1 つのパス参照が採るのは最長一致の 1 件だけ。入れ子で登録されたプロジェクト
+     * (親 /a と子 /a/b が両方 ~/.claude.json にある)では、/a/b/x.ts への参照 1 つが
+     * 親子 2 件の候補を生み、粗いほうの親が wrong-project の移動先判断を誤らせる。
+     */
+    let best = '';
     for (const p of others) {
-      if (resolved === p || resolved.startsWith(p + path.sep)) hit.add(p);
+      if (resolved !== p && !resolved.startsWith(p + path.sep)) continue;
+      if (p.length > best.length) best = p;
     }
+    if (best) hit.add(best);
   }
-  return [...hit].slice(0, 2);
+  // 上限 3: 参照が複数プロジェクトに散っているとき、2 件では正解が落ちることがある(最長一致で 1 参照 1 件になった分の余裕)
+  return [...hit].slice(0, 3);
 }
 
 /* ---- feedback / user 型の本文構造 ---- */
