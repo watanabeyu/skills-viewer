@@ -118,10 +118,12 @@ function readAutoMemoryDirectory(fp: string, home: string): string | null {
    * 比較は実パス(realDir)同士で行う: 表記だけ見ると HOME と別物でも、symlink 経由で
    * HOME(やその祖先)を指す値はガードを素通りしてしまうため。
    */
+  // ケース非依存 FS では case-fold して比較する(realpathSync がケースを畳まないため、
+  // `/USERS/<user>` のような HOME のケース違いがこのガードを素通りするのを防ぐ)
   const dirReal = realDir(dir);
   const homeReal = realDir(home);
-  if (dirReal === path.parse(dirReal).root) return null;
-  if (dirReal === homeReal || homeReal.startsWith(dirReal + path.sep)) return null;
+  if (samePath(dirReal, path.parse(dirReal).root)) return null;
+  if (isUnder(homeReal, dirReal)) return null; // dir が HOME 自身 / HOME の祖先
   // 返すのは正規化しただけの値(実パスに置き換えない): 表示・重複判定は既に realDir を通す
   return dir;
 }
@@ -377,6 +379,22 @@ export function realDir(p: string): string {
   } catch {
     return path.resolve(p);
   }
+}
+
+/*
+ * パス比較の正規化。macOS / Windows のファイルシステムはケース非依存だが、
+ * fs.realpathSync はケースを畳まない(`/USERS/x` はそのまま `/USERS/x` を返す)ため、
+ * 素の文字列比較だと `/Users/x` と `/USERS/x` を別物と誤判定する。読み取り許可・下限ガードの
+ * ような「同じディレクトリか / 配下か」の判定は、これらの OS では case-fold して比べる。
+ */
+const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
+export function samePath(a: string, b: string): boolean {
+  return CASE_INSENSITIVE_FS ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+export function isUnder(child: string, parent: string): boolean {
+  const c = CASE_INSENSITIVE_FS ? child.toLowerCase() : child;
+  const p = CASE_INSENSITIVE_FS ? parent.toLowerCase() : parent;
+  return c === p || c.startsWith(p + path.sep);
 }
 
 /*

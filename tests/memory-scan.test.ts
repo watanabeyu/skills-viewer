@@ -740,6 +740,24 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
   });
 
   /*
+   * セキュリティ(ゲート D 指摘、2026-08-27): ケース非依存 FS(macOS / Windows)では、
+   * fs.realpathSync がケースを畳まないため HOME のケース違いがガードを素通りし、
+   * ケース非依存 FS では同じディレクトリに解決してしまう。case-fold して弾く。
+   */
+  it('ケース違いの HOME / 祖先指定も無効(ケース非依存 FS 前提の case-fold)', () => {
+    // このテストはケース非依存 FS でのみ意味を持つ(Linux CI 等では realpath がそのまま返り skip)
+    if (process.platform !== 'darwin' && process.platform !== 'win32') return;
+    const upper = home.toUpperCase();
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', { autoMemoryDirectory: upper });
+    expect(autoMemoryDirOf(cwd, home)).toBeNull();
+    const upperAncestor = path.dirname(path.resolve(home)).toUpperCase();
+    writeSettings(path.join(cwd, '.claude'), 'settings.json', {
+      autoMemoryDirectory: upperAncestor,
+    });
+    expect(autoMemoryDirOf(cwd, home)).toBeNull();
+  });
+
+  /*
    * 計画 13 Phase D round3: 過大指定のガードは実パス同士で比べる。
    * 表記上は HOME と別物でも、symlink 経由で HOME を指す値が素通りすると、
    * 読み取り許可と usage の許可ルートがホーム配下まで広がってしまう。

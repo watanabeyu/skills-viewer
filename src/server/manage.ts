@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { listProjects } from './scan';
-import { resolveAutoMemoryDir } from './memory';
+import { isUnder, resolveAutoMemoryDir } from './memory';
 import { ApiError } from './errors';
 
 const HOME = os.homedir();
@@ -71,7 +71,9 @@ function autoMemoryRoot(cwd: string): string | null {
  */
 function underAutoMemory(real: string, cwd: string): boolean {
   const root = autoMemoryRoot(cwd);
-  return !!root && real.startsWith(root + path.sep);
+  // isUnder はケース非依存 FS で case-fold する(root が `/USERS/…` のとき
+  // 実ファイルの realpath `/Users/…` と取り違えないように)
+  return !!root && real !== root && isUnder(real, root);
 }
 
 const underDotClaude = (real: string) => real.includes(path.sep + '.claude' + path.sep);
