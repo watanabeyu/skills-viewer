@@ -3,6 +3,41 @@
 All notable changes to this project are documented here, in English followed by Japanese.
 このファイルには主要な変更を記録します(英語の後に日本語を併記)。
 
+## [0.8.1] - 2026-08-27
+
+Memory triage now refuses to amplify a bad guess — paths and destinations come from the server, not the model.
+メモリ棚卸しが誤判定を増幅しなくなりました。パスや移動先はモデルではなくサーバーが決めます。
+
+### Added
+
+- **Full paths everywhere & a bias warning** — every memory section header and triage title now carries the project's full path as a subtitle, so same-named projects (`teamA/ai-workspace` vs `teamB/ai-workspace`) are distinguishable; the `other-project` signal, candidate list and move destination are all full paths too. When ≥5 non-keep proposals concentrate ≥80% on one verdict, a banner asks you to check the project identification first (the shape of the "all 18 wrongly moved" incident this release fixes).
+  **フルパス表示と偏り警告** — セクション見出し・棚卸しタイトルにプロジェクトのフルパスを副題表示し、同名プロジェクト(`teamA/ai-workspace` と `teamB/ai-workspace`)を区別できます。`other-project` シグナル・候補一覧・移動先もフルパスです。非 keep の提案が 5 件以上で 8 割以上が同じ行き先に偏ったら、まずプロジェクトの特定を疑うよう促すバナーを出します(本リリースが直す「18 件全部が誤移動」事故の形)。
+- **A place for cross-project preferences** — a 9th destination, _move to your user CLAUDE.md_ (`~/.claude/CLAUDE.md`), for `user`/`feedback` memories that should apply across all projects, with a stronger "always-on in EVERY project" cost warning.
+  **プロジェクト横断の趣向の置き場** — 9 つ目の行き先「user CLAUDE.md へ」(`~/.claude/CLAUDE.md`)を追加。全プロジェクトで効かせたい `user`/`feedback` 型 memory 向けで、「全プロジェクトの毎セッションに注入」という強めのコスト警告つきです。
+- **`autoMemoryDirectory` support** — memories stored under a custom `autoMemoryDirectory` (official setting) are now scanned, cost-accounted and triaged. A user-scope directory is shown as a _shared store_ (all projects mixed) and triaged conservatively; the MEMORY.md read limit (first 200 lines / 25KB) is reflected in the always-on cost, with out-of-limit lines marked as "not injected every session"; the `modified` frontmatter timestamp is preferred over the file mtime.
+  **`autoMemoryDirectory` 対応** — 公式設定 `autoMemoryDirectory` の置き場も走査・コスト計上・棚卸しの対象になりました。user scope の置き場は「共有ストア」(全プロジェクト混在)として控えめに扱い、`MEMORY.md` の読み込み上限(先頭 200 行 / 25KB)を常時コストに反映(上限外の行は「毎セッションは注入されない」と表示)、frontmatter の `modified` を mtime より優先します。
+- **Empty-state guidance** — when an environment has no auto memory, the view explains the official behavior (on by default, the directory is only created on first save, may be disabled via `autoMemoryEnabled` / `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, check with `/memory`) instead of looking broken.
+  **空状態の案内** — auto memory が無い環境では「壊れている?」と見えないよう、公式の挙動(既定で有効・初回保存までディレクトリは作られない・`autoMemoryEnabled` / `CLAUDE_CODE_DISABLE_AUTO_MEMORY` で無効化可・`/memory` で確認)を案内します。
+
+### Changed
+
+- **wrong-project ("belongs elsewhere") is now grounded in facts** — the verdict is only proposed when a mechanical signal (the body references a path under another registered project) backs it; otherwise it is held at _keep_ with a "needs checking" note. The move destination (`~/.claude/projects/<slug>/memory`) is computed by the server from the git repository root, never written by the model, and templated instructions include re-creating the index line at the destination. Every copied instruction starts with a machine-generated fact header (memory dir, project, files) and a preamble that also checks your working directory matches; each instruction line is anchored with the target's full path, so even a hand-selected copy keeps the right target.
+  **wrong-project(別プロジェクトの話)を事実で裏付け** — 本文が別の登録プロジェクト配下のパスを参照する、という機械シグナルがある件だけ提案し、無ければ「このまま」+「要確認」に留めます。移動先(`~/.claude/projects/<slug>/memory`)は git リポジトリのルートからサーバーが算出し、モデルには書かせません。指示文はテンプレート化し、移動先での索引行の再作成も含めます。コピー文には機械生成の事実ヘッダ(memory dir・プロジェクト・ファイル)と、作業ディレクトリの一致確認を促す前置きが付き、各指示文の先頭には対象のフルパスを添えるので、手で選択してコピーしても対象を取り違えません。
+- **Unresolvable ("unknown project") sections are limited** — sections that cannot be resolved to a registered project are triaged to keep / shrink / rewrite only (no move or delete), and the demotion auto-recovers once the environment resolves (e.g. a volume is remounted). Old wrong-project cache entries from 0.8.0 are re-diagnosed and hidden until then.
+  **プロジェクト不明セクションを制限** — 登録プロジェクトに逆引きできないセクションは keep / 縮める / 書き直す のみ(移動・削除は出さない)にし、環境が解消(ボリューム再マウント等)したら格下げは自動で戻ります。0.8.0 で作られた旧 wrong-project キャッシュは再診断され、それまでは表示しません。
+- The _orphan_ wording in the Japanese UI is now _unknown project_ (プロジェクト不明); the English `orphan` term is unchanged.
+  日本語 UI の「孤児」表記を「プロジェクト不明」に改めました(英語の `orphan` は据え置き)。
+
+### Fixed
+
+- **Attribution bug behind the 0.8.0 incident** — a memory section no longer counts its own project (nor its worktrees, nor a registered parent/child repo) as "another project", which was the source of the spurious `other-project` signals; this holds for unresolvable sections too.
+  **0.8.0 事故の原因だった帰属バグ** — メモリセクションが自分自身(および自分の worktree、登録済みの親子リポジトリ)を「別プロジェクト」に数えていた誤りを修正しました。これが誤 `other-project` シグナルの発生源でした。プロジェクト不明のセクションでも同様です。
+
+### Security
+
+- `autoMemoryDirectory` values are validated (absolute or `~/`, normalized, and rejected when they resolve to the filesystem root, your home directory, or an ancestor of it); the read/open allowlist only widens to the resolved directory. Path comparisons are case-folded on case-insensitive filesystems (macOS / Windows) so a case-variant of the home directory cannot slip past the guard.
+  `autoMemoryDirectory` の値を検証します(絶対パスか `~/`、正規化のうえ、ファイルシステムのルート・ホームディレクトリ・その祖先に解決される値は拒否)。読み取り/オープンの許可は解決済みディレクトリの配下にのみ広がります。パス比較はケース非依存 FS(macOS / Windows)では case-fold するので、ホームディレクトリのケース違いでガードを素通りできません。
+
 ## [0.8.0] - 2026-08-24
 
 Your auto memory now has a place to be seen — and a way to get smaller.
