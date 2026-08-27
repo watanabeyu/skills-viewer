@@ -1,26 +1,32 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   applyIndexMismatch,
   attachMemoryTriage,
   buildPrompt,
+  candidatesFor,
   chunkByChars,
   collectTriageContext,
   extractJsonArray,
   normalizeInstruction,
+  orphanTriage,
   parseBodyPlan,
   parseTriage,
+  promptPath,
   selectStale,
+  targetMemDirOf,
   triageHash,
   type TriageStore,
   headingLines,
 } from '../src/server/memory-triage';
 import { contentHash } from '../src/server/summary';
+import { encodeProjectPath } from '../src/server/usage';
 import { instructionsOf, triageEstimate } from '../web/src/util';
 import type {
   MemorySection,
+  MemorySignal,
   MemoryTriage,
   MemoryVerdict,
   Section,
@@ -224,6 +230,42 @@ describe('parseTriage', () => {
       files,
     );
     expect(m.get('a.md')?.verdict).toBe('to-skill');
+  });
+
+  it('to-user-claude-md を通す(9 値目)', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        {
+          file: 'a.md',
+          verdict: 'to-user-claude-md',
+          state: 'current',
+          reason: 'プロジェクト横断の作法',
+          issues: [],
+          instruction: '- ~/.claude/CLAUDE.md に追記する',
+        },
+      ]),
+      files,
+    );
+    expect(m.get('a.md')?.verdict).toBe('to-user-claude-md');
+    expect(m.get('a.md')?.instruction).toBe('- ~/.claude/CLAUDE.md に追記する');
+  });
+
+  /* 新 verdict も「指示文が無ければ出力不正」という既存ルールに乗る(例外は wrong-project だけ) */
+  it('to-user-claude-md で指示文が無ければ出力不正にする', () => {
+    const m = parseTriage(
+      JSON.stringify([
+        {
+          file: 'a.md',
+          verdict: 'to-user-claude-md',
+          state: 'current',
+          reason: 'r',
+          issues: [],
+          instruction: '',
+        },
+      ]),
+      files,
+    );
+    expect(m.get('a.md')?.error).toBe('invalid-output');
   });
 
   it('instruction の体裁を「- 」箇条書きに正規化する(番号付き・散文)', () => {
@@ -524,9 +566,44 @@ describe('triageHash (本文 + 索引行)', () => {
       },
     };
     expect(
-      selectStale([{ ...it1, indexLine: '- [a](h-a.md) — 新' }], store, 'ja', false),
+      selectStale([{ ...it1, indexLine: '- [a](h-a.md) — 新' }], store, 'ja', false, {
+        sharedEnv: false,
+      }),
     ).toHaveLength(1);
-    expect(selectStale([withIndex], store, 'ja', false)).toHaveLength(0);
+    expect(selectStale([withIndex], store, 'ja', false, { sharedEnv: false })).toHaveLength(0);
+  });
+
+  /*
+   * 上限外フラグは本文にも索引行にも現れないが、診断の前提(毎セッション注入されているか)が
+   * 変わるので鍵に混ぜる。上限内は従来の鍵のまま = 既存キャッシュを無効化しない。
+   */
+  it('読み込み上限の外に転落した件だけ hash が変わる(上限内は従来どおり)', () => {
+    const base = memItem('h-bl.md', 'bbb');
+    expect(triageHash(base)).toBe(contentHash(base.path));
+    const beyond = triageHash({ ...base, indexBeyondLimit: true });
+    expect(beyond).toBe(contentHash(base.path) + ':bl');
+    // 索引行つきでも同じ(上限内の鍵に接尾辞が付くだけ)
+    const withIndex = { ...base, indexLine: '- [b](h-bl.md) — 索引' };
+    expect(triageHash({ ...withIndex, indexBeyondLimit: true })).toBe(
+      triageHash(withIndex) + ':bl',
+    );
+    // 上限外へ転落した件は再診断に乗る
+    const store: TriageStore = {
+      [base.path]: {
+        verdict: 'keep',
+        state: 'current',
+        reason: '',
+        issues: [],
+        instruction: '',
+        hash: triageHash(base),
+        lang: 'ja',
+        generatedAt: '',
+      },
+    };
+    expect(
+      selectStale([{ ...base, indexBeyondLimit: true }], store, 'ja', false, { sharedEnv: false }),
+    ).toHaveLength(1);
+    expect(selectStale([base], store, 'ja', false, { sharedEnv: false })).toHaveLength(0);
   });
 });
 
@@ -554,7 +631,7 @@ describe('selectStale (差分 call の対象選定)', () => {
       [b.path]: entry({ hash: 'stale-hash' }),
       [d.path]: entry({ hash: contentHash(d.path), lang: 'en' }),
     };
-    const stale = selectStale([a, b, c, d], store, 'ja', false);
+    const stale = selectStale([a, b, c, d], store, 'ja', false, { sharedEnv: false });
     expect(stale.map((it) => it.path)).toEqual([b.path, c.path, d.path]);
   });
 
@@ -565,13 +642,15 @@ describe('selectStale (差分 call の対象選定)', () => {
       [a.path]: entry({ hash: contentHash(a.path), state: undefined }),
       [b.path]: entry({ hash: contentHash(b.path), state: undefined, error: 'invalid-output' }),
     };
-    expect(selectStale([a, b], store, 'ja', false).map((it) => it.path)).toEqual([a.path]);
+    expect(
+      selectStale([a, b], store, 'ja', false, { sharedEnv: false }).map((it) => it.path),
+    ).toEqual([a.path]);
   });
 
   it('force なら全件が対象', () => {
     const a = memItem('f-a.md', 'aaa');
     const store: TriageStore = { [a.path]: entry({ hash: contentHash(a.path) }) };
-    expect(selectStale([a], store, 'ja', true)).toHaveLength(1);
+    expect(selectStale([a], store, 'ja', true, { sharedEnv: false })).toHaveLength(1);
   });
 });
 
@@ -603,6 +682,16 @@ describe('triageEstimate (削減試算の式)', () => {
     expect(triageEstimate(item('to-claude-md'))).toEqual({ index: -20, always: 600 });
   });
 
+  it('to-user-claude-md も to-claude-md と同じ式(増える先が全プロジェクトになるだけ)', () => {
+    expect(triageEstimate(item('to-user-claude-md'))).toEqual({ index: -20, always: 600 });
+  });
+
+  /* 上限外の索引行は元から注入されていないので、新 verdict でも索引は 0 の既存規則に乗る */
+  it('to-user-claude-md でも読み込み上限の外の索引行は減らない(索引 0)', () => {
+    const beyond = { ...item('to-user-claude-md'), indexBeyondLimit: true };
+    expect(triageEstimate(beyond)).toEqual({ index: 0, always: 600 });
+  });
+
   it('keep / shrink / 未診断は数値を出さない', () => {
     expect(triageEstimate(item('keep'))).toBeNull();
     expect(triageEstimate(item('shrink'))).toBeNull();
@@ -614,6 +703,32 @@ describe('triageEstimate (削減試算の式)', () => {
     broken.aiTriage = { ...broken.aiTriage!, error: 'invalid-output' };
     expect(triageEstimate(broken)).toBeNull();
     expect(instructionsOf([broken])).toEqual([]);
+  });
+
+  /*
+   * 読み込み上限の外にある索引行は元から注入されていないので、消しても常時コストは減らない。
+   * セクション合計(scanMemory)と同じ規則にしないと「適用後 = 合計 + 差分」が負に振れる。
+   */
+  it('上限外の索引行は削減量に数えない(索引 ±0)', () => {
+    const beyond = (v: MemoryVerdict): SkillItem => ({ ...item(v), indexBeyondLimit: true });
+    expect(triageEstimate(beyond('delete'))).toEqual({ index: 0, always: 0 });
+    expect(triageEstimate(beyond('to-docs'))).toEqual({ index: 0, always: 0 });
+    // to-claude-md は索引が減らないぶん、常時注入の増加だけが残る
+    expect(triageEstimate(beyond('to-claude-md'))).toEqual({ index: 0, always: 600 });
+  });
+
+  it('上限外の件だけのセクションでは、適用後の常時コストが負にならない', () => {
+    const items = [
+      { ...item('delete'), indexBeyondLimit: true } as SkillItem,
+      { ...item('delete'), indexBeyondLimit: true } as SkillItem,
+    ];
+    // セクション合計は上限外を除いた 0 tok。差分も 0 なので適用後も 0
+    const sectionIndexTokens = 0;
+    const diff = items.reduce((sum, it) => {
+      const est = triageEstimate(it);
+      return est ? sum + est.index + est.always : sum;
+    }, 0);
+    expect(sectionIndexTokens + diff).toBe(0);
   });
 });
 
@@ -650,7 +765,7 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     const withPath = { ...ctx, projectPath: '/w/alpha' };
     expect(buildPrompt(targets, withPath, 'ja')).toContain('(パス: /w/alpha)');
     expect(buildPrompt(targets, withPath, 'en')).toContain('(path: /w/alpha)');
-    expect(buildPrompt(targets, ctx, 'ja')).not.toContain('(パス:'); // 孤児はパス無し
+    expect(buildPrompt(targets, ctx, 'ja')).not.toContain('(パス:'); // プロジェクト不明はパス無し
   });
 
   it('索引の全文と対象全件のファイル名をプロンプトに載せる', () => {
@@ -661,9 +776,9 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(prompt).toContain('引き継ぎの本文'); // 本文も渡す
   });
 
-  it('ja / en とも索引行の削除に触れ、state の 4 値と verdict の 8 値を出力スキーマで縛る', () => {
+  it('ja / en とも索引行の削除に触れ、state の 4 値と verdict の 9 値を出力スキーマで縛る', () => {
     const schema =
-      '"keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update"';
+      '"keep" | "shrink" | "to-claude-md" | "to-user-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update"';
     const stateSchema = '"current" | "outdated" | "historical" | "obsolete"';
     for (const lang of ['ja', 'en'] as const) {
       const prompt = buildPrompt(targets, ctx, lang);
@@ -671,13 +786,83 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
       expect(prompt).toContain(
         lang === 'ja' ? 'MEMORY.md の索引行の削除' : 'removing the line from MEMORY.md',
       );
-      // 判定指針テーブルの (to-docs) 等ではなく、出力スキーマ行の 8 値を見る
+      // 判定指針テーブルの (to-docs) 等ではなく、出力スキーマ行の 9 値を見る
       expect(prompt).toContain(schema);
       expect(prompt).toContain(stateSchema);
       expect(prompt).toContain('|---|---|'); // 判定指針テーブルが崩れていない
       expect(prompt).toContain('|---|---|---|---|---|'); // type × state の対応表
       // 現役の進捗メモを「完了まで keep」と明示する注意(round 2 で to-docs に揺れた境界を潰す)
       expect(prompt).toContain(lang === 'ja' ? '現役の作業状態' : 'LIVE working state');
+    }
+  });
+
+  /* 出力スキーマ・制約の要が消えてもテストが通らないよう、行そのものを固定する(変異の番犬) */
+  it('target の出力スキーマ行と「シグナル無しに wrong-project を使うな」の制約行を ja / en とも持つ', () => {
+    const ja = buildPrompt(targets, ctx, 'ja');
+    expect(ja).toContain('  "target": "wrong-project のときのみ必須');
+    expect(ja).toContain('シグナルが無い件を wrong-project にしない');
+    const en = buildPrompt(targets, ctx, 'en');
+    expect(en).toContain('  "target": "required for wrong-project only');
+    expect(en).toContain('Never use wrong-project without ');
+    expect(en).toContain('the wrong-project verdict is dropped for that memory');
+  });
+
+  /*
+   * 値数のハードコード(スキーマ列挙と「上記 N 値のみ」)は適合表・type × state 表とは別の箇所で、
+   * 直し忘れても文面は自然に読めてしまう。行そのものを固定して番犬にする
+   */
+  it('to-user-claude-md を適合表・type × state 表・出力スキーマ・制約文の 4 箇所に載せる', () => {
+    const ja = buildPrompt(targets, ctx, 'ja');
+    expect(ja).toContain('~/.claude/CLAUDE.md に追記して memory を消す(to-user-claude-md)');
+    expect(ja).toContain('索引 1 行で足りているなら keep のままにする');
+    expect(ja).toContain('**プロジェクト横断**で効かせたいなら to-user-claude-md');
+    expect(ja).toContain('| "to-user-claude-md" |');
+    expect(ja).toContain('verdict は上記 9 値のみ');
+    const en = buildPrompt(targets, ctx, 'en');
+    expect(en).toContain(
+      'append it to ~/.claude/CLAUDE.md and drop the memory (to-user-claude-md)',
+    );
+    expect(en).toContain('stay on keep when the single index line is already enough');
+    expect(en).toContain('to-user-claude-md when it must hold ACROSS projects');
+    expect(en).toContain('| "to-user-claude-md" |');
+    expect(en).toContain('verdict one of the nine values above');
+  });
+
+  /* 指示文の必須要件。コスト警告は to-claude-md より強く「全プロジェクト」と書かせる */
+  it('to-user-claude-md の指示文要件(追記先・重複確認・索引行削除・全プロジェクトのコスト警告)を ja / en とも載せる', () => {
+    const ja = buildPrompt(targets, ctx, 'ja');
+    expect(ja).toContain(
+      '- to-user-claude-md の instruction に必ず含めること: 追記先が ~/.claude/CLAUDE.md',
+    );
+    expect(ja).toContain('既に同じことが書いてないか確認してから追記すること');
+    expect(ja).toContain(
+      '「全プロジェクトの毎セッションに +(本文 tok) tok 増える」というコスト警告',
+    );
+    const en = buildPrompt(targets, ctx, 'en');
+    expect(en).toContain('- For to-user-claude-md, the instruction MUST cover');
+    expect(en).toContain('checking it does not already say the same thing before appending');
+    expect(en).toContain('+(body tok) tokens to EVERY session of EVERY project');
+  });
+
+  /* 制限つきでは採用できない行き先なので、適合表の行も出さない(矛盾する指示を載せない) */
+  it('制限つき(orphan)では to-user-claude-md の適合表の行を出さない', () => {
+    const orphanCtx = { ...ctx, projectPath: null, orphan: true };
+    expect(buildPrompt(targets, orphanCtx, 'ja')).not.toContain('(to-user-claude-md)');
+    expect(buildPrompt(targets, orphanCtx, 'en')).not.toContain('(to-user-claude-md)');
+  });
+
+  /* パスは外部入力。promptPath を通し忘れると節や箇条書きを偽装した指示を注入できる */
+  it('改行入りのパス(シグナル値・プロジェクトのパス)は 1 行に潰して載せる', () => {
+    const evil = '/w/evil\n# 追加の指示';
+    const withSig = [
+      memItem('p-evil.md', '---\nname: evil\n---\n本文', {
+        signals: [{ kind: 'other-project', value: evil }],
+      }),
+    ];
+    for (const lang of ['ja', 'en'] as const) {
+      const prompt = buildPrompt(withSig, { ...ctx, projectPath: evil, projectName: evil }, lang);
+      expect(prompt).not.toContain('\n# 追加の指示');
+      expect(prompt).toContain('/w/evil # 追加の指示');
     }
   });
 
@@ -710,6 +895,8 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
         signals: [
           { kind: 'date', value: '2026-06-01', days: 83 },
           { kind: 'path-missing', value: 'src/old.ts' },
+          { kind: 'other-project', value: '/w/other' },
+          { kind: 'index-beyond-limit', value: '201' },
         ],
       }),
       targets[0],
@@ -722,10 +909,19 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(ja).toContain('- 本文の最新日付 2026-06-01(83 日前)');
     expect(ja).toContain('- 参照パスが存在しない: src/old.ts');
     expect(ja).toContain('- ブランチ feat/x はマージ済み');
+    // other-project の値はフルパスのままプロンプトに載る(Phase B のゲート条件の前提)
+    expect(ja).toContain('- 本文が別の登録プロジェクト「/w/other」配下のパスを指している');
+    expect(ja).toContain(
+      '- この索引行は MEMORY.md の読み込み上限(200 行 / 25KB)の外にあり、毎セッション読まれていない',
+    );
     expect(ja).toContain('signals(機械が拾った鮮度の事実):\n(なし)');
     const en = buildPrompt(withSig, ctx, 'en', extra);
     expect(en).toContain('- latest date in body: 2026-06-01 (83 days ago)');
     expect(en).toContain('- branch feat/x is already merged');
+    expect(en).toContain('- the body points at a path under another registered project "/w/other"');
+    expect(en).toContain(
+      "- this index line is outside MEMORY.md's read limit (200 lines / 25KB) and is not read every session",
+    );
     expect(en).toContain('signals (freshness facts collected mechanically):\n(none)');
   });
 
@@ -737,12 +933,103 @@ describe('buildPrompt (一括診断のプロンプト)', () => {
     expect(en).toContain('not measurable');
     expect(en).not.toContain('Read: 0');
   });
+
+  /*
+   * プロジェクト不明(orphan。projectPath === null)のときだけ verdict 制限とスラッグ説明を載せる(判断 5)。
+   * projectPath が単に未指定(既存の ctx のように)のときは対象外(実際の呼び出しは常に null を渡す)。
+   */
+  it('projectPath が null のときだけ verdict 制限とスラッグの説明を ja / en とも載せる', () => {
+    const orphanCtx = { ...ctx, projectPath: null };
+    const ja = buildPrompt(targets, orphanCtx, 'ja');
+    expect(ja).toContain('verdict は keep / shrink / update のみを使うこと');
+    expect(ja).toContain('~/.claude/projects/<スラッグ>/memory/');
+    expect(ja).toContain('非英数字は "-" に置き換わっている');
+    const en = buildPrompt(targets, orphanCtx, 'en');
+    expect(en).toContain('verdict must be one of keep / shrink / update only');
+    expect(en).toContain('~/.claude/projects/<slug>/memory/');
+
+    // projectPath 無指定(undefined)は orphan 扱いしない = 制限文言は載らない
+    expect(buildPrompt(targets, ctx, 'ja')).not.toContain('verdict は keep / shrink / update のみ');
+    expect(buildPrompt(targets, ctx, 'en')).not.toContain(
+      'verdict must be one of keep / shrink / update only',
+    );
+  });
+
+  /*
+   * 制限と矛盾する節を同じプロンプトに載せない(判断 5)。候補一覧・「持ち主は上のプロジェクト」・
+   * 常設文脈(重複・昇格先の材料)はいずれも置き場所の判定を促すので、orphan では出さない
+   */
+  it('orphan では候補ブロック・持ち主の断定・常設文脈を出さず、候補なしの 1 行に差し替える', () => {
+    const orphanCtx = {
+      ...ctx,
+      projectPath: null,
+      rules: '## CLAUDE.md\n# 運用ルール',
+      skills: '- skill pr-create — PR を作る',
+    };
+    // 候補を返す candidatesOf を渡しても、候補一覧そのものが出ないことを見る
+    const cands = () => ['/w/other'];
+    const ja = buildPrompt(targets, orphanCtx, 'ja', undefined, cands);
+    expect(ja).not.toContain('この memory の持ち主は');
+    expect(ja).not.toContain('# wrong-project の移動先候補');
+    expect(ja).not.toContain('/w/other');
+    expect(ja).toContain('(プロジェクト不明のため wrong-project は選べない。候補なし)');
+    expect(ja).not.toContain('# このプロジェクトで常時有効なもの');
+    expect(ja).not.toContain('# 運用ルール');
+    // wrong-project の手順書き(適合表の行・出力スキーマの target 行・制約行)も orphan では出ない
+    expect(ja).not.toContain('| wrong-project |');
+    expect(ja).not.toContain('"target": "wrong-project のときのみ必須');
+    expect(ja).not.toContain('"target" に候補一覧のパスをそのまま入れる');
+    expect(ja).toContain(
+      '- verdict は keep / shrink / update のみを使う(それ以外はその件ごと不採用になる)',
+    );
+
+    const en = buildPrompt(targets, orphanCtx, 'en', undefined, cands);
+    expect(en).not.toContain('The memories belong to the project above');
+    expect(en).not.toContain('# Destination candidates for wrong-project');
+    expect(en).toContain('(unknown project: wrong-project cannot be chosen');
+    expect(en).not.toContain('# Always-on context for this project');
+    expect(en).not.toContain('| wrong-project |');
+    expect(en).not.toContain('"target": "required for wrong-project only');
+    expect(en).not.toContain('Use wrong-project only for a memory');
+    expect(en).toContain(
+      '- verdict must be one of keep / shrink / update; anything else makes that element unusable.',
+    );
+  });
+
+  /* orphan の追加文言: 鮮度の着地点(keep のまま)と、memory の実体の実パス(サーバーの確定事実) */
+  it('orphan では historical / obsolete でも keep と明示し、memory ディレクトリの実パスを渡す', () => {
+    const orphanCtx = { ...ctx, projectPath: null, memDir: '/h/.claude/projects/-w-gone/memory' };
+    const ja = buildPrompt(targets, orphanCtx, 'ja');
+    expect(ja).toContain('state が historical / obsolete でも verdict は keep とし');
+    expect(ja).toContain(
+      'このセクションの memory ディレクトリ: /h/.claude/projects/-w-gone/memory',
+    );
+    const en = buildPrompt(targets, orphanCtx, 'en');
+    expect(en).toContain('Even when the state is historical or obsolete, the verdict stays keep');
+    expect(en).toContain('memory directory of this section: /h/.claude/projects/-w-gone/memory');
+    // memDir が無ければ行ごと出さない(テンプレ表記だけ残る)
+    expect(buildPrompt(targets, { ...ctx, projectPath: null }, 'ja')).not.toContain(
+      'このセクションの memory ディレクトリ:',
+    );
+  });
+
+  /* orphan の真実源は ctx.orphan(セクション由来)。projectPath の有無で判定を分岐させない */
+  it('ctx.orphan が真なら projectPath があっても制限文言を載せる', () => {
+    const ja = buildPrompt(targets, { ...ctx, projectPath: '/w/alpha', orphan: true }, 'ja');
+    expect(ja).toContain('verdict は keep / shrink / update のみを使うこと');
+    expect(ja).not.toContain('# wrong-project の移動先候補');
+  });
 });
 
 describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
-  const section = (items: SkillItem[]): MemorySection => ({
+  /*
+   * 既定は逆引きできた(= 非 orphan)セクション。実環境ではプロジェクトが特定できている状態が
+   * 通常なので、orphan ゲートに関係しないテストが「たまたま orphan」で回らないようにする。
+   * orphan のケースは projectPath: null + orphan: true を明示して作る
+   */
+  const section = (items: SkillItem[], projectPath: string | null = '/w/proj'): MemorySection => ({
     id: '-tmp',
-    projectPath: null,
+    projectPath,
     projectName: 'tmp',
     note: tmp,
     usageAvailable: false,
@@ -762,7 +1049,12 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
 
   it('hash と lang が一致するときだけ aiTriage を付ける', () => {
     const it = memItem('at-a.md', 'aaa');
-    attachMemoryTriage([section([it])], 'ja', { [it.path]: entry({ hash: contentHash(it.path) }) });
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      { [it.path]: entry({ hash: contentHash(it.path) }) },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage).toEqual({
       verdict: 'delete',
       reason: '古い',
@@ -773,26 +1065,41 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
 
   it('state と診断時シグナルもキャッシュから載せる', () => {
     const it = memItem('at-s.md', 'sss');
-    attachMemoryTriage([section([it])], 'ja', {
-      [it.path]: entry({
-        hash: contentHash(it.path),
-        state: 'historical',
-        signals: [{ kind: 'branch-merged', value: 'feat/x' }],
-      }),
-    });
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      {
+        [it.path]: entry({
+          hash: contentHash(it.path),
+          state: 'historical',
+          signals: [{ kind: 'branch-merged', value: 'feat/x' }],
+        }),
+      },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage?.state).toBe('historical');
     expect(it.aiTriage?.signals).toEqual([{ kind: 'branch-merged', value: 'feat/x' }]);
   });
 
   it('本文が変わっていれば(hash 不一致)付けない', () => {
     const it = memItem('at-b.md', 'bbb');
-    attachMemoryTriage([section([it])], 'ja', { [it.path]: entry({ hash: 'stale-hash' }) });
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      { [it.path]: entry({ hash: 'stale-hash' }) },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage).toBeUndefined();
   });
 
   it('lang が違えば付けない', () => {
     const it = memItem('at-c.md', 'ccc');
-    attachMemoryTriage([section([it])], 'en', { [it.path]: entry({ hash: contentHash(it.path) }) });
+    attachMemoryTriage(
+      [section([it])],
+      'en',
+      { [it.path]: entry({ hash: contentHash(it.path) }) },
+      { sharedEnv: false },
+    );
     expect(it.aiTriage).toBeUndefined();
   });
 
@@ -800,8 +1107,63 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     const it = memItem('at-d.md', 'ddd');
     const store: TriageStore = { [it.path]: entry({ hash: contentHash(it.path) }) };
     fs.rmSync(it.path);
-    attachMemoryTriage([section([it])], 'ja', store);
+    attachMemoryTriage([section([it])], 'ja', store, { sharedEnv: false });
     expect(it.aiTriage).toBeUndefined();
+  });
+
+  /*
+   * ゲート導入前(v0.8.0)の wrong-project キャッシュ。移動先はモデルの散文任せで捏造を含みうるので、
+   * 表示・コピーの経路に載せない(= 未診断扱いにして再診断の CTA に乗せる)
+   */
+  it('ゲート導入前の wrong-project キャッシュ(target / demoted / error 無し)は付けない', () => {
+    const it = memItem('at-legacy.md', 'lll');
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      {
+        [it.path]: entry({
+          hash: contentHash(it.path),
+          state: 'current',
+          verdict: 'wrong-project',
+          instruction: '- /w/でっちあげ へ移す',
+        }),
+      },
+      { sharedEnv: false },
+    );
+    expect(it.aiTriage).toBeUndefined();
+  });
+
+  it('ゲートを通った wrong-project(target あり)と格下げ済み(demoted)はキャッシュから載せる', () => {
+    const a = memItem('at-wp.md', 'aaa');
+    const b = memItem('at-demoted.md', 'bbb');
+    attachMemoryTriage(
+      [section([a, b])],
+      'ja',
+      {
+        [a.path]: entry({
+          hash: contentHash(a.path),
+          state: 'current',
+          verdict: 'wrong-project',
+          instruction: '',
+          target: '/w/other',
+        }),
+        [b.path]: entry({
+          hash: contentHash(b.path),
+          state: 'current',
+          verdict: 'keep',
+          instruction: '',
+          demoted: 'wrong-project',
+        }),
+      },
+      { sharedEnv: false },
+    );
+    expect(a.aiTriage?.verdict).toBe('wrong-project');
+    expect(a.aiTriage?.target).toBe('/w/other');
+    // 移動先ディレクトリはキャッシュ値ではなく target から都度算出する
+    expect(a.aiTriage?.targetMemDir).toBe(
+      path.join(os.homedir(), '.claude', 'projects', '-w-other', 'memory'),
+    );
+    expect(b.aiTriage?.demoted).toBe('wrong-project');
   });
 
   /* ファイル消失時は contentHash も null を返して hash 比較が通ってしまうため、existsSync が唯一の防波堤 */
@@ -809,8 +1171,166 @@ describe('attachMemoryTriage (キャッシュ済み診断の付与)', () => {
     const it2 = memItem('at-e.md', 'eee');
     const store: TriageStore = { [it2.path]: entry({ hash: null }) };
     fs.rmSync(it2.path);
-    attachMemoryTriage([section([it2])], 'ja', store);
+    attachMemoryTriage([section([it2])], 'ja', store, { sharedEnv: false });
     expect(it2.aiTriage).toBeUndefined();
+  });
+
+  /*
+   * プロジェクト不明(orphan)セクションの verdict 制限(判断 5)。制限導入前に生成された
+   * delete / wrong-project 等のキャッシュは、保存値を書き換えず表示時に keep + demoted へ読み替える。
+   */
+  it('orphan セクションの旧キャッシュ(delete)は表示時に keep + demoted へ読み替える', () => {
+    const it = memItem('at-orphan-del.md', 'ooo');
+    const store: TriageStore = {
+      [it.path]: entry({
+        hash: contentHash(it.path),
+        verdict: 'delete',
+        instruction: '- 削除する',
+      }),
+    };
+    attachMemoryTriage([{ ...section([it], null), orphan: true }], 'ja', store, {
+      sharedEnv: false,
+    });
+    expect(it.aiTriage?.verdict).toBe('keep');
+    expect(it.aiTriage?.demoted).toBe('delete');
+    expect(it.aiTriage?.instruction).toBe('');
+    // 保存値そのものは書き換えない(表示時の読み替えのみ)
+    expect(store[it.path].verdict).toBe('delete');
+  });
+
+  it('orphan セクションでも keep / shrink / update はそのまま表示する', () => {
+    const it = memItem('at-orphan-shrink.md', 'ooo');
+    attachMemoryTriage(
+      [{ ...section([it], null), orphan: true }],
+      'ja',
+      {
+        [it.path]: entry({
+          hash: contentHash(it.path),
+          verdict: 'shrink',
+          instruction: '- 縮める',
+        }),
+      },
+      { sharedEnv: false },
+    );
+    expect(it.aiTriage?.verdict).toBe('shrink');
+    expect(it.aiTriage?.demoted).toBeUndefined();
+  });
+
+  it('orphan でないセクションでは delete をそのまま表示する(回帰防止)', () => {
+    const it = memItem('at-nonorphan-del.md', 'ooo');
+    attachMemoryTriage(
+      [section([it])],
+      'ja',
+      {
+        [it.path]: entry({ hash: contentHash(it.path), verdict: 'delete' }),
+      },
+      { sharedEnv: false },
+    );
+    expect(it.aiTriage?.verdict).toBe('delete');
+    expect(it.aiTriage?.demoted).toBeUndefined();
+  });
+
+  /*
+   * Phase B 形式(ゲートを通った wrong-project = target あり)のキャッシュも、
+   * orphan セクションでは置き場所の判定そのものが成立しないので移動先ごと落とす
+   */
+  it('orphan セクションでは target 付きの wrong-project キャッシュも移動先ごと落とす', () => {
+    const it = memItem('at-orphan-wp.md', 'ooo');
+    attachMemoryTriage(
+      [{ ...section([it], null), orphan: true }],
+      'ja',
+      {
+        [it.path]: entry({
+          hash: contentHash(it.path),
+          state: 'current',
+          verdict: 'wrong-project',
+          instruction: '',
+          target: '/w/other',
+        }),
+      },
+      { sharedEnv: false },
+    );
+    expect(it.aiTriage?.verdict).toBe('keep');
+    expect(it.aiTriage?.demoted).toBe('wrong-project');
+    expect(it.aiTriage?.target).toBeUndefined();
+    expect(it.aiTriage?.targetMemDir).toBeUndefined();
+  });
+
+  /*
+   * orphan を理由に格下げされた診断は、逆引きできるようになったセクションでは未診断扱いにする
+   * (制限つきの結果を、前提が変わった後も表示に残さない。isLegacyWrongProject と同じパターン)
+   */
+  it('非 orphan セクションでは demotedBy: "orphan" のキャッシュを付けない(再診断に乗せる)', () => {
+    const it = memItem('at-orphan-demoted.md', 'ooo');
+    const store: TriageStore = {
+      [it.path]: entry({
+        hash: contentHash(it.path),
+        state: 'current',
+        verdict: 'keep',
+        instruction: '',
+        demoted: 'delete',
+        demotedBy: 'orphan',
+      }),
+    };
+    attachMemoryTriage([section([it])], 'ja', store, { sharedEnv: false });
+    expect(it.aiTriage).toBeUndefined();
+    // 同じキャッシュでも orphan セクションのままなら表示する(格下げの記録つき)
+    const same = memItem('at-orphan-demoted2.md', 'ooo');
+    attachMemoryTriage(
+      [{ ...section([same], null), orphan: true }],
+      'ja',
+      {
+        [same.path]: { ...store[it.path], hash: contentHash(same.path) },
+      },
+      { sharedEnv: false },
+    );
+    expect(same.aiTriage?.demoted).toBe('delete');
+  });
+});
+
+/*
+ * 表示層の orphan ゲート単体(判断 5)。attachMemoryTriage / triageProject の両方が通す関数なので、
+ * 「何を落として何を残すか」をここで固定する
+ */
+describe('orphanTriage (プロジェクト不明セクションの表示ゲート)', () => {
+  const wp: MemoryTriage = {
+    verdict: 'wrong-project',
+    state: 'current',
+    reason: '別プロジェクトの話',
+    issues: ['/w/other 配下のパス'],
+    instruction: '- 移す',
+    target: '/w/other',
+    targetMemDir: '/h/.claude/projects/-w-other/memory',
+    body: { why: 'keep', how: 'keep', keepLines: [], index: 'keep' },
+  };
+
+  it('置き場所判定の産物(target / targetMemDir / body)を落として keep + 格下げ記録にする', () => {
+    const gated = orphanTriage(wp);
+    expect(gated.verdict).toBe('keep');
+    expect(gated.demoted).toBe('wrong-project');
+    expect(gated.demotedBy).toBe('orphan');
+    expect(gated.instruction).toBe('');
+    // 鍵ごと落とす(undefined を持たせない)。web の `...(x ? {} : {})` 系と同じ扱いにするため
+    expect('target' in gated).toBe(false);
+    expect('targetMemDir' in gated).toBe(false);
+    expect('body' in gated).toBe(false);
+    // 事実(state / reason / issues)は残す。行き先を採らないだけで観察は続ける
+    expect(gated.state).toBe('current');
+    expect(gated.issues).toEqual(['/w/other 配下のパス']);
+    expect(wp.target).toBe('/w/other'); // 入力は書き換えない
+  });
+
+  it('keep / shrink / update はそのまま返す(冪等)', () => {
+    const keep: MemoryTriage = { verdict: 'keep', reason: '', issues: [], instruction: '' };
+    expect(orphanTriage(keep)).toBe(keep);
+    const shrink: MemoryTriage = { ...wp, verdict: 'shrink' };
+    expect(orphanTriage(shrink)).toBe(shrink);
+  });
+
+  /* 出力不正は行き先を持たない(既存の防御節テストと同じく、素通りすることを固定する) */
+  it('出力不正(error)は素通りする', () => {
+    const broken: MemoryTriage = { ...wp, error: 'invalid-output' };
+    expect(orphanTriage(broken)).toBe(broken);
   });
 });
 
@@ -919,10 +1439,10 @@ describe('collectTriageContext (常設文脈の収集)', () => {
     expect(skills).not.toContain('nested');
   });
 
-  /* 孤児は projectPath が無いのでプロジェクトの CLAUDE.md を特定できない(~/.claude のみ残る) */
-  it('孤児(projectPath null)はホームの見出しだけを載せ、skills は user scope のみ', () => {
+  /* プロジェクト不明は projectPath が無いのでプロジェクトの CLAUDE.md を特定できない(~/.claude のみ残る) */
+  it('プロジェクト不明(projectPath null)はホームの見出しだけを載せ、skills は user scope のみ', () => {
     const r = collectTriageContext({ ...sec, projectPath: null }, sections, { home });
-    expect(r.rules).toContain('# SV-TEST-HOME-HEADING'); // ホーム分は孤児でも載る
+    expect(r.rules).toContain('# SV-TEST-HOME-HEADING'); // ホーム分はプロジェクト不明でも載る
     expect(r.rules).not.toContain('## CLAUDE.md');
     expect(r.rules).not.toContain('## .claude/CLAUDE.md');
     expect(r.rules).not.toContain('# SV-TEST-PROJ-HEADING');
@@ -972,5 +1492,915 @@ describe('collectTriageContext の上限ガード', () => {
     );
     const { rules } = collectTriageContext(sec, [], { home });
     expect(rules.split('\n')).toHaveLength(80);
+  });
+});
+
+/*
+ * 計画 13 Phase B: wrong-project の安全化。
+ * 「サーバー確定事実はモデルに書かせない」ため、移動先は機械シグナル(other-project)を根拠に
+ * 候補からの選択だけを受け取り、シグナルが無い件は keep へ格下げして観察を続ける。
+ */
+describe('parseTriage の wrong-project ゲート(判断 2 / 3)', () => {
+  const files = ['a.md'];
+  const wp = (over: Record<string, unknown> = {}) =>
+    JSON.stringify([
+      {
+        file: 'a.md',
+        state: 'current',
+        verdict: 'wrong-project',
+        reason: '別プロジェクトの話',
+        issues: ['/w/other 配下のパス'],
+        instruction: '- 別プロジェクトへ移す',
+        ...over,
+      },
+    ]);
+
+  it('other-project シグナルが無い件は keep へ格下げし、demoted に元の verdict を残す', () => {
+    const m = parseTriage(wp({ target: '/w/other' }), files); // 候補マップを渡さない = シグナル無し
+    expect(m.get('a.md')).toEqual({
+      verdict: 'keep',
+      state: 'current',
+      reason: '別プロジェクトの話',
+      issues: ['/w/other 配下のパス'],
+      // 捏造された移動先を含みうるので指示文は捨てる(貼れるものを出さない)
+      instruction: '',
+      demoted: 'wrong-project',
+      // 内容側の理由。環境条件(orphan)とは区別して記録し、再診断の判定に混ぜない
+      demotedBy: 'no-signal',
+    });
+  });
+
+  it('候補があれば target を採用し、移動先の memory ディレクトリを server が組む', () => {
+    const m = parseTriage(
+      wp({ target: '/w/other' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]),
+    );
+    const r = m.get('a.md')!;
+    expect(r.verdict).toBe('wrong-project');
+    expect(r.target).toBe('/w/other');
+    expect(r.targetMemDir).toBe(
+      path.join(os.homedir(), '.claude', 'projects', '-w-other', 'memory'),
+    );
+    expect(r.demoted).toBeUndefined();
+    // 採用された件でもモデルの散文は残さない(指示文は web がテンプレートで組む唯一の出典)
+    expect(r.instruction).toBe('');
+  });
+
+  it('移動先が確定していれば instruction が空でも採用する(指示文は web がテンプレートで組む)', () => {
+    const m = parseTriage(
+      wp({ target: '/w/other', instruction: '' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]),
+    );
+    expect(m.get('a.md')?.verdict).toBe('wrong-project');
+    expect(m.get('a.md')?.error).toBeUndefined();
+  });
+
+  /*
+   * 2026-08-25 変更: 候補外・欠落 target は「出力不正」から候補なしと同じ格下げへ。
+   * 出力不正だと state・reason・issues まで消えて force 再診断まで固定されるため、
+   * 移動先を 1 回取り違えただけで診断情報が全部失われていた(捏造遮断は格下げでも成立する)
+   */
+  it.each([
+    ['候補外', { target: '/w/guess' }],
+    ['欠落', {}],
+  ])('target が%sなら keep + demoted へ格下げし、state・reason は残す', (_label, over) => {
+    const cands = new Map([['a.md', ['/w/other']]]);
+    const r = parseTriage(wp(over), files, new Map(), cands).get('a.md')!;
+    expect(r).toEqual({
+      verdict: 'keep',
+      state: 'current',
+      reason: '別プロジェクトの話',
+      issues: ['/w/other 配下のパス'],
+      instruction: '', // 捏造された移動先を含みうるので指示文は捨てる
+      demoted: 'wrong-project',
+      demotedBy: 'no-signal',
+    });
+    expect(r.error).toBeUndefined();
+  });
+
+  it('候補外の target でも共有ストア環境なら demotedBy は shared-env(環境が解消したら再診断)', () => {
+    const m = parseTriage(
+      wp({ target: '/w/guess' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]),
+      { sharedEnv: true },
+    );
+    expect(m.get('a.md')?.demotedBy).toBe('shared-env');
+  });
+
+  /*
+   * 候補はプロンプトへ promptPath(200 字切り)を通した表示で載るので、モデルは表示どおりに
+   * しか返せない。生パスで照合すると長いパスが必ず出力不正になる(表示 → 生パスの写像で解決する)
+   */
+  it('200 字を超える候補は、表示どおりの target でも生パスに解決して採用する', () => {
+    const long = '/w/' + 'x'.repeat(300);
+    const m = parseTriage(
+      wp({ target: promptPath(long) }),
+      files,
+      new Map(),
+      new Map([['a.md', [long]]]),
+    );
+    expect(m.get('a.md')?.verdict).toBe('wrong-project');
+    expect(m.get('a.md')?.target).toBe(long); // 切り詰めた表示ではなく生パスを採用
+  });
+
+  it('切り詰めが衝突する 2 候補はどちらも解決不能(格下げ)', () => {
+    const base = '/w/' + 'x'.repeat(300);
+    const cands = [base + '/alpha', base + '/beta']; // 200 字で切ると同じ表示になる
+    for (const target of [promptPath(cands[0]), cands[0]]) {
+      const r = parseTriage(wp({ target }), files, new Map(), new Map([['a.md', cands]])).get(
+        'a.md',
+      )!;
+      expect(r.error).toBeUndefined();
+      expect(r.verdict).toBe('keep');
+      expect(r.demoted).toBe('wrong-project');
+      expect(r.target).toBeUndefined(); // どちらか決められない移動先は採らない
+    }
+  });
+
+  it('wrong-project 以外の verdict は候補の有無に関係なく従来どおり', () => {
+    const m = parseTriage(
+      wp({ verdict: 'delete', target: '/w/guess' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]),
+    );
+    expect(m.get('a.md')?.verdict).toBe('delete');
+    expect(m.get('a.md')?.target).toBeUndefined(); // 移動先を持つのは wrong-project だけ
+  });
+
+  /* 候補は「件ごと」。他の件に出た候補を流用させない(シグナルの無い件は移動先を持てない) */
+  it('候補は件単位で、他の件の候補は使えない(その件は格下げ)', () => {
+    const both = JSON.stringify([
+      {
+        file: 'a.md',
+        state: 'current',
+        verdict: 'wrong-project',
+        reason: 'a',
+        issues: [],
+        instruction: '- 移す',
+        target: '/w/other',
+      },
+      {
+        file: 'b.md',
+        state: 'current',
+        verdict: 'wrong-project',
+        reason: 'b',
+        issues: [],
+        instruction: '- 移す',
+        target: '/w/other',
+      },
+    ]);
+    const m = parseTriage(both, ['a.md', 'b.md'], new Map(), new Map([['b.md', ['/w/other']]]));
+    expect(m.get('a.md')?.verdict).toBe('keep');
+    expect(m.get('a.md')?.demoted).toBe('wrong-project');
+    expect(m.get('a.md')?.target).toBeUndefined();
+    expect(m.get('b.md')?.verdict).toBe('wrong-project');
+    expect(m.get('b.md')?.target).toBe('/w/other');
+  });
+});
+
+describe('parseTriage のプロジェクト不明(orphan)verdict 制限(判断 5)', () => {
+  const files = ['a.md'];
+  const answer = (over: Record<string, unknown> = {}) =>
+    JSON.stringify([
+      {
+        file: 'a.md',
+        state: 'current',
+        verdict: 'delete',
+        reason: '重複',
+        issues: ['CLAUDE.md に同じ記述'],
+        instruction: '- 削除する',
+        ...over,
+      },
+    ]);
+
+  it('delete は keep + demoted: "delete" に格下げし、指示文は捨てる(出力不正ではない)', () => {
+    const m = parseTriage(answer(), files, new Map(), new Map(), { orphan: true });
+    expect(m.get('a.md')).toEqual({
+      verdict: 'keep',
+      state: 'current',
+      reason: '重複',
+      issues: ['CLAUDE.md に同じ記述'],
+      instruction: '',
+      demoted: 'delete',
+      // 環境条件(逆引き不能)が理由の格下げ。解消したら再診断へ乗せるための目印
+      demotedBy: 'orphan',
+    });
+  });
+
+  it('wrong-project は候補があっても格下げする(orphan は置き場所の判定そのものができない)', () => {
+    const m = parseTriage(
+      answer({ verdict: 'wrong-project', target: '/w/other' }),
+      files,
+      new Map(),
+      new Map([['a.md', ['/w/other']]]), // 候補ありでも採用しない
+      { orphan: true },
+    );
+    expect(m.get('a.md')?.verdict).toBe('keep');
+    expect(m.get('a.md')?.demoted).toBe('wrong-project');
+    expect(m.get('a.md')?.target).toBeUndefined();
+  });
+
+  it.each(['to-claude-md', 'to-user-claude-md', 'to-docs', 'to-skill'] as const)(
+    '%s も格下げする',
+    (verdict) => {
+      const m = parseTriage(answer({ verdict }), files, new Map(), new Map(), { orphan: true });
+      expect(m.get('a.md')?.verdict).toBe('keep');
+      expect(m.get('a.md')?.demoted).toBe(verdict);
+      expect(m.get('a.md')?.demotedBy).toBe('orphan');
+    },
+  );
+
+  it.each(['keep', 'shrink', 'update'] as const)('%s はそのまま素通りする', (verdict) => {
+    const m = parseTriage(
+      answer({ verdict, instruction: verdict === 'keep' ? '' : '- 直す' }),
+      files,
+      new Map(),
+      new Map(),
+      {
+        orphan: true,
+      },
+    );
+    expect(m.get('a.md')?.verdict).toBe(verdict);
+    expect(m.get('a.md')?.demoted).toBeUndefined();
+  });
+
+  it('orphan フラグ無し(既定)では従来どおり delete がそのまま通る', () => {
+    const m = parseTriage(answer(), files);
+    expect(m.get('a.md')?.verdict).toBe('delete');
+    expect(m.get('a.md')?.demoted).toBeUndefined();
+    expect(m.get('a.md')?.demotedBy).toBeUndefined();
+  });
+
+  /* 鮮度側の行き先は orphan でも生きているので、body(残す / 削る分類)まで通ることを固定する */
+  it('shrink は body プラン(feedback テンプレの材料)を付けたまま素通りする', () => {
+    const bodyText = 'ルール行\n\n**Why:** 理由\n\n**How to apply:** 例外: 緊急時は除く';
+    const m = parseTriage(
+      answer({
+        verdict: 'shrink',
+        instruction: '- 縮める',
+        body: {
+          why: 'keep',
+          how: 'keep-lines-only',
+          keep_lines: ['例外: 緊急時は除く'],
+          index: 'keep',
+        },
+      }),
+      files,
+      new Map([['a.md', bodyText]]),
+      new Map(),
+      { orphan: true },
+    );
+    expect(m.get('a.md')?.verdict).toBe('shrink');
+    expect(m.get('a.md')?.body).toEqual({
+      why: 'keep',
+      how: 'keep-lines-only',
+      keepLines: ['例外: 緊急時は除く'],
+      index: 'keep',
+    });
+  });
+
+  /* 索引と本文の食い違いは置き場所と無関係な事実なので、格下げしても落とさない(UI の警告の材料) */
+  it('格下げした件でも index_matches_body: false は indexMatchesBody として残る', () => {
+    const m = parseTriage(answer({ index_matches_body: false }), files, new Map(), new Map(), {
+      orphan: true,
+    });
+    expect(m.get('a.md')?.indexMatchesBody).toBe(false);
+    expect(m.get('a.md')?.demotedBy).toBe('orphan');
+  });
+});
+
+describe('targetMemDirOf (移動先の memory ディレクトリ)', () => {
+  /* 期待値も絶対パスで組む(コピー文のパス表記を `~/` と混在させないための変更) */
+  const memDir = (project: string) =>
+    path.join(os.homedir(), '.claude', 'projects', encodeProjectPath(project), 'memory');
+
+  it('実在する memory dir を算出より優先する(登録パス自身の slug に memory が既にあるならそれが正)', () => {
+    // 擬似 HOME を注入(tmp 配下 = afterAll で一括削除)。親リポジトリ配下のサブディレクトリだが、
+    // 自身の slug に本文ファイル入りの memory が実在するケース
+    const home = fs.mkdtempSync(path.join(tmp, 'tmd-home-'));
+    const repo = path.join(tmp, 'tm-own-repo');
+    const sub = path.join(repo, 'frontend');
+    fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+    fs.mkdirSync(sub, { recursive: true });
+    const own = path.join(home, '.claude', 'projects', encodeProjectPath(sub), 'memory');
+    fs.mkdirSync(own, { recursive: true });
+    fs.writeFileSync(path.join(own, 'x.md'), '---\nname: x\n---\n本文');
+    expect(targetMemDirOf(sub, home)).toBe(own); // repoRootOf(= repo)より実在を優先
+    // 空ディレクトリ(残骸)は実在扱いしない: x.md を消すと算出(リポジトリルート)へ落ちる
+    fs.rmSync(path.join(own, 'x.md'));
+    expect(targetMemDirOf(sub, home)).toBe(
+      path.join(home, '.claude', 'projects', encodeProjectPath(repo), 'memory'),
+    );
+  });
+
+  it('submodule は親リポジトリに束ねない(.git がリポジトリ境界。自身の slug になる)', () => {
+    const parent = path.join(tmp, 'tm-sm-parent');
+    const sm = path.join(parent, 'vendor', 'sub');
+    fs.mkdirSync(path.join(parent, '.git'), { recursive: true });
+    fs.mkdirSync(sm, { recursive: true });
+    // submodule の .git ファイル(gitdir が .git/modules/... を指す = mainWorktreeOf は null)
+    fs.writeFileSync(
+      path.join(sm, '.git'),
+      'gitdir: ' + path.join(parent, '.git', 'modules', 'sub') + '\n',
+    );
+    expect(targetMemDirOf(sm)).toBe(memDir(sm)); // 親(tm-sm-parent)の slug にならない
+  });
+
+  it('worktree はメインワークツリーの slug になる(memory はリポジトリ単位で共有されるため)', () => {
+    const main = path.join(tmp, 'tm-repo');
+    const wt = path.join(tmp, 'tm-repo-feat');
+    fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+    fs.mkdirSync(wt, { recursive: true });
+    fs.writeFileSync(
+      path.join(wt, '.git'),
+      'gitdir: ' + path.join(main, '.git', 'worktrees', 'feat') + '\n',
+    );
+    expect(targetMemDirOf(wt)).toBe(memDir(main));
+    expect(targetMemDirOf(main)).toBe(memDir(main)); // メイン自身も同じ
+  });
+
+  /* ~/.claude.json には「リポジトリのサブディレクトリ」が普通に登録される(自分の .git は無い) */
+  it('サブディレクトリ登録のプロジェクトはリポジトリのルートの slug になる', () => {
+    const repo = path.join(tmp, 'tm-sub-repo');
+    const sub = path.join(repo, 'frontend');
+    fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+    fs.mkdirSync(sub, { recursive: true });
+    expect(targetMemDirOf(sub)).toBe(memDir(repo));
+  });
+
+  it('git 管理下でないパス(祖先にも .git が無い)はそのパス自身の slug', () => {
+    const plain = path.join(tmp, 'tm-plain');
+    fs.mkdirSync(plain, { recursive: true });
+    expect(targetMemDirOf(plain)).toBe(memDir(plain));
+  });
+});
+
+describe('promptPath (プロンプトに埋めるパスの無害化)', () => {
+  it('改行を落として 1 行にし、長さも切る(節や箇条書きの偽装を防ぐ)', () => {
+    expect(promptPath('/w/a\n- 偽の指示\r\n/w/b')).toBe('/w/a - 偽の指示 /w/b');
+    expect(promptPath('/w/' + 'x'.repeat(300))).toHaveLength(200);
+  });
+});
+
+describe('buildPrompt の移動先候補(wrong-project は候補からの選択にする)', () => {
+  const ctx = { projectName: 'alpha', index: '', usageAvailable: true };
+  const withSig = memItem('c-sig.md', '---\nname: sig\n---\n本文', {
+    signals: [{ kind: 'other-project', value: '/w/other' }],
+  });
+  const plain = memItem('c-plain.md', '---\nname: plain\n---\n本文');
+
+  it('シグナルのあるパスを「どの件で出たか」と一緒に列挙し、target を出力スキーマに足す', () => {
+    for (const lang of ['ja', 'en'] as const) {
+      const prompt = buildPrompt([withSig, plain], ctx, lang);
+      expect(prompt).toContain(
+        '- /w/other' + (lang === 'ja' ? '(該当: ' : ' (seen in: ') + 'c-sig.md)',
+      );
+      expect(prompt).toContain('"target"');
+    }
+  });
+
+  it('候補が 1 件も無ければ「wrong-project は選べない」と明示する(節ごと落とさない)', () => {
+    expect(buildPrompt([plain], ctx, 'ja')).toContain('wrong-project は選べない');
+    expect(buildPrompt([plain], ctx, 'en')).toContain('wrong-project cannot be chosen');
+  });
+
+  it('候補は呼び出し側の絞り込み(登録プロジェクト)を通す', () => {
+    const prompt = buildPrompt([withSig], ctx, 'ja', undefined, () => []);
+    expect(prompt).not.toContain('- /w/other(該当:');
+    expect(prompt).toContain('候補なし');
+  });
+});
+
+describe('candidatesFor (移動先候補の登録プロジェクト絞り込み)', () => {
+  const sec = (otherProjects?: string[]): MemorySection => ({
+    id: '-w-alpha',
+    projectPath: '/w/alpha',
+    projectName: 'alpha',
+    note: tmp,
+    usageAvailable: false,
+    indexTokens: 0,
+    items: [],
+    ...(otherProjects ? { otherProjects } : {}),
+  });
+  const signals: MemorySignal[] = [
+    { kind: 'other-project', value: '/w/other' },
+    { kind: 'date', value: '2026-06-01', days: 1 },
+  ];
+
+  it('シグナル値が otherProjects にあれば候補になる', () => {
+    expect(candidatesFor(sec(['/w/other']), signals)).toEqual(['/w/other']);
+  });
+
+  it('otherProjects に無い / undefined なら候補は空(wrong-project を選ばせない)', () => {
+    expect(candidatesFor(sec(['/w/another']), signals)).toEqual([]);
+    expect(candidatesFor(sec(), signals)).toEqual([]);
+  });
+});
+
+describe('selectStale: ゲート導入前の wrong-project キャッシュ', () => {
+  const entry = (over: Partial<TriageStore[string]> = {}): TriageStore[string] => ({
+    verdict: 'wrong-project',
+    state: 'current',
+    reason: '',
+    issues: [],
+    instruction: '- 移す',
+    hash: null,
+    lang: 'ja',
+    generatedAt: '',
+    ...over,
+  });
+
+  it('target も demoted も無い wrong-project は hash が一致しても再診断に乗せる', () => {
+    const a = memItem('ws-old.md', 'aaa');
+    const store: TriageStore = { [a.path]: entry({ hash: contentHash(a.path) }) };
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false })).toHaveLength(1);
+  });
+
+  /*
+   * demoted / error は現状 verdict が keep になるためこの組み合わせは出ないが、
+   * 防御節(!demoted / !error)が実際に効いていることを見るため verdict は wrong-project のまま与える
+   */
+  /*
+   * orphan 格下げは環境条件(未マウント・登録抹消)で起きるので、条件が解消したら自動で再診断へ。
+   * orphan のままなら再診断しない(同じ制限で同じ結果になるだけで、call が無駄になる)
+   */
+  it('orphan 格下げのキャッシュは、非 orphan セクションでだけ stale になる', () => {
+    const a = memItem('ws-orphan.md', 'aaa');
+    const store: TriageStore = {
+      [a.path]: entry({
+        hash: contentHash(a.path),
+        verdict: 'keep',
+        instruction: '',
+        demoted: 'delete',
+        demotedBy: 'orphan',
+      }),
+    };
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false })).toHaveLength(1); // orphan 未指定 = 非制限
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false, orphan: true })).toHaveLength(
+      0,
+    );
+  });
+
+  /* no-signal(内容側の理由)の格下げは環境が変わっても再診断しない */
+  it('demotedBy: "no-signal" の格下げは非 orphan セクションでも stale にしない', () => {
+    const a = memItem('ws-nosignal.md', 'aaa');
+    const store: TriageStore = {
+      [a.path]: entry({
+        hash: contentHash(a.path),
+        verdict: 'keep',
+        instruction: '',
+        demoted: 'wrong-project',
+        demotedBy: 'no-signal',
+      }),
+    };
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false })).toHaveLength(0);
+  });
+
+  it('target あり・格下げ済み(demoted)・出力不正(error)の wrong-project は stale にしない', () => {
+    const a = memItem('ws-new.md', 'aaa');
+    const b = memItem('ws-demoted.md', 'bbb');
+    const c = memItem('ws-error.md', 'ccc');
+    const store: TriageStore = {
+      [a.path]: entry({ hash: contentHash(a.path), target: '/w/other' }),
+      [b.path]: entry({ hash: contentHash(b.path), instruction: '', demoted: 'wrong-project' }),
+      [c.path]: entry({ hash: contentHash(c.path), instruction: '', error: 'invalid-output' }),
+    };
+    expect(selectStale([a, b, c], store, 'ja', false, { sharedEnv: false })).toHaveLength(0);
+  });
+});
+
+/*
+ * 配線の 1 本通し(判断 5)。プロンプト生成 → parseTriage の制限 → 表示ゲートまでが
+ * 同じ orphan フラグで動くことを、モデル呼び出しだけ差し替えて確かめる。
+ * 診断キャッシュ(~/.cache/skills-viewer)は擬似 HOME 下に切り離す(実環境のキャッシュを汚さない)。
+ */
+describe('triageProject のプロジェクト不明(orphan)配線', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('候補なしのプロンプトを作り、置き場所の verdict を格下げして返す', async () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'tp-home-'));
+    vi.stubEnv('HOME', home); // TRIAGE_FILE はモジュール読み込み時に決まるので、import より先に差す
+    vi.resetModules();
+    const { triageProject } = await import('../src/server/memory-triage');
+
+    const memDir = fs.mkdtempSync(path.join(tmp, 'tp-mem-'));
+    const file = path.join(memDir, 'tp-note.md');
+    fs.writeFileSync(file, '---\nname: tp-note\n---\n/w/other/src の設定を直した');
+    const item: SkillItem = {
+      name: 'tp-note',
+      description: '',
+      argumentHint: '',
+      version: '',
+      kind: 'memory',
+      path: file,
+      files: [],
+      // 別の登録プロジェクト配下のパス = 非 orphan なら wrong-project の候補になるシグナル
+      signals: [{ kind: 'other-project', value: '/w/other' }],
+    };
+    const sec: MemorySection = {
+      id: '-w-gone',
+      projectPath: null,
+      projectName: '-w-gone',
+      note: memDir,
+      orphan: true,
+      usageAvailable: false,
+      indexTokens: 0,
+      otherProjects: ['/w/other'],
+      items: [item],
+    };
+
+    let prompt = '';
+    const results = await triageProject(sec, 'ja', 'haiku', {
+      run: async (p: string) => {
+        prompt = p;
+        return JSON.stringify([
+          {
+            file: 'tp-note.md',
+            state: 'obsolete',
+            verdict: 'delete',
+            index_matches_body: true,
+            reason: '役目を終えている',
+            issues: ['参照パスが存在しない'],
+            instruction: '- 削除する',
+            target: '/w/other',
+          },
+        ]);
+      },
+    });
+
+    // プロンプト: 候補ブロックを出さず、memory の実体の実パスを渡す
+    expect(prompt).not.toContain('# wrong-project の移動先候補');
+    expect(prompt).toContain('(プロジェクト不明のため wrong-project は選べない。候補なし)');
+    expect(prompt).toContain('このセクションの memory ディレクトリ: ' + memDir);
+    // 結果: parseTriage の制限が効き、貼れる指示文と移動先は残らない
+    expect(results).toHaveLength(1);
+    expect(results[0].verdict).toBe('keep');
+    expect(results[0].demoted).toBe('delete');
+    expect(results[0].instruction).toBe('');
+    expect(results[0].target).toBeUndefined();
+    // キャッシュにも格下げの理由が残る(orphan 解消後の再診断の材料)
+    const store = JSON.parse(
+      fs.readFileSync(path.join(home, '.cache', 'skills-viewer', 'memory-triage.json'), 'utf8'),
+    );
+    expect(store[file].demotedBy).toBe('orphan');
+  });
+});
+
+/*
+ * 計画 13 Phase D レビュー対応: user scope の autoMemoryDirectory による「共有ストア」。
+ * 全プロジェクトが 1 つの置き場を共有するため帰属を特定できず、棚卸しは orphan と同じ制限に乗る。
+ */
+describe('共有ストア(sharedStore)の制限', () => {
+  const targets = [memItem('sh-a.md', '---\nname: sh-a\n---\n本文')];
+  const baseCtx = {
+    projectName: 'mem-store',
+    index: '',
+    usageAvailable: true,
+    memDir: '/h/mem-store',
+  };
+
+  it('buildPrompt: 共有ストアの理由を ja / en とも書き、逆引き失敗の文面は出さない', () => {
+    const ctx = { ...baseCtx, projectPath: null, orphan: true, sharedStore: true };
+    const ja = buildPrompt(targets, ctx, 'ja');
+    expect(ja).toContain('autoMemoryDirectory(user scope)の設定による全プロジェクト共有');
+    expect(ja).not.toContain('逆引きに失敗している');
+    // 制限そのもの(verdict 3 値・置き場所の判定なし)は orphan と同じ
+    expect(ja).toContain('verdict は keep / shrink / update のみを使うこと');
+    expect(ja).toContain('このセクションの memory ディレクトリ: /h/mem-store');
+    const en = buildPrompt(targets, ctx, 'en');
+    expect(en).toContain('shared by every project (autoMemoryDirectory configured in user scope)');
+    expect(en).not.toContain('failed to resolve back to a registered project');
+    expect(en).toContain('verdict must be one of keep / shrink / update only');
+  });
+
+  it('buildPrompt: sharedStore でない制限(プロジェクト不明)は従来の文面のまま', () => {
+    const ja = buildPrompt(targets, { ...baseCtx, projectPath: null, orphan: true }, 'ja');
+    expect(ja).toContain('逆引きに失敗している');
+    expect(ja).not.toContain('全プロジェクト共有');
+  });
+
+  it('attachMemoryTriage: 共有ストアのセクションにも表示ゲートがかかる', () => {
+    const it0 = memItem('sh-gate.md', 'ggg');
+    const store: TriageStore = {
+      [it0.path]: {
+        verdict: 'delete',
+        state: 'obsolete',
+        reason: 'r',
+        issues: [],
+        instruction: '- 消す',
+        hash: triageHash(it0),
+        lang: 'ja',
+        generatedAt: '',
+      },
+    };
+    const sec: MemorySection = {
+      id: 'auto-h-mem-store',
+      projectPath: null,
+      projectName: 'mem-store',
+      note: '/h/mem-store',
+      autoDir: true,
+      sharedStore: true,
+      usageAvailable: false,
+      indexTokens: 0,
+      items: [it0],
+    };
+    attachMemoryTriage([sec], 'ja', store, { sharedEnv: false });
+    expect(it0.aiTriage?.verdict).toBe('keep');
+    expect(it0.aiTriage?.demoted).toBe('delete');
+    expect(it0.aiTriage?.instruction).toBe('');
+  });
+});
+
+/*
+ * 計画 13 Phase D round2: 格下げ理由の区分。制限つきの格下げは
+ * 「orphan セクションなら 'orphan' / 共有ストアなら 'shared-env'」で、解消条件が違う
+ * (orphan = 帰属が決まる / shared-env = user scope の autoMemoryDirectory を外す)。
+ * 生成側(parseTriage)・表示ゲート(orphanTriage)・再診断(selectStale)で同じ区分を使う。
+ */
+describe('格下げ理由の区分(orphan / shared-env)', () => {
+  const files = ['a.md'];
+  const answer = () =>
+    JSON.stringify([
+      {
+        file: 'a.md',
+        state: 'obsolete',
+        verdict: 'delete',
+        reason: '重複',
+        issues: [],
+        instruction: '- 消す',
+      },
+    ]);
+
+  it('parseTriage: 制限の理由が共有ストアなら shared-env、プロジェクト不明なら orphan', () => {
+    const shared = parseTriage(answer(), files, new Map(), new Map(), {
+      orphan: true,
+      sharedStore: true,
+    });
+    expect(shared.get('a.md')?.demoted).toBe('delete');
+    expect(shared.get('a.md')?.demotedBy).toBe('shared-env');
+
+    const orphan = parseTriage(answer(), files, new Map(), new Map(), { orphan: true });
+    expect(orphan.get('a.md')?.demotedBy).toBe('orphan');
+  });
+
+  it('orphanTriage: sharedStore を渡した表示ゲートも shared-env で記録する(生成側と同じ区分)', () => {
+    const e: MemoryTriage = {
+      verdict: 'delete',
+      state: 'obsolete',
+      reason: '重複',
+      issues: [],
+      instruction: '- 消す',
+    };
+    expect(orphanTriage(e, true).demotedBy).toBe('shared-env');
+    expect(orphanTriage(e).demotedBy).toBe('orphan');
+  });
+
+  it('attachMemoryTriage: 共有ストアの表示ゲートは shared-env、プロジェクト不明は orphan', () => {
+    const shared = memItem('db-shared.md', 'sss');
+    const orphan = memItem('db-orphan.md', 'ooo');
+    const store: TriageStore = {
+      [shared.path]: {
+        verdict: 'delete',
+        state: 'obsolete',
+        reason: 'r',
+        issues: [],
+        instruction: '- 消す',
+        hash: triageHash(shared),
+        lang: 'ja',
+        generatedAt: '',
+      },
+      [orphan.path]: {
+        verdict: 'delete',
+        state: 'obsolete',
+        reason: 'r',
+        issues: [],
+        instruction: '- 消す',
+        hash: triageHash(orphan),
+        lang: 'ja',
+        generatedAt: '',
+      },
+    };
+    const sec = (item: SkillItem, over: Partial<MemorySection>): MemorySection => ({
+      id: 'sec-' + item.name,
+      projectPath: null,
+      projectName: 'x',
+      note: tmp,
+      usageAvailable: false,
+      indexTokens: 0,
+      items: [item],
+      ...over,
+    });
+    attachMemoryTriage(
+      [sec(shared, { autoDir: true, sharedStore: true }), sec(orphan, { orphan: true })],
+      'ja',
+      store,
+      { sharedEnv: true },
+    );
+    expect(shared.aiTriage?.demotedBy).toBe('shared-env');
+    expect(orphan.aiTriage?.demotedBy).toBe('orphan');
+  });
+
+  /* 解消条件の違い: shared-env は「制限が解ける」だけでなく「設定も外れる」まで有効 */
+  it('selectStale / attachMemoryTriage: shared-env は設定が残っている間は失効しない', () => {
+    const a = memItem('db-stale.md', 'aaa');
+    const cached: TriageStore[string] = {
+      verdict: 'keep',
+      state: 'current',
+      reason: '',
+      issues: [],
+      instruction: '',
+      demoted: 'delete',
+      demotedBy: 'shared-env',
+      hash: triageHash(a),
+      lang: 'ja',
+      generatedAt: '',
+    };
+    const store: TriageStore = { [a.path]: cached };
+    // 共有ストアのまま(制限つき)= 再診断しない
+    expect(selectStale([a], store, 'ja', false, { orphan: true, sharedEnv: true })).toHaveLength(0);
+    // 制限は解けたが user scope の設定は残っている = 同じ格下げが再現するだけなので呼び直さない
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: true })).toHaveLength(0);
+    // 設定も外れた = 環境条件が消えたので再診断へ乗せる
+    expect(selectStale([a], store, 'ja', false, { sharedEnv: false })).toHaveLength(1);
+
+    // 表示側も同じ判定(設定が残っていれば出す / 消えたら未診断扱い)
+    const shown = memItem('db-shown.md', 'aaa');
+    attachMemoryTriage(
+      [{ ...secOf(shown) }],
+      'ja',
+      { [shown.path]: { ...cached, hash: triageHash(shown) } },
+      { sharedEnv: true },
+    );
+    expect(shown.aiTriage?.demoted).toBe('delete');
+    const hidden = memItem('db-hidden.md', 'aaa');
+    attachMemoryTriage(
+      [{ ...secOf(hidden) }],
+      'ja',
+      {
+        [hidden.path]: { ...cached, hash: triageHash(hidden) },
+      },
+      { sharedEnv: false },
+    );
+    expect(hidden.aiTriage).toBeUndefined();
+  });
+
+  /* 帰属が決まった(非制限)セクションの素の並び。上のテストで使い回す */
+  function secOf(item: SkillItem): MemorySection {
+    return {
+      id: 'sec-plain-' + item.name,
+      projectPath: '/w/proj',
+      projectName: 'proj',
+      note: tmp,
+      usageAvailable: false,
+      indexTokens: 0,
+      items: [item],
+    };
+  }
+
+  it('triageProject: 共有ストアの配線でも格下げ理由は shared-env(キャッシュにも残る)', async () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'sh-home-'));
+    vi.stubEnv('HOME', home); // TRIAGE_FILE はモジュール読み込み時に決まるので import より先に差す
+    vi.resetModules();
+    const { triageProject } = await import('../src/server/memory-triage');
+    const memDir = fs.mkdtempSync(path.join(tmp, 'sh-mem-'));
+    const file = path.join(memDir, 'sh-note.md');
+    fs.writeFileSync(file, '---\nname: sh-note\n---\n本文');
+    const item: SkillItem = {
+      name: 'sh-note',
+      description: '',
+      argumentHint: '',
+      version: '',
+      kind: 'memory',
+      path: file,
+      files: [],
+    };
+    const sec: MemorySection = {
+      id: 'auto-sh',
+      projectPath: null,
+      projectName: 'mem-store',
+      note: memDir,
+      autoDir: true,
+      sharedStore: true,
+      usageAvailable: false,
+      indexTokens: 0,
+      items: [item],
+    };
+    const results = await triageProject(sec, 'ja', 'haiku', {
+      autoMemory: { dir: memDir, scope: 'user' },
+      run: async () =>
+        JSON.stringify([
+          {
+            file: 'sh-note.md',
+            state: 'obsolete',
+            verdict: 'delete',
+            reason: '重複',
+            issues: [],
+            instruction: '- 消す',
+          },
+        ]),
+    });
+    expect(results[0].verdict).toBe('keep');
+    expect(results[0].demoted).toBe('delete');
+    expect(results[0].demotedBy).toBe('shared-env');
+    expect(results[0].instruction).toBe('');
+    const store = JSON.parse(
+      fs.readFileSync(path.join(home, '.cache', 'skills-viewer', 'memory-triage.json'), 'utf8'),
+    );
+    expect(store[file].demotedBy).toBe('shared-env');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+});
+
+/*
+ * 計画 13 Phase D レビュー対応 M4: user scope の autoMemoryDirectory が効いている環境では
+ * 全プロジェクトの memory が 1 つの置き場を共有するので、「別プロジェクトの memory dir へ移す」
+ * という移動先の概念自体が成立しない。共有ストア以外のセクションでも候補を組まない。
+ */
+describe('triageProject の wrong-project 候補(user scope autoMemoryDirectory 環境)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function run(autoMemory: { dir: string; scope: 'user' | 'project' } | null) {
+    const home = fs.mkdtempSync(path.join(tmp, 'wp-home-'));
+    vi.stubEnv('HOME', home);
+    vi.resetModules();
+    const { triageProject } = await import('../src/server/memory-triage');
+    const memDir = fs.mkdtempSync(path.join(tmp, 'wp-mem-'));
+    const file = path.join(memDir, 'wp-note.md');
+    fs.writeFileSync(file, '---\nname: wp-note\n---\n/w/other/src の設定を直した');
+    const item: SkillItem = {
+      name: 'wp-note',
+      description: '',
+      argumentHint: '',
+      version: '',
+      kind: 'memory',
+      path: file,
+      files: [],
+      signals: [{ kind: 'other-project', value: '/w/other' }],
+    };
+    const sec: MemorySection = {
+      id: 'wp-sec',
+      projectPath: '/w/here',
+      projectName: 'here',
+      note: memDir,
+      usageAvailable: false,
+      indexTokens: 0,
+      otherProjects: ['/w/other'],
+      items: [item],
+    };
+    let prompt = '';
+    const results = await triageProject(sec, 'ja', 'haiku', {
+      autoMemory,
+      run: async (p: string) => {
+        prompt = p;
+        return JSON.stringify([
+          {
+            file: 'wp-note.md',
+            state: 'current',
+            verdict: 'wrong-project',
+            index_matches_body: true,
+            reason: '別プロジェクトの話',
+            issues: [],
+            instruction: '- 移す',
+            target: '/w/other',
+          },
+        ]);
+      },
+    });
+    return { prompt, results };
+  }
+
+  it('user scope なら候補を組まず、wrong-project は候補なしとして keep に格下げされる', async () => {
+    const { prompt, results } = await run({ dir: '/h/mem-store', scope: 'user' });
+    expect(prompt).toContain('(候補なし。どの件にも');
+    expect(prompt).not.toContain('- /w/other(該当:');
+    expect(results[0].verdict).toBe('keep');
+    expect(results[0].demoted).toBe('wrong-project');
+    // 内容側(no-signal)ではなく環境条件。設定を外せば候補が組めるので再診断に乗せられる
+    expect(results[0].demotedBy).toBe('shared-env');
+    expect(results[0].target).toBeUndefined();
+  });
+
+  it('project scope(または未設定)なら従来どおり候補を組み、移動先が確定する', async () => {
+    const { prompt, results } = await run({ dir: '/w/here/mem', scope: 'project' });
+    expect(prompt).toContain('- /w/other(該当: wp-note.md)');
+    expect(results[0].verdict).toBe('wrong-project');
+    expect(results[0].target).toBe('/w/other');
   });
 });

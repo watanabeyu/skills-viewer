@@ -1,4 +1,12 @@
-import type { FeedbackBodyPlan, Section, SkillGroup, SkillItem, Source } from './api';
+import type {
+  FeedbackBodyPlan,
+  MemorySection,
+  MemoryVerdict,
+  Section,
+  SkillGroup,
+  SkillItem,
+  Source,
+} from './api';
 import { itemKey } from './api';
 import { t } from './i18n';
 
@@ -176,8 +184,10 @@ export type MemorySortKey = 'index' | 'body' | 'updated' | 'name';
 export function sortMemory<T extends SkillItem>(items: T[], sort: MemorySortKey): T[] {
   const arr = [...items];
   const byName = (a: T, b: T) => a.name.localeCompare(b.name);
-  if (sort === 'index')
-    arr.sort((a, b) => (b.indexTokens || 0) - (a.indexTokens || 0) || byName(a, b));
+  // 読み込み上限(200 行 / 25KB)の外にある索引行は実際には注入されないので 0 として並べる
+  // (「減らす価値が高い順」の意図と、セクション合計 indexTokens の数え方に揃える)
+  const indexCost = (it: T) => (it.indexBeyondLimit ? 0 : it.indexTokens || 0);
+  if (sort === 'index') arr.sort((a, b) => indexCost(b) - indexCost(a) || byName(a, b));
   else if (sort === 'body')
     arr.sort((a, b) => (b.bodyTokens || 0) - (a.bodyTokens || 0) || byName(a, b));
   // 更新が古い順(棚卸し候補が先頭に来る)。更新日不明は末尾。
@@ -235,13 +245,21 @@ export const memoryResolver =
  */
 export function triageEstimate(it: SkillItem): { index: number; always: number } | null {
   const v = it.aiTriage?.verdict;
-  const index = it.indexTokens || 0;
+  // 読み込み上限(200 行 / 25KB)の外にある索引行は元から注入されていないので、消しても常時コストは
+  // 減らない。セクション合計(MemorySection.indexTokens)と同じ規則にしないと、
+  // 「適用後 = 合計 + 差分」が上限外の件のぶんだけ負に振れる
+  const index = it.indexBeyondLimit ? 0 : it.indexTokens || 0;
+  // 索引行が消える分。0 のときは -0 を作らない(表示・合算では同値だが値の比較で 0 と食い違う)
+  const drop = index === 0 ? 0 : -index;
   // to-skill は SKILL.md 側(元から常時注入されている description ではなく本文)へ移すので、
   // memory 側は索引が消えるだけ = to-docs と同じ試算になる
   if (v === 'delete' || v === 'to-docs' || v === 'wrong-project' || v === 'to-skill')
-    return { index: -index, always: 0 };
-  // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)
-  if (v === 'to-claude-md') return { index: -index, always: it.bodyTokens || 0 };
+    return { index: drop, always: 0 };
+  // CLAUDE.md 行きは索引 1 行が消える代わりに本文全体が毎セッション注入になる(多くの場合は増加)。
+  // user scope の CLAUDE.md 行きも 1 プロジェクト分の会計としては同じ式(増える先が全プロジェクトに
+  // 変わるだけで、この画面が見ているプロジェクトの毎セッション増分は本文 tok)
+  if (v === 'to-claude-md' || v === 'to-user-claude-md')
+    return { index: drop, always: it.bodyTokens || 0 };
   return null;
 }
 
@@ -275,13 +293,76 @@ export function buildFeedbackInstruction(it: SkillItem, plan: FeedbackBodyPlan):
   return lines.join('\n');
 }
 
+/*
+ * wrong-project の指示文もテンプレートで組む。移動先(target / targetMemDir)は機械シグナルを
+ * 根拠に server が確定させた事実で、モデルには候補からの選択しかさせていない。ここでは
+ * 言語文面だけを足す(捏造された移動先が指示文に混ざらないように、散文は使わない)。
+ */
+export function buildWrongProjectInstruction(
+  it: SkillItem,
+  target: string,
+  targetMemDir: string,
+): string {
+  return [
+    t('memory.triage.tpl.wpMove', { file: fileName(it.path), target, dir: targetMemDir }),
+    t('memory.triage.tpl.wpCheck'),
+    t('memory.triage.tpl.wpIndex'),
+    // 索引行の無い memory は毎セッション注入されない = 「移したのに使われない」で終わるので、
+    // 削除だけでなく移動先への索引行の追加まで必ず指示する
+    t('memory.triage.tpl.wpIndexAdd'),
+    t('memory.triage.tpl.wpLink'),
+  ].join('\n');
+}
+
 /* 表示・コピーに使う指示文。分類(body)があればテンプレート、無ければ AI の散文 */
 export function effectiveInstruction(it: SkillItem): string {
   const tri = it.aiTriage;
   if (!tri || tri.error || tri.verdict === 'keep') return '';
-  if (tri.body && (tri.verdict === 'shrink' || tri.verdict === 'update'))
-    return buildFeedbackInstruction(it, tri.body);
-  return tri.instruction;
+  const body =
+    tri.body && (tri.verdict === 'shrink' || tri.verdict === 'update')
+      ? buildFeedbackInstruction(it, tri.body)
+      : tri.verdict === 'wrong-project' && tri.target && tri.targetMemDir
+        ? buildWrongProjectInstruction(it, tri.target, tri.targetMemDir)
+        : tri.instruction;
+  /*
+   * 先頭に対象ファイルのフルパスを機械生成で付ける(モデル出力ではない)。
+   * コピーボタンを使わず画面の文面を手で選択して貼る利用があり、その場合は前置きも
+   * 事実ヘッダも欠落する。どのセッションに貼られても対象の同一性だけは崩れないよう、
+   * 指示文そのものにアンカーを持たせる(テンプレ・散文とも一律)
+   */
+  return body ? t('memory.triage.tpl.target', { path: it.path }) + '\n' + body : body;
+}
+
+/* 試算の符号付き表記(0 は増減なしを明示するため ±0) */
+export const signed = (n: number) =>
+  (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n).toLocaleString();
+
+/*
+ * 削減試算のラベル。機械層で計算する(AI に数値を出させない)。
+ * shrink / update は索引が変わらないので数値でなく文言だけ、keep は空。
+ * コンポーネントでなくここに置くのは、verdict × 上限外の分岐(特に to-user-claude-md の
+ * 「全プロジェクト」注記)をテストで固定するため(コンポーネントテスト基盤は無い)。
+ */
+export function estimateLabel(it: SkillItem): string {
+  if (it.aiTriage?.verdict === 'shrink') return t('memory.triage.estShrink');
+  if (it.aiTriage?.verdict === 'update') return t('memory.triage.estUpdate');
+  const est = triageEstimate(it);
+  if (!est) return '';
+  // 読み込み上限の外にある索引行は元から注入されていないので、消しても常時コストは減らない。
+  // 「索引 ±0」だけだと変更なしに見えるため、減らない理由まで書く(delete / to-docs / … 系)
+  if (it.indexBeyondLimit && est.always === 0) return t('memory.triage.estApplyBeyond');
+  // user scope の CLAUDE.md 行きは増える先が全プロジェクトなので、同じ式でも文言を分ける
+  if (it.aiTriage?.verdict === 'to-user-claude-md' && est.always > 0)
+    return t('memory.triage.estApplyUserClaude', {
+      n: signed(est.index),
+      m: est.always.toLocaleString(),
+    });
+  if (est.always > 0)
+    return t('memory.triage.estApplyClaude', {
+      n: signed(est.index),
+      m: est.always.toLocaleString(),
+    });
+  return t('memory.triage.estApply', { n: signed(est.index) });
 }
 
 /* 提案(指示文)のある memory だけ。サマリ・まとめコピーが同じ母集団を見るよう 1 箇所に置く */
@@ -294,13 +375,56 @@ export const instructionsOf = (items: SkillItem[]) =>
  */
 export const withPreamble = (body: string) => t('memory.triage.copyPreamble') + '\n\n' + body;
 
-/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用)。前置きは先頭に 1 回だけ */
-export const joinInstructions = (items: SkillItem[]) =>
-  withPreamble(
-    instructionsOf(items)
-      .map((it) => '## ' + it.name + '\n\n' + effectiveInstruction(it))
-      .join('\n\n'),
+/*
+ * コピー本文の事実ヘッダ。どの memory ディレクトリ・どのプロジェクトの・どのファイルの話かは
+ * スキャン結果から機械生成する(AI に書かせない)。貼り先が対象を取り違えないための土台なので、
+ * まとめコピーにも単件コピーにも同じ形で付ける。
+ */
+export const factHeader = (sec: MemorySection, files: string[]) =>
+  t('memory.triage.hdr.dir', {
+    dir: sec.note,
+    project: sec.projectPath ?? t('memory.triage.hdr.unknownProject'),
+  }) +
+  '\n' +
+  t('memory.triage.hdr.files', { files: files.join(', ') });
+
+/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用)。前置き + 事実ヘッダは先頭に 1 回だけ */
+export const joinInstructions = (sec: MemorySection) => {
+  const items = instructionsOf(sec.items);
+  return withPreamble(
+    factHeader(
+      sec,
+      items.map((it) => fileName(it.path)),
+    ) +
+      '\n\n' +
+      items.map((it) => '## ' + it.name + '\n\n' + effectiveInstruction(it)).join('\n\n'),
   );
+};
+
+/* 単件コピーの本文(前置き + 事実ヘッダ + その 1 件の指示文) */
+export const copyInstruction = (sec: MemorySection, it: SkillItem) =>
+  withPreamble(factHeader(sec, [fileName(it.path)]) + '\n\n' + effectiveInstruction(it));
+
+/*
+ * 提案が 1 種類に偏っているか(非 keep が 5 件以上で、その 8 割以上が同じ行き先)。
+ * v0.8.0 で全件に誤った wrong-project が出た事故のような「プロジェクトの特定ミス」は
+ * 偏りとして現れるため、verdict は上書きせず警告だけを出す材料にする。
+ * 出力不正(error)は行き先を持たないので母数から外す。
+ * 格下げ済み(demoted)は verdict 上は keep だが、モデルの答えとしては偏りの証拠そのものなので
+ * 元の verdict として数える(発端の「全件シグナル無し wrong-project」でもバナーが出るように)。
+ */
+export function skewedVerdict(items: SkillItem[]): MemoryVerdict | null {
+  const verdicts = items
+    .map((it) => it.aiTriage)
+    .filter((tri) => tri && !tri.error)
+    .map((tri) => tri!.demoted ?? tri!.verdict)
+    .filter((v) => v !== 'keep');
+  if (verdicts.length < 5) return null;
+  const counts = new Map<MemoryVerdict, number>();
+  for (const v of verdicts) counts.set(v, (counts.get(v) || 0) + 1);
+  const [top] = [...counts].sort((a, b) => b[1] - a[1]);
+  return top[1] / verdicts.length >= 0.8 ? top[0] : null;
+}
 
 /* memory 一覧(view=memory)へ戻る URL。詳細のタブ状態は持ち越さない(次のカードが本文タブで開くのを防ぐ) */
 export function memoryListSearch(params: URLSearchParams): string {

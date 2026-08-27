@@ -67,7 +67,7 @@ describe('missingPaths (参照パスの実在)', () => {
     expect(missingPaths(body, proj, home)).toEqual([]);
   });
 
-  it('projectPath が無い(孤児)なら相対パスは判定せず、絶対と ~/ だけ見る', () => {
+  it('projectPath が無い(プロジェクト不明)なら相対パスは判定せず、絶対と ~/ だけ見る', () => {
     const body = 'src/gone.ts と ~/.claude/missing.md';
     expect(missingPaths(body, null, home)).toEqual(['~/.claude/missing.md']);
   });
@@ -114,7 +114,12 @@ describe('extractSignals (テキスト / fs 層のまとめ)', () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'stale.md'), '---\nname: stale\n---\n`src/gone.ts` はマージ済');
     fs.writeFileSync(path.join(dir, 'fresh.md'), '---\nname: fresh\n---\n方針のみ');
-    const [sec] = scanMemory(proj, { root, projects: [proj], mainWorktree: null });
+    const [sec] = scanMemory(proj, {
+      root,
+      projects: [proj],
+      mainWorktree: null,
+      autoMemoryDir: null,
+    });
     const stale = sec.items.find((it) => it.name === 'stale')!;
     expect(stale.signals?.map((s) => s.kind)).toEqual(['path-missing', 'done-words']);
     expect(sec.items.find((it) => it.name === 'fresh')!.signals).toBeUndefined();
@@ -236,14 +241,34 @@ describe('otherProjectRefs / other-project (別プロジェクトの配下パス
   const viewer = path.join(home, 'work', 'skills-viewer');
   const others = [viewer, path.join(home, 'work', 'cheap-trick')];
 
-  it('絶対パス・~/ の両方で、登録プロジェクトの配下を指していれば basename を返す(重複なし・最大 2)', () => {
+  it('絶対パス・~/ の両方で、登録プロジェクトの配下を指していればフルパスを返す(重複なし)', () => {
     const body = `このツールは ~/work/skills-viewer/ で開発。実体は ${viewer}/src/cli.ts。関係ない ${weall}/apps は自分`;
-    expect(otherProjectRefs(body, home, others)).toEqual(['skills-viewer']);
+    expect(otherProjectRefs(body, home, others)).toEqual([viewer]);
     expect(
       otherProjectRefs('~/work/skills-viewer-2/x と ~/.cache/skills-viewer/', home, others),
     ).toEqual([]);
     expect(otherProjectRefs('何もない', home, others)).toEqual([]);
     expect(otherProjectRefs('~/work/skills-viewer/a', home, [])).toEqual([]);
+  });
+
+  /*
+   * 入れ子で登録されたプロジェクト(親と子が両方 ~/.claude.json にある)では、
+   * 子配下への参照 1 つが親子 2 候補を生んでいた。粗い親は移動先の判断を誤らせるので最長一致だけ採る
+   */
+  it('親子ともに登録されていても、1 つの参照が採るのは最長一致(子)だけ', () => {
+    const parent = path.join(home, 'work', 'mono');
+    const child = path.join(parent, 'packages', 'app');
+    expect(otherProjectRefs(`${child}/src/index.ts を見る`, home, [parent, child])).toEqual([
+      child,
+    ]);
+    // 親そのものを指す参照なら親が最長一致
+    expect(otherProjectRefs(`${parent}/README.md を見る`, home, [parent, child])).toEqual([parent]);
+  });
+
+  it('候補は最大 3 件(4 件目以降は落とす)', () => {
+    const projects = ['a', 'b', 'c', 'd'].map((n) => path.join(home, 'work', n));
+    const body = projects.map((p) => `${p}/src/x.ts`).join(' と ');
+    expect(otherProjectRefs(body, home, projects)).toEqual(projects.slice(0, 3));
   });
 
   it('scanMemory は自分自身と worktree 関係のプロジェクトを候補から外す', () => {
@@ -264,7 +289,11 @@ describe('otherProjectRefs / other-project (別プロジェクトの配下パス
       path.join(dir, 'a.md'),
       `---\nname: a\n---\n${wt}/apps は自分の worktree、${other}/src は別プロジェクト`,
     );
-    const [sec] = scanMemory(main, { root, projects: [main, wt, other] });
-    expect(sec.items[0].signals).toEqual([{ kind: 'other-project', value: 'other' }]);
+    const [sec] = scanMemory(main, {
+      root,
+      projects: [main, wt, other],
+      autoMemoryDir: null,
+    });
+    expect(sec.items[0].signals).toEqual([{ kind: 'other-project', value: other }]);
   });
 });

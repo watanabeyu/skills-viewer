@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { apiErrorMessage, getLang, setLang, t } from '../web/src/i18n';
+import { DICTS, apiErrorMessage, getLang, setLang, t } from '../web/src/i18n';
+import type { MsgKey } from '../web/src/i18n';
 import { headingOf, scopeLabelOf } from '../web/src/util';
 import type { Section } from '../src/shared/types';
 
@@ -20,6 +21,21 @@ describe('t (辞書引き + 置換)', () => {
 
   it('params に無いプレースホルダはそのまま残す(設定例文の {path} など)', () => {
     expect(t('settings.customNeedsPath')).toContain('{path}');
+  });
+});
+
+/*
+ * 文言だけを訳したときに {name} を落とす / 綴り違いで置換されないまま出す事故を止める。
+ * t は params に無いプレースホルダをそのまま残す実装なので、片方の言語でだけ壊れていても
+ * 画面に「{n}」が出るまで気づけない。キー単位で集合比較して機械的に落とす。
+ */
+describe('辞書のプレースホルダ整合', () => {
+  const placeholders = (s: string) => new Set([...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+
+  it.each(Object.keys(DICTS.en) as MsgKey[])('%s の {name} が en / ja で一致する', (key) => {
+    expect([...placeholders(DICTS.ja[key])].sort()).toEqual(
+      [...placeholders(DICTS.en[key])].sort(),
+    );
   });
 });
 
@@ -60,5 +76,30 @@ describe('headingOf / scopeLabelOf (構造化 Section から見出しを組み�
   it('scopeLabelOf は project 名 or source 名', () => {
     expect(scopeLabelOf(proj)).toBe('monorepo');
     expect(scopeLabelOf(user)).toBe('user');
+  });
+});
+
+/*
+ * usageTitle(共有ストアの合算注記)。表示ヘルパだが純関数なのでここで固定する
+ * (関数を消す・注記を落とす退行で 742 テストが緑のままだった穴を塞ぐ番犬)
+ */
+import { usageTitle } from '../web/src/components/MemoryBits';
+import type { MemorySection } from '../src/shared/types';
+
+describe('usageTitle (共有ストアの合算注記)', () => {
+  const sec = () => ({ items: [] }) as unknown as MemorySection;
+  it('共有ストアなら base に合算注記を連結する(2 行)', () => {
+    const title = usageTitle({ sharedStore: true } as unknown as MemorySection, 'base');
+    expect(title!.split('\n')[0]).toBe('base');
+    expect(title).toContain(t('memory.usage.sharedTitle'));
+  });
+  it('共有ストアで base 無しなら注記だけを返す', () => {
+    expect(usageTitle({ sharedStore: true } as unknown as MemorySection)).toBe(
+      t('memory.usage.sharedTitle'),
+    );
+  });
+  it('共有ストアでなければ base をそのまま / base も無ければ undefined(title="" を吐かない)', () => {
+    expect(usageTitle(sec(), 'base')).toBe('base');
+    expect(usageTitle(sec())).toBeUndefined();
   });
 });

@@ -5,11 +5,13 @@ import {
   toId,
   triageMemory,
   type MemorySection,
+  type MemorySignal,
   type MemoryTriage,
   type SkillItem,
   type SkillsData,
 } from '../api';
 import {
+  copyInstruction,
   copyText,
   effectiveInstruction,
   fileName,
@@ -17,13 +19,15 @@ import {
   joinInstructions,
   memoryListSearch,
   memoryResolver,
+  skewedVerdict,
+  estimateLabel,
+  signed,
   triageEstimate,
-  withPreamble,
 } from '../util';
 import { memoryVerdictLabel, t } from '../i18n';
 import { splitFrontmatter } from '../md';
 import { KindBadge } from './GridView';
-import { MemoryTypeBadge, TokFacts } from './MemoryBits';
+import { MemoryPathSub, MemoryTypeBadge, TokFacts, usageTitle } from './MemoryBits';
 import { renderMemoryBody } from './MemoryDetail';
 
 /*
@@ -31,26 +35,6 @@ import { renderMemoryBody } from './MemoryDetail';
  * 判断は 3 層(機械 = 事実の提示 / AI = 行き先の仮説と指示文 / 人間 = 指示文を貼るかどうか)で、
  * viewer は採否の選択状態を持たない。操作はコピーだけ、実行は貼り先の Claude Code に委ねる。
  */
-
-/* 試算の符号付き表記(0 は増減なしを明示するため ±0) */
-const signed = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n).toLocaleString();
-
-/*
- * 削減試算のラベル。機械層で計算する(AI に数値を出させない)。
- * shrink / update は索引が変わらないので数値でなく文言だけ、keep は空。
- */
-function estimateLabel(it: SkillItem): string {
-  if (it.aiTriage?.verdict === 'shrink') return t('memory.triage.estShrink');
-  if (it.aiTriage?.verdict === 'update') return t('memory.triage.estUpdate');
-  const est = triageEstimate(it);
-  if (!est) return '';
-  if (est.always > 0)
-    return t('memory.triage.estApplyClaude', {
-      n: signed(est.index),
-      m: est.always.toLocaleString(),
-    });
-  return t('memory.triage.estApply', { n: signed(est.index) });
-}
 
 /* 1 件の棚卸しを実行(詳細画面の「✦ 棚卸し診断」)。診断済みなら force で診断し直す */
 export const runTriageOne = (sec: MemorySection, it: SkillItem) =>
@@ -95,27 +79,54 @@ export function VerdictBadge({ tri }: { tri: MemoryTriage }) {
 }
 
 /*
+ * 機械シグナルが無い wrong-project を keep へ格下げした件の注記
+ * (判断 5 のプロジェクト不明セクションでの格下げも含む)。
+ * 提案としては出さないが、握り潰さず「自分で確認して」と伝えるため verdict バッジの隣に置く。
+ */
+export function DemotedNote({ tri }: { tri: MemoryTriage }) {
+  if (!tri.demoted) return null;
+  return (
+    <span className="issue warn" title={t('memory.triage.demotedTitle')}>
+      ⚠ {t('memory.triage.demoted')}
+    </span>
+  );
+}
+
+/* 行き先に関わらず出す警告シグナルの kind。Extract で綴りの間違いもコンパイル時に落ちる */
+type WarnSignalKind = Extract<MemorySignal['kind'], 'other-project' | 'index-mismatch'>;
+
+/*
  * 診断結果の本体(棚卸し行 / 詳細ブロックで共用)。理由 → issues → 指示文。
  * 指示文は折りたたまず全文を出す(貼るかどうかの判断がここで完結するように)。
  */
-function TriageResult({ it }: { it: SkillItem }) {
+function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
   const tri = it.aiTriage;
   // 出力不正の件は理由・根拠・指示文・試算のいずれも信用できないので何も出さない
   if (!tri || tri.error) return null;
   // 分類(body)があればテンプレートの指示文、無ければ AI の散文
   const instruction = effectiveInstruction(it);
-  // 行き先に関わらず必ず見せる事実(置き場所の誤り・索引と本文の食い違い)。verdict が keep でも消えない
+  // 行き先に関わらず必ず見せる事実(置き場所の誤り・索引と本文の食い違い)。verdict が keep でも消えない。
+  // 型述語で kind を絞るのは i18n キー(memory.signal.<kind>)を型で結び付けるため。
+  // 文言を消す / この一覧へ kind を足して文言を書き忘れると typecheck が落ちる。
+  // MemorySignalKind への追加自体は web では検出できない(警告に出したい kind はここへ手で足す)
   const warns = [...(it.signals || []), ...(tri.signals || [])].filter(
-    (s) => s.kind === 'other-project' || s.kind === 'index-mismatch',
+    (s): s is MemorySignal & { kind: WarnSignalKind } =>
+      s.kind === 'other-project' || s.kind === 'index-mismatch',
   );
   return (
     <>
-      {tri.reason && <p className="reason">{tri.reason}</p>}
+      {/* 格下げ件の理由文は機械シグナルの裏付けが無いモデルの見立てなので、事実と混ぜずラベルを付ける */}
+      {tri.reason && (
+        <p className="reason">
+          {tri.demoted && t('memory.triage.demotedReason')}
+          {tri.reason}
+        </p>
+      )}
       {!!warns.length && (
         <div className="issues">
           {warns.map((s, i) => (
             <span className="issue warn" key={'w' + i}>
-              ⚠ {t(`memory.signal.${s.kind}` as 'memory.signal.other-project', { value: s.value })}
+              ⚠ {t(`memory.signal.${s.kind}`, { value: s.value })}
             </span>
           ))}
         </div>
@@ -123,8 +134,14 @@ function TriageResult({ it }: { it: SkillItem }) {
       {!!tri.issues.length && (
         <div className="issues">
           {/* 同じ文言が 2 件返り得るので key は index(並びは AI 出力のまま固定) */}
+          {/* 格下げ件の issues は採用しなかった行き先の根拠なので、機械が裏付けた事実チップと
+              同じ見た目にしない(左アクセントで区別し、未検証であることを title で補う) */}
           {tri.issues.map((issue, i) => (
-            <span className="issue" key={i}>
+            <span
+              className={tri.demoted ? 'issue demoted' : 'issue'}
+              title={tri.demoted ? t('memory.triage.demotedTitle') : undefined}
+              key={i}
+            >
               {issue}
             </span>
           ))}
@@ -135,7 +152,8 @@ function TriageResult({ it }: { it: SkillItem }) {
           <div className="instr-h">
             <span className="instr-t">{t('memory.triage.instruction')}</span>
             <span className="instr-d">{estimateLabel(it)}</span>
-            <CopyButton className="copybtn" text={withPreamble(instruction)} />
+            {/* コピー本文は前置き + 事実ヘッダ(対象ディレクトリ・プロジェクト・ファイル)付き */}
+            <CopyButton className="copybtn" text={copyInstruction(sec, it)} />
           </div>
           <div className="instr-body">{instruction}</div>
         </div>
@@ -158,8 +176,9 @@ export function MemoryTriageBox({ it, sec }: { it: SkillItem; sec: MemorySection
     <div className="diag-box triage-box">
       <div className="nmline">
         <VerdictBadge tri={tri} />
+        <DemotedNote tri={tri} />
       </div>
-      <TriageResult it={it} />
+      <TriageResult it={it} sec={sec} />
       <button
         className="triage-whole"
         onClick={() =>
@@ -293,6 +312,8 @@ export function MemoryTriageView({
 
   const untriagedCount = sec.items.filter((it) => !it.aiTriage).length;
   const proposals = instructionsOf(sec.items);
+  // 提案が 1 種類に偏っているときは、行き先より先に「プロジェクトの特定」を疑ってもらう
+  const skew = skewedVerdict(sec.items);
   // 出力不正は verdict keep / 指示文なしで入っているので、現状維持の件数から除いて別に数える
   const errorCount = sec.items.filter((it) => it.aiTriage?.error).length;
   const keepCount = sec.items.length - untriagedCount - proposals.length - errorCount;
@@ -341,6 +362,7 @@ export function MemoryTriageView({
                 : t('memory.triage.rerun')}
           </button>
         </div>
+        <MemoryPathSub sec={sec} />
       </div>
       <div className="triage-pad">
         <div className="sec-t mem tri">
@@ -353,6 +375,13 @@ export function MemoryTriageView({
                 e: errorCount,
               })}
         </div>
+        {/* 偏り警告。verdict は上書きせず、確認の順序(まずプロジェクトの特定)だけを促す */}
+        {skew && !busy && (
+          <div className="chg-banner warn">
+            <span className="chg-title">⚠ {memoryVerdictLabel(skew)}</span>
+            <span>{t('memory.triage.skew')}</span>
+          </div>
+        )}
         {/* 入口の「✦ 棚卸し診断」は遷移だけで AI は走らない。未診断・診断中は行の上で状態を明示する */}
         {busy ? (
           <div className="triage-cta busy">
@@ -409,11 +438,12 @@ export function MemoryTriageView({
                 <MemoryTypeBadge it={it} />
                 {/* 未診断の行は verdict 無しで事実だけを出す */}
                 {it.aiTriage && <VerdictBadge tri={it.aiTriage} />}
+                {it.aiTriage && <DemotedNote tri={it.aiTriage} />}
                 <span className="toks">
                   <TokFacts it={it} bold />
                   {/* 参照回数はトランスクリプトが無いプロジェクトでは判定不能なので出さない */}
                   {sec.usageAvailable && (
-                    <span title={t('memory.readsTitle')}>
+                    <span title={usageTitle(sec, t('memory.readsTitle'))}>
                       {it.useCount
                         ? t('memory.triage.seen', { n: it.useCount })
                         : t('memory.triage.unseen')}
@@ -421,7 +451,7 @@ export function MemoryTriageView({
                   )}
                 </span>
               </div>
-              <TriageResult it={it} />
+              <TriageResult it={it} sec={sec} />
             </div>
           ))}
         </div>
@@ -450,7 +480,7 @@ export function MemoryTriageView({
             <span className="note">{t('memory.triage.footNote')}</span>
             <CopyButton
               className="apply"
-              text={joinInstructions(sec.items)}
+              text={joinInstructions(sec)}
               label={t('memory.triage.copyAll', { n: proposals.length })}
             />
           </div>

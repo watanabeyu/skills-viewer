@@ -38,6 +38,12 @@ export type MemoryVerdict =
   | 'keep'
   | 'shrink'
   | 'to-claude-md'
+  /*
+   * user scope の ~/.claude/CLAUDE.md へ。auto memory はリポジトリ単位でしか存在しないため、
+   * プロジェクト横断で効かせたい user / feedback 型の置き場はここしかない(判断 11)。
+   * 全プロジェクトの毎セッションに本文が乗るので、to-claude-md より適用は控えめに倒す
+   */
+  | 'to-user-claude-md'
   | 'to-docs'
   | 'delete'
   | 'wrong-project'
@@ -82,10 +88,17 @@ export type MemorySignalKind =
   | 'first-line-restates'
   /* feedback として本文が長い(value = tok) */
   | 'body-over'
-  /* 本文が別の登録プロジェクトの配下パスを指す(value = そのプロジェクト名)。置き場所の誤りの機械的な根拠 */
+  /* 本文が別の登録プロジェクトの配下パスを指す(value = そのプロジェクトのフルパス。
+   * 同名プロジェクトを区別するため basename にしない)。置き場所の誤りの機械的な根拠 */
   | 'other-project'
   /* AI が「索引行と本文が違うことを言っている」と答えた(診断時。value = description の冒頭) */
-  | 'index-mismatch';
+  | 'index-mismatch'
+  /*
+   * この索引行が MEMORY.md の読み込み上限(先頭 200 行 or 25KB、先に達した方)の外にある
+   * (公式仕様。value = ファイル全体基準の行番号)。書いてあっても毎セッション注入されないため、
+   * 常時コストには数えない(MemorySection.indexTokens は除外して合算する)
+   */
+  | 'index-beyond-limit';
 export interface MemorySignal {
   kind: MemorySignalKind;
   value: string;
@@ -109,6 +122,38 @@ export interface MemoryTriage {
   body?: FeedbackBodyPlan;
   /* 索引行(description)と本文が同じことを言っているか(全件で AI に答えさせる。欠落は undefined) */
   indexMatchesBody?: boolean;
+  /*
+   * wrong-project の移動先プロジェクトのフルパス。AI には候補(other-project シグナルの値)からの
+   * 「選択」だけをさせ、パスの文字列自体は書かせない(捏造した移動先を出させないため)
+   */
+  target?: string;
+  /*
+   * target の memory ディレクトリの絶対パス(<HOME>/.claude/projects/<slug>/memory)。
+   * slug はリポジトリのルート基準で server がその都度算出する(キャッシュ値は使わない)
+   */
+  targetMemDir?: string;
+  /*
+   * verdict を keep へ格下げした記録(元の verdict を残す)。誤判定を握り潰さず「要確認」として
+   * 観察を続けるためのもので、2 系統ある:
+   *   - 機械シグナル(other-project)が無いのに wrong-project と答えた(判断 3)
+   *   - 制限つきセクション(プロジェクト不明 / 共有ストア)で置き場所の判定(wrong-project /
+   *     delete / to-*)を答えた(判断 5。帰属先が決まらず前提が成立しないため
+   *     keep / shrink / update しか採用しない)
+   * 型は実際に取り得る値だけに絞る: 格下げ先が keep なので keep は入らず、shrink / update は
+   * 鮮度側の行き先でどちらのゲートも通過するため、格下げの記録として現れることがない
+   */
+  demoted?: Exclude<MemoryVerdict, 'keep' | 'shrink' | 'update'>;
+  /*
+   * 格下げの理由。環境条件が理由の 2 つは、条件が解消した件を再診断へ乗せ直す判定に使う:
+   *   - 'orphan'     : セクションがプロジェクトへ逆引きできない(未マウント・登録抹消)
+   *   - 'shared-env' : user scope の autoMemoryDirectory で全プロジェクトが 1 つの置き場を
+   *                    共有している(共有ストアそのもの、および「別プロジェクトの memory dir へ
+   *                    移す」という移動先の概念が成立しない環境)。設定を外せば帰属が戻るので、
+   *                    そのときに再診断へ乗せる
+   *   - 'no-signal'  : 内容側の理由(機械シグナルが無い、または候補と噛み合わない target を
+   *                     返した)。内容が変わらない限り再診断しない
+   */
+  demotedBy?: 'orphan' | 'no-signal' | 'shared-env';
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
 }
@@ -210,6 +255,8 @@ export interface SkillItem {
   signals?: MemorySignal[];
   /* キャッシュ済みの AI 棚卸し診断(未診断なら省略。生成はオンデマンド) */
   aiTriage?: MemoryTriage;
+  /* この索引行が MEMORY.md の読み込み上限(200 行 / 25KB)の外にあるか。無ければ省略(= 上限内) */
+  indexBeyondLimit?: boolean;
 }
 
 /*
@@ -217,19 +264,53 @@ export interface SkillItem {
  * (memory は「呼び出す」ものではなく、Section.source に置き場が無いため)。
  */
 export interface MemorySection {
-  /* ~/.claude/projects 配下のエンコード済みディレクトリ名 */
+  /*
+   * ~/.claude/projects 配下のエンコード済みディレクトリ名。
+   * autoMemoryDirectory の置き場は `auto-` + 置き場パスのエンコード名(slug との衝突回避)
+   */
   id: string;
-  /* 逆引きできたプロジェクトの実パス。孤児(逆引き不可)は null */
+  /* 逆引きできたプロジェクトの実パス。プロジェクト不明(逆引き不可)は null */
   projectPath: string | null;
-  /* 表示名。孤児はエンコード名そのまま(エンコードは不可逆で復元できない) */
+  /* 表示名。プロジェクト不明はエンコード名そのまま(エンコードは非可逆的に情報が落ちるため、逆引きできない場合はそのまま表示する) */
   projectName: string;
   /* memory ディレクトリの実パス */
   note: string;
   isCurrent?: boolean;
   orphan?: boolean;
+  /* settings の autoMemoryDirectory が指す置き場のセクション(~/.claude/projects 配下ではない) */
+  autoDir?: true;
+  /*
+   * user scope の autoMemoryDirectory による「全プロジェクト共有の置き場」か。
+   * どのプロジェクトの memory かを特定できないため projectPath は null になり、棚卸しは
+   * orphan と同じ制限(keep / shrink / update のみ)に乗る。逆引き失敗ではないので orphan にはしない。
+   * Read / Write 実績は全プロジェクトの transcript を横断して file_path で拾うので測れる
+   * (usageAvailable は全体の transcript の有無で決まり、回数は全プロジェクト合算)
+   */
+  sharedStore?: true;
+  /*
+   * usageAvailable(そのプロジェクトの transcript があるか)の判定に使う slug。
+   * 既定セクションは id 自身が slug なので持たず、autoDir セクションだけが持つ
+   * (置き場のパスと transcript のディレクトリ名は無関係なため)。
+   * 共有ストア(sharedStore)は transcript の帰属が決まらないため持たず、判定は全体の
+   * transcript の有無で行う(実績は全プロジェクト合算)。
+   * サーバー内部用。web に参照が無いので /api/skills 応答からは落とす(publicMemory)
+   */
+  transcriptSlug?: string;
   usageAvailable: boolean;
-  /* items の indexTokens 合計(= このプロジェクトで毎セッション注入される索引の量) */
+  /*
+   * items の indexTokens 合計(= このプロジェクトで毎セッション注入される索引の量)。
+   * 読み込み上限(200 行 / 25KB)の外にある索引行は数えない(indexBeyondLimit の件を除外)
+   */
   indexTokens: number;
+  /* 読み込み上限の外にある索引行の件数。無ければ省略(コストバーの「上限外 n 件」表示に使う) */
+  indexBeyondCount?: number;
+  /*
+   * other-project シグナルの判定に使った「別の登録プロジェクト」候補(フルパス)。
+   * wrong-project の移動先を AI に選ばせるときの候補集合でもあるので、計算元(scanMemory)から
+   * そのまま運ぶ(同じ除外規則を 2 箇所で書かない)。候補が無ければ省略。
+   * サーバー内部用。web に参照が無く payload だけ増えるので /api/skills 応答からは落とす
+   */
+  otherProjects?: string[];
   items: SkillItem[];
 }
 

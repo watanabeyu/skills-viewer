@@ -95,9 +95,20 @@ const en = {
 
   'memory.searchPlaceholder': 'Search memory…',
   'memory.secLabel': 'MEMORY — {name}',
+  /* basename だけの見出しでは同名プロジェクト(teamA/ai-workspace と teamB/ai-workspace)を区別できないため、
+   * フルパスを副題で必ず添える。プロジェクト不明は逆引き先が無いので memory dir の実パスを、
+   * プロジェクトのパスと誤読されないよう別ラベル(secMemDir)で出す */
+  'memory.secPath': 'Path: {path}',
+  'memory.secMemDir': 'memory dir: {path}',
   'memory.orphan': 'unknown project',
+  'memory.sharedStore': 'shared store',
+  'memory.sharedStoreTitle':
+    'This directory is set as autoMemoryDirectory in your user settings, so every project stores its auto memory here. Which project a memory belongs to cannot be determined, so triage is limited to keep / shrink / rewrite.',
   'memory.orphanTitle':
-    'No matching project — it may have been deleted, moved or renamed (the encoded directory name cannot be decoded back into a path)',
+    'No matching project — it may have been deleted, moved or renamed, an external volume may not be mounted, these may be leftovers from a deleted worktree, or the project may have been unregistered (the encoded directory name may not decode back into the original path)',
+  /* 判断12: memory 0件の環境で「壊れている」と誤解されないよう、公式仕様(4点)を案内する。フィルタで0件の場合は list.empty のまま */
+  'memory.emptyEnv':
+    'No auto memory found in this environment. Auto memory is enabled by default, but Claude Code only creates the memory directory the first time it saves something — this may simply mean nothing has been saved yet. It could also be disabled via autoMemoryEnabled: false in settings or the CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 environment variable. Run /memory in a session to check or toggle it.',
   'memory.type.user': 'About you',
   'memory.type.feedback': 'Guidance',
   'memory.type.project': 'Project',
@@ -110,9 +121,13 @@ const en = {
   'memory.body': 'body',
   'memory.indexTokTitle':
     'Always-on cost: this memory’s line in MEMORY.md, injected into every session (0 = not listed in the index)',
+  'memory.indexTokBeyondTitle':
+    'This line is outside MEMORY.md’s read limit (first 200 lines / 25KB) and is NOT injected into every session, so it costs nothing today',
   'memory.bodyTokTitle': 'Pay-per-use cost: the whole body, charged only when it is Read',
   'memory.readsTitle':
     'Times this memory was Read within the transcript retention window (default 30 days). 0 does not mean it has never been read.',
+  'memory.usage.sharedTitle':
+    'Summed over the sessions of every project (this is a shared store) — not the count for this project alone.',
   'memory.writesTitle':
     'Times this memory was created or updated (Write / Edit) within the transcript retention window',
   'memory.unread': 'no recent reads',
@@ -125,6 +140,8 @@ const en = {
   'memory.cost.indexK': 'Index — every session',
   'memory.cost.indexNote':
     'Index lines for {n} memories are\ninjected unconditionally every session',
+  /* MEMORY.md は毎セッション先頭 200 行 or 25KB までしか読まれない(公式仕様)。その外の索引行は書いてあっても注入されない */
+  'memory.cost.indexBeyond': '{n} beyond the limit (not read every session)',
   'memory.cost.bodyK': 'Bodies — only when read',
   'memory.cost.bodyNote': 'Costs nothing unless read.\n{k} / {n} read within the retention window',
   'memory.cost.bodyNoteNA': 'Costs nothing unless read.\nReads cannot be measured (no transcripts)',
@@ -199,6 +216,7 @@ const en = {
   'memory.triage.verdict.keep': 'Keep as is',
   'memory.triage.verdict.shrink': 'Shrink the body',
   'memory.triage.verdict.to-claude-md': 'Move to CLAUDE.md',
+  'memory.triage.verdict.to-user-claude-md': 'Move to user CLAUDE.md',
   'memory.triage.verdict.to-docs': 'Move to docs/',
   'memory.triage.verdict.delete': 'Delete',
   'memory.triage.verdict.wrong-project': 'Belongs elsewhere',
@@ -220,13 +238,37 @@ const en = {
     '- Rewrite the description in the MEMORY.md index line to: "{text}" (it says something different from the body)',
   'memory.triage.tpl.indexAlign':
     '- The MEMORY.md index line and the body say different things: check which one is right and align them',
+  /* wrong-project: the paths are decided by the server (from mechanical signals), only the wording lives here */
+  /* 全指示文の先頭に付く機械生成のアンカー(手選択コピーでも対象の同一性が崩れないように) */
+  'memory.triage.tpl.target': '- Target: {path}',
+  'memory.triage.tpl.wpMove': '- This memory is about {target}, so move {file} to {dir}',
+  'memory.triage.tpl.wpCheck':
+    '- Before moving, check the destination does not already hold the same content',
+  'memory.triage.tpl.wpIndex':
+    '- Remove the matching line from the MEMORY.md index of this project',
+  'memory.triage.tpl.wpIndexAdd':
+    '- Add an index line for it to the MEMORY.md of the destination (reuse the current index line as the description)',
+  'memory.triage.tpl.wpLink': '- Re-point [[link]] references from other memories',
+  /* コピー本文の先頭に置く事実ヘッダ(モデル出力ではなくスキャン結果から機械生成) */
+  'memory.triage.hdr.dir': 'Target: {dir} (project: {project})',
+  'memory.triage.hdr.files': 'Target files: {files}',
+  'memory.triage.hdr.unknownProject': 'unknown',
+  'memory.triage.demoted': 'Needs checking',
+  /* 格下げ件の理由文はモデルの見立てのまま(検証されていない)ことを前置きで示す */
+  'memory.triage.demotedReason': "Model's view (unverified): ",
+  'memory.triage.demotedTitle':
+    'The model proposed a destination, but nothing here can back it mechanically (e.g. no path under another registered project, or the project itself could not be resolved), so it would have been guesswork. Held at "keep as is" — please check it yourself.',
+  'memory.triage.skew':
+    'The proposals are concentrated on a single destination. Check first whether the project identification (a mistaken path, or being treated as an unknown project) is wrong',
   'memory.signal.index-mismatch': 'Index line and body disagree',
-  'memory.signal.other-project': 'Points at another project: {value}',
+  'memory.signal.other-project': 'Points at a path under another registered project: "{value}"',
   'memory.triage.verdict.error': 'Invalid output — re-run to retry',
   'memory.triage.seen': 'read {n}×',
   'memory.triage.unseen': 'no reads',
   'memory.triage.estApply': 'applied: index {n} tok/session',
   'memory.triage.estApplyClaude': 'applied: index {n} · always-on +{m} tok',
+  'memory.triage.estApplyUserClaude': 'applied: index {n} · always-on +{m} tok in EVERY project',
+  'memory.triage.estApplyBeyond': 'applied: index ±0 (it is not injected in the first place)',
   'memory.triage.estShrink': 'applied: index ±0 · proposes shrinking the body',
   'memory.triage.estUpdate': 'applied: index ±0 · proposes rewriting the body',
   'memory.triage.instruction': 'Instruction to paste into Claude Code',
@@ -241,9 +283,10 @@ const en = {
   'memory.triage.footDiffVal': '{n} tok',
   'memory.triage.footNote':
     'Copied instructions start with a "check first, then execute" preamble and include the destination path, removing the MEMORY.md index line and rewriting [[link]]s. To do only part of it, say so in the conversation you paste into.',
-  'memory.triage.preambleLabel': 'Preamble for pasting (the copy buttons add it automatically)',
+  'memory.triage.preambleLabel':
+    'Preamble for pasting (the copy buttons add it automatically — prefer them over selecting the text by hand, so the verification steps come along)',
   'memory.triage.copyPreamble':
-    'The following is a proposal from the skills-viewer memory triage. First inspect the current state read-only and present the exact work you would do. Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. Execute only after I approve.',
+    'The following is a proposal from the skills-viewer memory triage. First check that your working directory matches the project in the header below — if it does not (e.g. this session was started from the home directory), say so and confirm with me before continuing, because relative paths (especially under .claude/) would resolve against the wrong place. Then inspect the current state read-only and present the exact work you would do. Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. Execute only after I approve.',
   'memory.triage.whole': 'Triage the whole project →',
   'memory.triage.menu': 'Memory triage (current project)',
   'memory.triage.menuTitle':
@@ -480,9 +523,16 @@ const ja: Record<MsgKey, string> = {
 
   'memory.searchPlaceholder': 'memory を検索…',
   'memory.secLabel': 'MEMORY — {name}',
+  'memory.secPath': 'パス: {path}',
+  'memory.secMemDir': 'memory ディレクトリ: {path}',
   'memory.orphan': 'プロジェクト不明',
+  'memory.sharedStore': '共有ストア',
+  'memory.sharedStoreTitle':
+    'user scope の settings で autoMemoryDirectory に指定された置き場です。全プロジェクトの自動メモリがここに集まるため、どのプロジェクトの memory かは特定できません(棚卸しは keep / 本文を縮める / 書き直す に限定されます)',
   'memory.orphanTitle':
-    '対応するプロジェクトが見つかりません(削除・移動・リネームの可能性。エンコードされたディレクトリ名から元のパスは復元できません)',
+    '対応するプロジェクトが見つかりません(プロジェクトの削除・移動・リネーム、外部ボリューム未マウント、削除済み worktree の残骸、プロジェクトの登録抹消などが考えられます。エンコードされたディレクトリ名から元のパスを復元できるとは限りません)',
+  'memory.emptyEnv':
+    'この環境には auto memory が見つかりません。auto memory は既定で有効ですが、Claude Code が初めて保存するまでディレクトリは作られないため、単にまだ何も保存されていないだけかもしれません。settings の autoMemoryEnabled: false や環境変数 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 で無効化されている可能性もあります。セッション内で /memory コマンドを実行すると確認・切り替えができます',
   'memory.type.user': '人物像',
   'memory.type.feedback': '指示・方針',
   'memory.type.project': '進行状況',
@@ -495,9 +545,13 @@ const ja: Record<MsgKey, string> = {
   'memory.body': '本文',
   'memory.indexTokTitle':
     '常時コスト: このメモリの MEMORY.md 上の索引行。毎セッション注入されます(0 = 索引に載っていない)',
+  'memory.indexTokBeyondTitle':
+    'この索引行は MEMORY.md の読み込み上限(先頭 200 行 / 25KB)の外にあり、毎セッションは注入されていません(現状の常時コストは 0)',
   'memory.bodyTokTitle': '従量コスト: 本文全体。Read されたときだけかかります',
   'memory.readsTitle':
     'トランスクリプト保持期間内(既定30日)にこのメモリが Read された回数。0 でも「一度も読まれていない」ことは意味しません',
+  'memory.usage.sharedTitle':
+    '全プロジェクトのセッションの合算です(このプロジェクトだけの回数ではありません)',
   'memory.writesTitle':
     'トランスクリプト保持期間内にこのメモリが作成・更新された回数(Write / Edit)',
   'memory.unread': '直近未参照',
@@ -508,6 +562,7 @@ const ja: Record<MsgKey, string> = {
 
   'memory.cost.indexK': '索引 — 毎セッション',
   'memory.cost.indexNote': '{n} 件ぶんの索引行が\n無条件で毎回注入される',
+  'memory.cost.indexBeyond': '上限外 {n} 件(毎セッション読まれていない)',
   'memory.cost.bodyK': '本文 — 参照時のみ',
   'memory.cost.bodyNote': '読まれない限り 0 コスト。\n保持期間内に参照 {k} / {n} 件',
   'memory.cost.bodyNoteNA': '読まれない限り 0 コスト。\n参照実績は計測不能(transcript なし)',
@@ -578,6 +633,7 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.verdict.keep': 'このまま',
   'memory.triage.verdict.shrink': '本文を縮める',
   'memory.triage.verdict.to-claude-md': 'CLAUDE.md へ',
+  'memory.triage.verdict.to-user-claude-md': 'user CLAUDE.md へ',
   'memory.triage.verdict.to-docs': 'docs/ へ',
   'memory.triage.verdict.delete': '削除',
   'memory.triage.verdict.wrong-project': '別プロジェクトの話',
@@ -598,13 +654,31 @@ const ja: Record<MsgKey, string> = {
     '- MEMORY.md の索引行の description を「{text}」に書き換える(本文と異なる境界を言っているため)',
   'memory.triage.tpl.indexAlign':
     '- MEMORY.md の索引行と本文が違うことを言っている。どちらが正しいか確認して揃える',
+  'memory.triage.tpl.target': '- 対象: {path}',
+  'memory.triage.tpl.wpMove': '- この memory は {target} の話なので、{file} を {dir} へ移す',
+  'memory.triage.tpl.wpCheck': '- 移動先に同じ内容が無いか確認してから移す',
+  'memory.triage.tpl.wpIndex': '- このプロジェクトの MEMORY.md の該当索引行を削除する',
+  'memory.triage.tpl.wpIndexAdd':
+    '- 移動先の MEMORY.md に索引行を追加する(description は現行の索引行を流用)',
+  'memory.triage.tpl.wpLink': '- 他メモリからの [[link]] を張り替える',
+  'memory.triage.hdr.dir': '対象: {dir}(プロジェクト: {project})',
+  'memory.triage.hdr.files': '対象ファイル: {files}',
+  'memory.triage.hdr.unknownProject': '不明',
+  'memory.triage.demoted': '要確認',
+  'memory.triage.demotedReason': 'AI の見立て(未検証): ',
+  'memory.triage.demotedTitle':
+    'AI は行き先を提案しましたが、機械的な裏付け(別の登録プロジェクト配下のパスや、プロジェクトへの逆引きなど)が無く、推測になるため「このまま」に留めました。内容はご自身で確認してください。',
+  'memory.triage.skew':
+    '提案が 1 種類に偏っています。プロジェクトの特定(パスの取り違え・プロジェクト不明扱い)が誤っている可能性を先に確認してください',
   'memory.signal.index-mismatch': '索引行と本文が食い違っています',
-  'memory.signal.other-project': '別プロジェクト「{value}」の話です',
+  'memory.signal.other-project': '別の登録プロジェクト「{value}」配下のパスを指しています',
   'memory.triage.verdict.error': '出力不正 — 再診断で再試行',
   'memory.triage.seen': '{n} 回参照',
   'memory.triage.unseen': '参照なし',
   'memory.triage.estApply': '適用で 索引 {n} tok/セッション',
   'memory.triage.estApplyClaude': '適用で 索引 {n} · 常時 +{m} tok',
+  'memory.triage.estApplyUserClaude': '適用で 索引 {n} · 全プロジェクト常時 +{m} tok',
+  'memory.triage.estApplyBeyond': '適用で 索引 ±0(元から注入されていない)',
   'memory.triage.estShrink': '適用で 索引 ±0 · 本文を縮める提案',
   'memory.triage.estUpdate': '適用で 索引 ±0 · 本文を書き直す提案',
   'memory.triage.instruction': 'Claude Code への指示文',
@@ -619,9 +693,10 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.footDiffVal': '{n} tok',
   'memory.triage.footNote':
     'コピーした指示文には「まず確認してから実行」の前置きが付き、移動先パス・MEMORY.md の索引行の削除・[[link]] の張り替えまで含まれます。一部だけやりたいときは、貼った先の会話でそう伝えてください。',
-  'memory.triage.preambleLabel': '貼るときの前置き(コピーボタンでは自動で付きます)',
+  'memory.triage.preambleLabel':
+    '貼るときの前置き(コピーボタンでは自動で付きます。文面を手で選択せず、確認手順ごと付くコピーボタンを使ってください)',
   'memory.triage.copyPreamble':
-    '以下は skills-viewer の memory 棚卸し診断からの提案です。まず読み取りだけで現状を確認し、実行する作業内容を提示してください。判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認してください。実行は承認を得てからにしてください。',
+    '以下は skills-viewer の memory 棚卸し診断からの提案です。最初に、このセッションの作業ディレクトリが下のヘッダのプロジェクトと一致するか確認してください。一致しない場合(ホームディレクトリから起動したセッション等)は、相対パス(特に .claude/ 配下)の解決を誤るため、その旨を指摘して続行の可否を私に確認してください。次に読み取りだけで現状を確認し、実行する作業内容を提示してください。判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認してください。実行は承認を得てからにしてください。',
   'memory.triage.whole': 'プロジェクト全体を棚卸し →',
   'memory.triage.menu': 'memory 棚卸し(現在のプロジェクト)',
   'memory.triage.menuTitle':
@@ -779,7 +854,8 @@ const ja: Record<MsgKey, string> = {
   'apiError.internal': 'サーバーエラー: {detail}',
 };
 
-const DICTS: Record<Lang, Record<MsgKey, string>> = { en, ja };
+/* テストが全キーを走査(プレースホルダ整合の検証)できるように公開する。UI からは t 経由で引く */
+export const DICTS: Record<Lang, Record<MsgKey, string>> = { en, ja };
 
 /* ---- 言語の状態 ---- */
 

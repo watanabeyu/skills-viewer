@@ -36,13 +36,35 @@ export function TokFacts({ it, cls, bold }: { it: SkillItem; cls?: string; bold?
   const body = (it.bodyTokens || 0).toLocaleString();
   return (
     <>
-      <span className={cls} title={t('memory.indexTokTitle')}>
+      {/* 上限外の件は数値こそ同じでも「毎セッション注入されていない」ので、チップは増やさず tooltip で言い分ける */}
+      <span
+        className={cls}
+        title={t(it.indexBeyondLimit ? 'memory.indexTokBeyondTitle' : 'memory.indexTokTitle')}
+      >
         {t('memory.idx')} {bold ? <b>{idx}</b> : idx}
       </span>
       <span className={cls} title={t('memory.bodyTokTitle')}>
         {t('memory.body')} {bold ? <b>{body}</b> : body}
       </span>
     </>
+  );
+}
+
+/*
+ * セクション見出し・棚卸しタイトルに共通で出す副題 1 行(フルパス)。
+ * projectName は basename 由来で同名プロジェクト(teamA/ai-workspace と teamB/ai-workspace)を
+ * 区別できないため、見出しの下に必ずフルパスを添える。プロジェクト不明は逆引き先が無いので
+ * memory ディレクトリの実パス(note)を、プロジェクトのパスと誤読されないよう別ラベルで出す。
+ */
+export function MemoryPathSub({ sec }: { sec: MemorySection }) {
+  // autoMemoryDirectory の置き場は ~/.claude/projects の外にあるので、プロジェクトへ帰属していても
+  // 所在(memory ディレクトリ)を出す。プロジェクト不明も同じく置き場を出す
+  const showMemDir = !sec.projectPath || !!sec.autoDir;
+  const p = showMemDir ? sec.note : sec.projectPath!;
+  return (
+    <div className="path-sub" title={p}>
+      {t(showMemDir ? 'memory.secMemDir' : 'memory.secPath', { path: p })}
+    </div>
   );
 }
 
@@ -58,23 +80,44 @@ export function MemoryHeading({
   tokLabel: string;
 }) {
   return (
-    <div className="sec-h">
-      <span className="sq" style={{ background: MEM_COLOR }} />
-      <span className="lbl">{t('memory.secLabel', { name: sec.projectName })}</span>
-      <span className="n">{count}</span>
-      {!!sec.indexTokens && (
-        <span className="sec-tok" title={t('memory.secTokensTitle')}>
-          {tokLabel}
-        </span>
-      )}
-      {sec.orphan && (
-        <span className="orphan-badge" title={t('memory.orphanTitle')}>
-          {t('memory.orphan')}
-        </span>
-      )}
-      <span className="ln" />
-    </div>
+    <>
+      <div className="sec-h">
+        <span className="sq" style={{ background: MEM_COLOR }} />
+        <span className="lbl">{t('memory.secLabel', { name: sec.projectName })}</span>
+        <span className="n">{count}</span>
+        {!!sec.indexTokens && (
+          <span className="sec-tok" title={t('memory.secTokensTitle')}>
+            {tokLabel}
+          </span>
+        )}
+        {sec.orphan && (
+          <span className="orphan-badge" title={t('memory.orphanTitle')}>
+            {t('memory.orphan')}
+          </span>
+        )}
+        {/* 共有ストア(user scope の autoMemoryDirectory)。帰属が決まらないので棚卸しは orphan と同じ制限になる */}
+        {sec.sharedStore && (
+          <span className="orphan-badge" title={t('memory.sharedStoreTitle')}>
+            {t('memory.sharedStore')}
+          </span>
+        )}
+        <span className="ln" />
+      </div>
+      <MemoryPathSub sec={sec} />
+    </>
   );
+}
+
+/*
+ * Read / Write など transcript 由来の回数表示に付ける tooltip。共有ストア
+ * (user scope の autoMemoryDirectory)の回数は全プロジェクトの transcript を横断した
+ * 合算なので、「このプロジェクトでの回数」と誤読されないよう注記を添える
+ * (表示する数値・文言そのものは変えない)。base が無く共有ストアでもなければ
+ * undefined(title="" を吐かない)。
+ */
+export function usageTitle(sec: MemorySection, base?: string): string | undefined {
+  const parts = [base, sec.sharedStore ? t('memory.usage.sharedTitle') : ''].filter(Boolean);
+  return parts.length ? parts.join('\n') : undefined;
 }
 
 /*

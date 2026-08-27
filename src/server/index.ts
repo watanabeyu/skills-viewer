@@ -12,8 +12,14 @@ import { execFile } from 'node:child_process';
 
 import type { Lang, MemorySection, Section, SkillsData } from '../shared/types';
 import { scanSections, listProjects, HOME } from './scan';
-import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, hasTranscripts } from './usage';
-import { scanMemory } from './memory';
+import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
+import {
+  publicMemory,
+  realDir,
+  resolveAutoMemoryDir,
+  scanMemory,
+  usageAvailableFor,
+} from './memory';
 import {
   loadSummaries,
   contentHash,
@@ -117,12 +123,15 @@ function attributeUsage(sections: Section[]): boolean {
  * skill と違って帰属先の解決は不要で、Read の file_path がそのまま実ファイルを指す。
  * usageAvailable は「そのプロジェクトのトランスクリプトがあるか」= エンコード名で始まる
  * ディレクトリ(worktree 分を含む)に jsonl が 1 件以上あるか。false なら Read 列は出さない。
+ * 判定そのもの(共有ストアの扱いを含む)は usageAvailableFor に集約している。
  */
 function attributeMemoryUsage(memory: MemorySection[]): void {
   if (!memory.length) return;
   const { byPath, dirsWithTranscripts } = scanMemoryUsage();
   for (const sec of memory) {
-    sec.usageAvailable = hasTranscripts(dirsWithTranscripts, sec.id);
+    // autoMemoryDirectory の置き場は id が置き場のパス由来なので、transcript の
+    // ディレクトリ名(現在のプロジェクトの slug)を別に持っている
+    sec.usageAvailable = usageAvailableFor(sec, dirsWithTranscripts);
     for (const it of sec.items) {
       const u = byPath[it.path];
       if (!u) continue;
@@ -141,12 +150,34 @@ function attributeMemoryUsage(memory: MemorySection[]): void {
  * 同じ事実(Read / W-E / usageAvailable)をプロンプトに載せる必要があるので共通化する。
  */
 function memorySections(cwd: string): MemorySection[] {
+  primeMemoryRoots(cwd);
   const memory = scanMemory(cwd);
   attributeMemoryUsage(memory);
   return memory;
 }
 
+/*
+ * この環境の自動メモリ置き場(autoMemoryDirectory)を usage 集計の許可ルートに設定する。
+ * skill 集計と memory 集計は同じ transcript キャッシュを共有するので、走査を始める前に
+ * 揃えておかないと同じファイルを二度読みすることになる(解決自体は memo 済みで安い)。
+ */
+function primeMemoryRoots(cwd: string): void {
+  const auto = resolveAutoMemoryDir(cwd);
+  if (!auto) {
+    setMemoryRoots([]);
+    return;
+  }
+  /*
+   * 設定値そのものと、その実パス(異なるときだけ)の両方を許可ルートにする。
+   * transcript の file_path が symlink 解決済みで記録される環境があり、設定値だけを
+   * 前方一致に使うと、その置き場の Read / Write を丸ごと取り逃すため。
+   */
+  const real = realDir(auto.dir);
+  setMemoryRoots(real !== auto.dir ? [auto.dir, real] : [auto.dir]);
+}
+
 function collect(cwd: string, lang: Lang): SkillsData {
+  primeMemoryRoots(cwd);
   const sections = scanSections(cwd, lang);
   const usageAvailable = attributeUsage(sections);
   const summaries = loadSummaries();
@@ -177,7 +208,10 @@ function collect(cwd: string, lang: Lang): SkillsData {
   const aiStale = staleItems(sections, lang).length;
   // memory は「呼び出す」ものではないので sections には混ぜず、別配列で同乗させる
   const memory = memorySections(cwd);
-  attachMemoryTriage(memory, lang);
+  // 共有ストア環境かどうかは cwd から解決した値で判定する(棚卸し側と同じ事実を見る)
+  attachMemoryTriage(memory, lang, undefined, {
+    sharedEnv: resolveAutoMemoryDir(cwd)?.scope === 'user',
+  });
   const targets = [
     { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
     ...listProjects(cwd)
@@ -194,7 +228,7 @@ function collect(cwd: string, lang: Lang): SkillsData {
     changes: computeChanges(sections),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
-    ...(memory.length ? { memory } : {}),
+    ...(memory.length ? { memory: publicMemory(memory) } : {}),
   };
 }
 
@@ -237,7 +271,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return send(200, collect(cwd, langOf(url.searchParams.get('lang'))));
       if (url.pathname === '/api/summary-status') return send(200, summaryStatus());
       if (url.pathname === '/api/file') {
-        const real = assertReadableMd(url.searchParams.get('src') || '');
+        const real = assertReadableMd(url.searchParams.get('src') || '', cwd);
         // mtime は編集画面の競合検出(/api/save の baseMtime)に使う
         return send(200, {
           content: fs.readFileSync(real, 'utf8'),
@@ -273,7 +307,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       if (url.pathname === '/api/save') return send(200, doSave(data));
       if (url.pathname === '/api/apply-description') return send(200, doApplyDescription(data));
       if (url.pathname === '/api/diagnose') {
-        const real = assertReadableMd(data.src);
+        const real = assertReadableMd(data.src, cwd);
         const name = data.name || path.basename(path.dirname(real));
         diagnoseOne(real, name, lang, model)
           .then((d) => send(200, { ok: true, ...d }))
@@ -281,7 +315,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/flow') {
-        const real = assertReadableMd(data.src);
+        const real = assertReadableMd(data.src, cwd);
         const name = data.name || path.basename(path.dirname(real));
         flowOne(real, name, lang, model)
           .then((f) => send(200, { ok: true, ...f }))
@@ -294,7 +328,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       }
       if (url.pathname === '/api/copy') return send(200, doCopy(data, cwd));
       if (url.pathname === '/api/delete') return send(200, doDelete(data));
-      if (url.pathname === '/api/open') return send(200, openInEditor(data));
+      if (url.pathname === '/api/open') return send(200, openInEditor(data, cwd));
       if (url.pathname === '/api/summarize-all')
         return send(200, startSummarizeAll(scanSections(cwd, lang), !!data.force, lang, model));
       if (url.pathname === '/api/group-generate') {
@@ -318,13 +352,16 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
           force: !!data.force,
           files,
           sections: () => scanSections(cwd, lang),
+          // 置き場の解決は起動ディレクトリ基準。process.cwd() 任せにせず、この
+          // リクエストと同じ cwd で解決した値を渡す(スキャン・読み取り許可と同じ事実を見る)
+          autoMemory: resolveAutoMemoryDir(cwd),
         })
           .then((results) => send(200, { ok: true, results }))
           .catch((e) => send(400, toErrorBody(e)));
         return;
       }
       if (url.pathname === '/api/summarize') {
-        const real = assertReadableMd(data.src);
+        const real = assertReadableMd(data.src, cwd);
         // refs(関係候補)はスキャン結果から復元する
         const sections = scanSections(cwd, lang);
         const item = sections.flatMap((s) => s.items).find((x) => x.path === real);

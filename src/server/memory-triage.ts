@@ -27,19 +27,28 @@ import type {
   SkillItem,
 } from '../shared/types';
 import { pruneMissing } from './cache';
+import { repoRootOf, resolveAutoMemoryDir, type AutoMemoryDirInfo } from './memory';
 import { branchSignals, episodicTokens, loadBranches } from './memory-signals';
 import { HOME, parseFrontmatter } from './scan';
 import { contentHash, runClaude } from './summary';
+import { encodeProjectPath } from './usage';
 import * as crypto from 'node:crypto';
 
 /*
  * 診断キャッシュの鍵。本文だけでなく MEMORY.md の索引行も含める
- * (索引行だけ直したときに「索引を書き換えよ」という古い診断が残らないように)。索引行が無ければ従来の contentHash
+ * (索引行だけ直したときに「索引を書き換えよ」という古い診断が残らないように)。索引行が無ければ従来の contentHash。
+ * 併せて「読み込み上限の外か」も混ぜる: 索引行の文言が同じでも、上限外へ転落した件は
+ * 「毎セッション注入されている」という診断の前提が崩れるため(上限内は接尾辞を付けず、
+ * 既存キャッシュを無効化しない = 転落・復帰した件だけが再診断に乗る)。
  */
 export function triageHash(it: SkillItem): string | null {
   const base = contentHash(it.path);
-  if (base === null || !it.indexLine) return base;
-  return base + ':' + crypto.createHash('sha256').update(it.indexLine).digest('hex').slice(0, 8);
+  if (base === null) return null;
+  const beyond = it.indexBeyondLimit ? ':bl' : '';
+  if (!it.indexLine) return base + beyond;
+  return (
+    base + ':' + crypto.createHash('sha256').update(it.indexLine).digest('hex').slice(0, 8) + beyond
+  );
 }
 
 const TRIAGE_FILE = path.join(os.homedir(), '.cache', 'skills-viewer', 'memory-triage.json');
@@ -48,6 +57,7 @@ const VERDICTS: readonly MemoryVerdict[] = [
   'keep',
   'shrink',
   'to-claude-md',
+  'to-user-claude-md',
   'to-docs',
   'delete',
   'wrong-project',
@@ -55,6 +65,27 @@ const VERDICTS: readonly MemoryVerdict[] = [
   'update',
 ];
 const STATES: readonly MemoryState[] = ['current', 'outdated', 'historical', 'obsolete'];
+/*
+ * 制限つきセクション(プロジェクト不明 / 共有ストア)で採用できる verdict(判断 5)。置き場所の判定
+ * (wrong-project / 重複による delete / to-claude-md・to-docs・to-skill への昇格)は
+ * 帰属先のプロジェクトが決まらないと前提が成立しないため、鮮度に関する 3 値だけを許す。
+ * to-user-claude-md は帰属先を問わない行き先なので「制限しなくてよいのでは」という論点はあるが、
+ * 判断 5 の確定仕様(採用は 3 値のみ)を変えずに許可リスト方式のまま格下げ対象に含める。
+ */
+// 補足 1: type × state 表には to-* の行き先が制限つきプロンプトでも残る(適合表の新行だけゲート)。
+// restrictedNote の「keep / shrink / update のみ」と値数制約が上書きし、外れはサーバーが格下げする前提。
+// 補足 2: to-user-claude-md に memoryType(user / feedback)の機械ゲートは置かない。適用条件は
+// プロンプト要件 + 全プロジェクト注入のコスト警告 + 貼り先の「確認 → 承認後に実行」の 3 層で持つ
+const ORPHAN_ALLOWED_VERDICTS: readonly MemoryVerdict[] = ['keep', 'shrink', 'update'];
+/*
+ * 型ガードにしておくと、格下げ側(demoted)に「実際に格下げされ得る値」だけが流れることを
+ * 型でも保証できる(MemoryTriage.demoted の Exclude 型と同じ集合)
+ */
+function isOrphanRestricted(
+  verdict: MemoryVerdict,
+): verdict is Exclude<MemoryVerdict, 'keep' | 'shrink' | 'update'> {
+  return !ORPHAN_ALLOWED_VERDICTS.includes(verdict);
+}
 const WHY_PLANS: readonly FeedbackWhyPlan[] = ['keep', 'generalize', 'drop'];
 const HOW_PLANS: readonly FeedbackHowPlan[] = ['keep', 'keep-lines-only', 'drop'];
 const INDEX_PLANS: readonly FeedbackIndexPlan[] = ['keep', 'rewrite', 'align'];
@@ -98,8 +129,22 @@ function daysAgo(ms?: number): number | null {
 
 export interface TriageContext {
   projectName: string;
-  /* プロジェクトの実パス(孤児は無し)。「このプロジェクト」が何かを AI に示す(別プロジェクト判定の基準) */
+  /* プロジェクトの実パス(プロジェクト不明は無し)。「このプロジェクト」が何かを AI に示す(別プロジェクト判定の基準) */
   projectPath?: string | null;
+  /*
+   * 制限つき(判断 5)か。プロジェクト不明(orphan)と共有ストア(sharedStore)の両方を含む。
+   * 判定の真実源は MemorySection(orphan / sharedStore)で、ここへ渡ってこない
+   * 直接呼び出し(テスト等)だけ projectPath === null にフォールバックする
+   */
+  orphan?: boolean;
+  /*
+   * 制限の理由が「autoMemoryDirectory(user scope)による全プロジェクト共有の置き場」か。
+   * 逆引き失敗とは原因が違うので、制限を説明する節の文面だけを出し分ける
+   */
+  sharedStore?: boolean;
+  /* memory の実体があるディレクトリの実パス。値は常に運び、プロンプトに出すのは
+   * 制限つき(プロジェクト不明・共有ストア)のときだけ(buildPrompt 側で出し分ける) */
+  memDir?: string;
   /* MEMORY.md の全文(無ければ空文字) */
   index: string;
   /* false = そのプロジェクトの transcript が無い = Read / W-E は計測不能 */
@@ -150,7 +195,7 @@ export function headingLines(file: string): string[] {
 /*
  * プロンプトに載せる「常設文脈」を集める。
  * rules = CLAUDE.md の見出しだけ、skills = このプロジェクトで使える定義の name — description。
- * 孤児(projectPath null)はプロジェクトの CLAUDE.md を特定できないので
+ * プロジェクト不明(projectPath null)はプロジェクトの CLAUDE.md を特定できないので
  * `~/.claude/CLAUDE.md` の見出しのみ、skills は user scope のみ。
  * home は既定で scan.ts の HOME。テストから擬似ホームを差せるよう引数にする(実環境依存を断つ)。
  */
@@ -161,15 +206,16 @@ export function collectTriageContext(
 ): { rules: string; skills: string } {
   const home = opts.home || HOME;
   const pp = sec.projectPath;
-  const files: { file: string; label: string }[] = [];
+  // ~/.claude/CLAUDE.md を先頭に積む: to-user-claude-md の追記先そのものなので、
+  // 見出しが RULES_MAX_LINES の末尾切りで丸ごと落ちると「現状を知らずに追記を提案」になる。
+  // プロジェクト側の見出しは重複 delete の材料だが、末尾が欠けるほうが被害が小さい
+  const files: { file: string; label: string }[] = [
+    { file: path.join(home, '.claude', 'CLAUDE.md'), label: '~/.claude/CLAUDE.md' },
+  ];
   if (pp) {
     files.push({ file: path.join(pp, 'CLAUDE.md'), label: 'CLAUDE.md' });
     files.push({ file: path.join(pp, '.claude', 'CLAUDE.md'), label: '.claude/CLAUDE.md' });
   }
-  files.push({
-    file: path.join(home, '.claude', 'CLAUDE.md'),
-    label: '~/.claude/CLAUDE.md',
-  });
 
   const ruleLines: string[] = [];
   for (const f of files) {
@@ -195,6 +241,60 @@ export function collectTriageContext(
   // rules と同じく行数・文字数の二重上限(1 行が極端に長い description でも総量が跳ねないように)
   const skills = skillLines.slice(0, SKILLS_MAX_LINES).join('\n').slice(0, SKILLS_MAX_CHARS);
   return { rules, skills };
+}
+
+/*
+ * プロンプトに埋めるパスの無害化。パスは外部入力(ディレクトリ名・本文由来)なので、
+ * 改行を含むと節や箇条書きの構造を偽装できてしまう。改行を落とし、長さも切って
+ * 1 行に収める(候補一覧・signals・プロジェクト行で共通に通す)。
+ */
+export function promptPath(p: string): string {
+  return p.replace(/[\r\n]+/g, ' ').slice(0, 200);
+}
+
+/* この件の signals が指す「別の登録プロジェクト」のフルパス(重複排除)。wrong-project の候補そのもの */
+export function otherProjectPaths(signals: MemorySignal[]): string[] {
+  return [...new Set(signals.filter((s) => s.kind === 'other-project').map((s) => s.value))];
+}
+
+/*
+ * wrong-project の移動先候補(判断 3)。件ごとの other-project シグナルの値を、
+ * scanMemory が算出した「別の登録プロジェクト」集合(自分自身・worktree・入れ子は除外済み)で
+ * 絞る。候補が空の件は wrong-project を採用しない(parseTriage が keep へ格下げする)
+ */
+export function candidatesFor(sec: MemorySection, signals: MemorySignal[]): string[] {
+  const registered = new Set(sec.otherProjects || []);
+  return otherProjectPaths(signals).filter((p) => registered.has(p));
+}
+
+/*
+ * 移動先の memory ディレクトリ。memory はリポジトリ単位で共有される(worktree にも
+ * サブディレクトリにも専用の memory dir は作られない)ので、slug はリポジトリのルート
+ * = repoRootOf から算出する(登録パスのままでは実在しない slug になる)。
+ * 表記は絶対パス。web の事実ヘッダ(sec.note)も一覧の副題も絶対パスなので、
+ * コピー文の中でパス表記が `~/` と絶対パスに混在しないように揃える。
+ */
+export function targetMemDirOf(project: string, home: string = HOME): string {
+  const projectsDir = path.join(home, '.claude', 'projects');
+  // 算出より観測を優先: 登録パス自身の slug に memory が既に実在するなら、それが正。
+  // 「実在」は scanMemory の採用条件と同じ「MEMORY.md 以外の *.md が 1 件以上」で判定する
+  // (空ディレクトリや索引だけの残骸に負けて、実体と別の slug へ誘導しないため。home はテスト注入用)
+  const own = path.join(projectsDir, encodeProjectPath(project), 'memory');
+  try {
+    if (fs.readdirSync(own).some((f) => f.endsWith('.md') && f !== 'MEMORY.md')) return own;
+  } catch {
+    /* 無い・読めない → 算出(リポジトリルート基準)へフォールバック */
+  }
+  return path.join(projectsDir, encodeProjectPath(repoRootOf(project) ?? project), 'memory');
+}
+
+/*
+ * switch の網羅漏れをコンパイル時に落とすための番人。MemorySignalKind に kind を足して
+ * 文言(ja / en)を書き忘れると、ここへ never でない値が渡って typecheck が失敗する。
+ * signals は機械が組み立てた値しか通らない(外部入力ではない)ので、実行時は throw でよい。
+ */
+function assertNever(x: never): never {
+  throw new Error('unhandled signal kind: ' + JSON.stringify(x));
 }
 
 /* シグナルをプロンプト用の 1 行ずつに(言語別)。無ければ「(なし)」で節を落とさない */
@@ -225,10 +325,13 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
           case 'body-over':
             return `- feedback として本文が長い(${s.value} tok)`;
           case 'other-project':
-            return `- 本文が別の登録プロジェクト「${s.value}」の配下パスを指している`;
+            return `- 本文が別の登録プロジェクト「${promptPath(s.value)}」配下のパスを指している`;
           case 'index-mismatch':
             return `- 索引行と本文が違うことを言っている`;
+          case 'index-beyond-limit':
+            return `- この索引行は MEMORY.md の読み込み上限(200 行 / 25KB)の外にあり、毎セッション読まれていない`;
         }
+        return assertNever(s.kind);
       }
       switch (s.kind) {
         case 'date':
@@ -252,15 +355,24 @@ function signalLines(signals: MemorySignal[], lang: Lang): string {
         case 'body-over':
           return `- long for a feedback memory (${s.value} tok)`;
         case 'other-project':
-          return `- the body points at paths under another registered project "${s.value}"`;
+          return `- the body points at a path under another registered project "${promptPath(s.value)}"`;
         case 'index-mismatch':
           return `- the index line and the body say different things`;
+        case 'index-beyond-limit':
+          return `- this index line is outside MEMORY.md's read limit (200 lines / 25KB) and is not read every session`;
       }
+      return assertNever(s.kind);
     })
     .join('\n');
 }
 
-/* 1 件分の事実 + 本文。本文は diagnose.ts と同じく 12,000 字で切る */
+/*
+ * 1 件分の事実 + 本文。本文は diagnose.ts と同じく 12,000 字で切る。
+ * `## file:` の basename は parseTriage が出力を突き合わせる照合キーなので promptPath を通さない
+ * (加工すると返ってきた file 名と一致しなくなり、全件が対象外として捨てられる)。
+ * 既知の限界: 改行入りのファイル名はプロンプト構造を崩し得るが、それにはローカル書き込みが
+ * 必要(= その時点で memory 本文も書ける)ため、target と同様の表示写像化はしていない。
+ */
 function itemBlock(
   it: SkillItem,
   usageAvailable: boolean,
@@ -319,13 +431,72 @@ export function buildPrompt(
   lang: Lang,
   /* 件ごとの追加シグナル(git 層)。省略時はスキャン時の SkillItem.signals だけ */
   signalsOf: (it: SkillItem) => MemorySignal[] = (it) => it.signals || [],
+  /*
+   * 件ごとの wrong-project 移動先候補。プロンプトに載せる候補と parseTriage の検証は
+   * 同じ集合でなければならないので、呼び出し側が両方に同じ関数を渡せるようにする
+   */
+  candidatesOf: (it: SkillItem) => string[] = (it) => otherProjectPaths(signalsOf(it)),
 ): string {
+  /* restricted 判定は 1 変数に落として全分岐で使う(節ごとに条件が食い違うと自己矛盾したプロンプトになる) */
+  const restricted = ctx.orphan ?? ctx.projectPath === null;
   const blocks = targets
     .map((it) => itemBlock(it, ctx.usageAvailable, lang, signalsOf(it)))
     .join('\n\n');
   const files = targets.map((it) => path.basename(it.path)).join(', ');
-  const standing =
-    lang === 'ja'
+  /*
+   * wrong-project の移動先候補。登録プロジェクトを全部載せるとトークンが嵩むうえ、
+   * other-project シグナルの無い件は wrong-project にできない(採用時に格下げされる)ので、
+   * 対象件のシグナルに実際に出たパスだけを「どの件で出たか」と一緒に列挙する。
+   * パスはモデルに書かせず、この一覧からの選択にする(捏造した移動先を出させないため)。
+   * restricted では wrong-project 自体を選べないので集計もしない(候補を見せると制限と矛盾する)。
+   */
+  const cands = new Map<string, string[]>();
+  if (!restricted)
+    for (const it of targets) {
+      for (const p of candidatesOf(it)) {
+        if (!cands.has(p)) cands.set(p, []);
+        cands.get(p)!.push(path.basename(it.path));
+      }
+    }
+  const candLines = [...cands]
+    .map(
+      ([p, hits]) =>
+        '- ' +
+        promptPath(p) +
+        (lang === 'ja' ? '(該当: ' : ' (seen in: ') +
+        // ファイル名も FS 由来の外部入力。要素ごとに 1 行化し、件数は上限で切る
+        // (結合後にまとめて切るとファイル名が途中で壊れるため)
+        hits.slice(0, 8).map(promptPath).join(', ') +
+        (hits.length > 8 ? ', …' : '') +
+        ')',
+    )
+    .join('\n');
+  /* restricted は候補ブロックごと出さない(「候補なし」の 1 行だけ。判断 5 の制限と衝突させない) */
+  const candidates = restricted
+    ? (lang === 'ja'
+        ? '(プロジェクト不明のため wrong-project は選べない。候補なし)'
+        : '(unknown project: wrong-project cannot be chosen, so there are no destination candidates)') +
+      '\n\n'
+    : lang === 'ja'
+      ? '# wrong-project の移動先候補(この一覧のパスだけを "target" に使える)\n' +
+        (candLines ||
+          '(候補なし。どの件にも「別の登録プロジェクトの配下パス」シグナルが無いので wrong-project は選べない)') +
+        '\n' +
+        '"target" は、その件の signals に出たパスをこの一覧の表記のままコピーして返すこと' +
+        '(短縮・補完・生成はしない)。移動先の文面はツール側が組むので、パス以外は書かなくてよい。\n\n'
+      : '# Destination candidates for wrong-project (only a path from this list may be used as "target")\n' +
+        (candLines ||
+          '(no candidates: no memory here has a "path under another registered project" signal, so wrong-project cannot be chosen)') +
+        '\n' +
+        'Copy the path that appears in the signals of that memory verbatim from this list into "target" ' +
+        '(never shorten, complete or invent one). The wording around it is generated by the tool.\n\n';
+  /*
+   * restricted では常設文脈ごと省く。置き場所の判定(重複による delete・昇格先)をさせない以上
+   * 材料としての用が無く、プロンプトのトークンを食うだけなので載せない。
+   */
+  const standing = restricted
+    ? ''
+    : lang === 'ja'
       ? '# このプロジェクトで常時有効なもの(重複・昇格先の判断に使う)\n\n' +
         '## CLAUDE.md の見出し\n' +
         (ctx.rules || '(無し)') +
@@ -343,6 +514,57 @@ export function buildPrompt(
         'Their bodies are NOT provided. Use the headings, names and descriptions to guess duplicates and ' +
         'promotion targets; when you are not certain, write "check it does not duplicate <file> first" ' +
         'in the instruction.\n';
+  /*
+   * 制限つきセクション(判断 5)向けの追加節。制限の理由は 2 種類ある:
+   *   - プロジェクト不明(orphan): スラッグは逆引き不能なディレクトリ名のエンコードであって
+   *     実在パスではない
+   *   - 共有ストア(sharedStore): autoMemoryDirectory(user scope)で全プロジェクトが 1 つの
+   *     置き場を共有しており、どのプロジェクトの memory かを特定できない
+   * どちらも「このプロジェクトのもの」という前提が立たないので、モデルが所在や移動先を
+   * 捏造しないよう明記し、verdict を鮮度側の 3 値だけに縛る。
+   * 実体の在り処はサーバーが知っている確定事実なので、テンプレ表記に加えて実パスも 1 行で渡す
+   * (モデルに推測させない)。鮮度の着地点も書かないと「obsolete なのに keep」が矛盾に見えてしまう。
+   */
+  const memDirLine = ctx.memDir
+    ? (lang === 'ja'
+        ? 'このセクションの memory ディレクトリ: '
+        : 'memory directory of this section: ') +
+      promptPath(ctx.memDir) +
+      '\n'
+    : '';
+  const restrictedHead =
+    lang === 'ja'
+      ? ctx.sharedStore
+        ? 'この置き場は autoMemoryDirectory(user scope)の設定による全プロジェクト共有の memory ディレクトリで、' +
+          'プロジェクト区分なしで 1 つのディレクトリに置かれるため、どのプロジェクトの memory かは特定できない。' +
+          '所在や移動先を推測しないこと。\n'
+        : 'このセクションはプロジェクトへの逆引きに失敗している(プロジェクト名はディレクトリ名のエンコード表記であり、' +
+          '非英数字は "-" に置き換わっている)。memory の実体は `~/.claude/projects/<スラッグ>/memory/` にある。' +
+          '所在や移動先を推測しないこと。\n'
+      : ctx.sharedStore
+        ? 'This memory directory is shared by every project (autoMemoryDirectory configured in user scope): the ' +
+          'memories of all projects live in one directory with no per-project separation, so which project a ' +
+          'memory belongs to cannot be determined. Do not guess its owner or a destination.\n'
+        : 'This section failed to resolve back to a registered project (the project name is an encoded ' +
+          'directory name where non-alphanumeric characters become "-", not an actual path). The memory bodies ' +
+          'actually live under `~/.claude/projects/<slug>/memory/`; do not guess its location or a destination.\n';
+  const restrictedNote =
+    lang === 'ja'
+      ? restrictedHead +
+        memDirLine +
+        '置き場所の判定(別プロジェクトの話 = wrong-project / 重複による delete / ' +
+        'to-claude-md・to-docs・to-skill への昇格)はできない。verdict は keep / shrink / update のみを使うこと。' +
+        'それ以外を答えても採用されない。\n' +
+        'state が historical / obsolete でも verdict は keep とし、その根拠は reason / issues に書くこと' +
+        '(プロジェクトを特定できれば削除・移設の候補になる、という見立ては reason に残してよい)。\n'
+      : restrictedHead +
+        memDirLine +
+        'Placement judgements (wrong-project, delete for duplicates, promotion to CLAUDE.md / docs / a skill) ' +
+        'are not possible here. verdict must be one of keep / shrink / update only; anything else will not be ' +
+        'adopted.\n' +
+        'Even when the state is historical or obsolete, the verdict stays keep: put the evidence in reason / ' +
+        'issues (you may note in reason that it would be a candidate for deletion or a move once the project ' +
+        'is identified).\n';
   if (lang === 'ja') {
     return (
       'あなたは Claude Code の自動メモリ(~/.claude/projects/<project>/memory/)の棚卸しをします。\n' +
@@ -357,9 +579,19 @@ export function buildPrompt(
       '## 1. 置き場所の適合(state に関係なく先に決まる)\n' +
       '| 状況 | 行き先 |\n' +
       '|---|---|\n' +
-      '| 別プロジェクトの話(signals に「別の登録プロジェクトの配下パス」があり、本文の主題がそのプロジェクトなら確定) | wrong-project |\n' +
+      // 制限つきでは wrong-project 自体を禁じている(restrictedNote)ので、行き方の説明も載せない
+      (restricted
+        ? ''
+        : '| 別プロジェクトの話(signals に「別の登録プロジェクトの配下パス」がある件**のみ**選べる。' +
+          'そのパスを "target" にそのまま返す) | wrong-project |\n') +
       '| 内容が特定の skill / command の手順や挙動に対する好み(例: PR 作成前に止まる、ブランチ名の確認) | ' +
       'その skill の SKILL.md に追記して memory を消す(to-skill)。全プロジェクトで効くようになる |\n' +
+      // 制限つきでは to-* への昇格自体を禁じている(restrictedNote)ので、この行き先の説明も載せない
+      (restricted
+        ? ''
+        : '| user / feedback 型で、内容がプロジェクトに依存しない(プロジェクト横断の趣向・作法)かつ' +
+          '全プロジェクトで強制力を持たせたい | ~/.claude/CLAUDE.md に追記して memory を消す(to-user-claude-md)。' +
+          '索引 1 行で足りているなら keep のままにする |\n') +
       '| CLAUDE.md や skill に既に同じことが書いてある | delete |\n' +
       '| 一次情報(wiki / issue / PR / docs)が既に外にあり、memory はその目次コピー | delete(移す先は無い。to-docs にしない) |\n\n' +
       '## 2. state(鮮度)を事実で判定する\n' +
@@ -378,7 +610,8 @@ export function buildPrompt(
       '## 3. verdict は type × state から決める\n' +
       '| type \\ state | current | outdated | historical | obsolete |\n' +
       '|---|---|---|---|---|\n' +
-      '| user / feedback | keep(本文が長ければ shrink。強制力が要るなら to-claude-md) | update | delete(方針の履歴を残す意味は薄い) | delete |\n' +
+      '| user / feedback | keep(本文が長ければ shrink。強制力が要るなら、**単一プロジェクト**でよければ to-claude-md / ' +
+      '**プロジェクト横断**で効かせたいなら to-user-claude-md。置き場所適合表を優先) | update | delete(方針の履歴を残す意味は薄い) | delete |\n' +
       '| project | keep(制約のみ。進捗メモは issue / PR へ = to-docs) | update | to-docs | delete |\n' +
       '| reference | keep(Read あり)/ to-docs(長期 Read 0) | update(参照先の張り替え) | delete | delete |\n\n' +
       '# 注意\n' +
@@ -406,7 +639,10 @@ export function buildPrompt(
       '[{"file": "対象のファイル名(入力の file をそのまま)",\n' +
       '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
       '  "index_matches_body": true | false(索引行の description と本文が同じ境界・段階・内容を言っていれば true、違うことを言っていれば false。全件必須),\n' +
-      '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
+      '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-user-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
+      (restricted
+        ? ''
+        : '  "target": "wrong-project のときのみ必須。移動先候補の一覧から選んだパスをそのまま(他の verdict では省略)",\n') +
       '  "reason": "そう判断した理由(1〜3文。state の根拠を必ず含める)",\n' +
       '  "issues": ["判断の根拠になった事実(各30字程度、最大4件。無ければ空配列)"],\n' +
       '  "instruction": "Claude Code に貼る指示文(keep のときは空文字)",\n' +
@@ -418,7 +654,12 @@ export function buildPrompt(
       '- 対象ファイル(' +
       files +
       ')それぞれについて 1 要素ずつ、過不足なく出すこと\n' +
-      '- state は上記 4 値、verdict は上記 8 値のみ。それ以外の値は使わない。state を省略しない\n' +
+      '- state は上記 4 値、verdict は上記 9 値のみ。それ以外の値は使わない。state を省略しない\n' +
+      (restricted
+        ? '- verdict は keep / shrink / update のみを使う(それ以外はその件ごと不採用になる)\n'
+        : '- wrong-project は signals に「別の登録プロジェクトの配下パス」がある件だけに使い、' +
+          '"target" に候補一覧のパスをそのまま入れる。シグナルが無い件を wrong-project にしない' +
+          '(移動先を推測で書かない)。候補外・欠落の "target" はその件ごと不採用になる\n') +
       '- update の instruction は「どの記述を何に直すか」(日付・パス・手順・type の付け替え)を具体に書く。' +
       '索引行は消さないが、description が古ければ MEMORY.md の索引行の書き換えも書く\n' +
       '- instruction は各行を「- 」で始める箇条書きで 3〜6 行。改行で区切る(1 行 1 要点)。' +
@@ -430,15 +671,23 @@ export function buildPrompt(
       '- to-skill の instruction に必ず含めること: 追記先の skill / command 名' +
       '(~/.claude/skills/<name>/SKILL.md か .claude/skills/... かの別も書く)/ 追記する 1〜2 行の要旨 / ' +
       'MEMORY.md の該当索引行の削除\n' +
+      '- to-user-claude-md の instruction に必ず含めること: 追記先が ~/.claude/CLAUDE.md であること / ' +
+      '既に同じことが書いてないか確認してから追記すること / MEMORY.md の該当索引行の削除 / ' +
+      '「全プロジェクトの毎セッションに +(本文 tok) tok 増える」というコスト警告' +
+      '(「全プロジェクト」であることを必ず書く。指示文はプレーンテキストなので ** などの装飾は使わない)\n' +
       '- 6 行に収まらない提案は複雑すぎるサインです。より単純な行き先を選ぶこと\n' +
       '- 出力の文章はすべて日本語で書くこと\n\n' +
       '# プロジェクト: ' +
-      ctx.projectName +
-      (ctx.projectPath ? '(パス: ' + ctx.projectPath + ')' : '') +
+      promptPath(ctx.projectName) +
+      (ctx.projectPath ? '(パス: ' + promptPath(ctx.projectPath) + ')' : '') +
       '\n' +
-      'この memory の持ち主は上のプロジェクトです。signals に「別の登録プロジェクトの配下パス」がある件は、' +
-      'その参照が上のプロジェクトでの作業に必要なもの(例: 連携先の設定ファイル)でない限り wrong-project とし、' +
-      'wrong-project にしない場合は reason にその根拠を書くこと。\n\n' +
+      (restricted
+        ? restrictedNote
+        : 'この memory の持ち主は上のプロジェクトです。signals に「別の登録プロジェクトの配下パス」がある件は、' +
+          'その参照が上のプロジェクトでの作業に必要なもの(例: 連携先の設定ファイル)でない限り wrong-project とし、' +
+          'wrong-project にしない場合は reason にその根拠を書くこと。\n') +
+      '\n' +
+      candidates +
       standing +
       '\n# MEMORY.md(索引全文)\n' +
       (ctx.index || '(索引なし)') +
@@ -459,10 +708,20 @@ export function buildPrompt(
     '## 1. Placement fit (decided first, regardless of state)\n' +
     '| situation | destination |\n' +
     '|---|---|\n' +
-    '| belongs to a different project (certain when signals show paths under another registered project and the body is about that project) | wrong-project |\n' +
+    // 制限つきでは wrong-project 自体を禁じている(restrictedNote)ので、行き方の説明も載せない
+    (restricted
+      ? ''
+      : '| belongs to a different project (ONLY selectable when the signals of that memory show a path under ' +
+        'another registered project; return that path as "target") | wrong-project |\n') +
     '| a preference about how a specific skill / command behaves (e.g. stop before creating the PR, ' +
     'confirm the branch name) | add it to that skill SKILL.md and drop the memory (to-skill); ' +
     'it then applies in every project |\n' +
+    // 制限つきでは to-* への昇格自体を禁じている(restrictedNote)ので、この行き先の説明も載せない
+    (restricted
+      ? ''
+      : '| type user / feedback whose content does not depend on the project (a cross-project taste or way of ' +
+        'working) AND has to be binding in every project | append it to ~/.claude/CLAUDE.md and drop the memory ' +
+        '(to-user-claude-md); stay on keep when the single index line is already enough |\n') +
     '| CLAUDE.md or a skill already says the same thing | delete |\n' +
     '| the primary source already lives outside (wiki / issue / PR / docs) and the memory is just an index copy | delete — there is nothing to move; do not use to-docs |\n\n' +
     '## 2. Judge the state (freshness) from facts\n' +
@@ -483,7 +742,9 @@ export function buildPrompt(
     '## 3. Derive the verdict from type x state\n' +
     '| type \\ state | current | outdated | historical | obsolete |\n' +
     '|---|---|---|---|---|\n' +
-    '| user / feedback | keep (shrink if the body is long; to-claude-md if it must be binding) | update | delete (history of a policy has little value) | delete |\n' +
+    '| user / feedback | keep (shrink if the body is long; if it must be binding, to-claude-md when ONE project ' +
+    'is enough / to-user-claude-md when it must hold ACROSS projects — the placement fit table wins) | update | ' +
+    'delete (history of a policy has little value) | delete |\n' +
     '| project | keep (constraints only; progress notes go to an issue / PR = to-docs) | update | to-docs | delete |\n' +
     '| reference | keep (has Reads) / to-docs (no Read for a long time) | update (re-point the reference) | delete | delete |\n\n' +
     '# Notes\n' +
@@ -517,7 +778,10 @@ export function buildPrompt(
     '[{"file": "the target file name, exactly as given",\n' +
     '  "state": "current" | "outdated" | "historical" | "obsolete",\n' +
     '  "index_matches_body": true | false (true when the description in the index line says the same boundary / stage / content as the body, false when they differ; required for every element),\n' +
-    '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
+    '  "verdict": "keep" | "shrink" | "to-claude-md" | "to-user-claude-md" | "to-docs" | "delete" | "wrong-project" | "to-skill" | "update",\n' +
+    (restricted
+      ? ''
+      : '  "target": "required for wrong-project only: a path copied verbatim from the candidate list (omit for other verdicts)",\n') +
     '  "reason": "why (1-3 sentences; always include the evidence for the state)",\n' +
     '  "issues": ["facts behind the call (about 10 words each, max 4; empty array if none)"],\n' +
     '  "instruction": "instruction to paste into Claude Code (empty string when verdict is keep)",\n' +
@@ -529,8 +793,13 @@ export function buildPrompt(
     '- Emit exactly one element for each target file (' +
     files +
     '), no more, no less.\n' +
-    '- state must be one of the four values and verdict one of the eight values above; never invent ' +
+    '- state must be one of the four values and verdict one of the nine values above; never invent ' +
     'another value, never omit state.\n' +
+    (restricted
+      ? '- verdict must be one of keep / shrink / update; anything else makes that element unusable.\n'
+      : '- Use wrong-project only for a memory whose own signals show a path under another registered project, ' +
+        'and put that path into "target" exactly as listed in the candidates. Never use wrong-project without ' +
+        'that signal (never guess a destination); an unlisted or missing "target" means the wrong-project verdict is dropped for that memory.\n') +
     '- For update, the instruction says concretely which statements change to what (dates, paths, steps, ' +
     'the type tag). The index line stays, but if the description is stale, also say to rewrite the MEMORY.md line.\n' +
     '- instruction is a bullet list of 3 to 6 lines, every line starting with "- ", one point per line, ' +
@@ -544,15 +813,22 @@ export function buildPrompt(
     '- For to-skill, the instruction MUST cover: the target skill / command name (and whether it is ' +
     '~/.claude/skills/<name>/SKILL.md or .claude/skills/...); the gist of the 1-2 lines to add; ' +
     'removing the matching line from MEMORY.md.\n' +
+    '- For to-user-claude-md, the instruction MUST cover: that the target file is ~/.claude/CLAUDE.md; ' +
+    'checking it does not already say the same thing before appending; removing the matching line from ' +
+    'MEMORY.md; the cost warning that this adds +(body tok) tokens to EVERY session of EVERY project.\n' +
     '- A proposal that does not fit in 6 lines is too complex; pick a simpler destination.\n' +
     '- Write all prose in English.\n\n' +
     '# Project: ' +
-    ctx.projectName +
-    (ctx.projectPath ? ' (path: ' + ctx.projectPath + ')' : '') +
+    promptPath(ctx.projectName) +
+    (ctx.projectPath ? ' (path: ' + promptPath(ctx.projectPath) + ')' : '') +
     '\n' +
-    'The memories belong to the project above. When signals show paths under another registered project, ' +
-    'the verdict is wrong-project unless that reference is needed for work in the project above (e.g. a config ' +
-    'file of an integration); if you do not choose wrong-project, state the evidence in reason.\n\n' +
+    (restricted
+      ? restrictedNote
+      : 'The memories belong to the project above. When signals show paths under another registered project, ' +
+        'the verdict is wrong-project unless that reference is needed for work in the project above (e.g. a ' +
+        'config file of an integration); if you do not choose wrong-project, state the evidence in reason.\n') +
+    '\n' +
+    candidates +
     standing +
     '\n# MEMORY.md (full index)\n' +
     (ctx.index || '(no index)') +
@@ -597,7 +873,7 @@ export const invalidTriage = (): MemoryTriage => ({
 
 /*
  * 出力を検証つきでパース。file 対応が取れない要素(対象外・欠落・重複)は捨て、
- * verdict が 8 値以外・state が 4 値以外(欠落含む)・keep 以外で指示文が空の要素は出力不正として記録する
+ * verdict が VERDICTS 以外・state が 4 値以外(欠落含む)・keep 以外で指示文が空の要素は出力不正として記録する
  * (誤った行き先は提示しないが、診断済みであることは残して再 call を防ぐ)。
  */
 /*
@@ -678,6 +954,21 @@ export function parseTriage(
   allowedFiles: string[],
   /* file → 本文(body の exceptions 検証用。渡さなければ body は付けない) */
   bodies: Map<string, string> = new Map(),
+  /*
+   * file → wrong-project の移動先候補(その件の other-project シグナルの値)。
+   * 渡されない / 空の件は「機械シグナル無し」なので wrong-project を採用しない
+   */
+  candidates: Map<string, string[]> = new Map(),
+  opts: {
+    /* 制限つきセクション(プロジェクト不明 / 共有ストア)の棚卸しか
+     * (判断 5。verdict を keep/shrink/update に制限。鍵名は互換のため orphan のまま) */
+    orphan?: boolean;
+    /* 制限の理由が共有ストア(user scope の autoMemoryDirectory)か。格下げ理由の区分に使う */
+    sharedStore?: boolean;
+    /* user scope の autoMemoryDirectory が効いている環境か
+     * (移動先の概念が成立しないので、候補なしの wrong-project 格下げも環境が理由になる) */
+    sharedEnv?: boolean;
+  } = {},
 ): Map<string, MemoryTriage> {
   const j = extractJsonArray(text);
   if (!Array.isArray(j)) throw new Error('triage output is not an array');
@@ -696,11 +987,98 @@ export function parseTriage(
       .filter((x: unknown) => typeof x === 'string')
       .map((s: string) => s.slice(0, 80))
       .slice(0, 4);
+    const reason = String(e?.reason || '')
+      .trim()
+      .slice(0, 400);
+    // 欠落・非 boolean は undefined(シグナルを出さない)。モデルが省略しても要素は捨てない
+    const idxMatch =
+      typeof e?.index_matches_body === 'boolean'
+        ? { indexMatchesBody: e.index_matches_body as boolean }
+        : {};
+    /*
+     * 制限つきセクションの verdict 制限(判断 5)。置き場所の判定は帰属先が決まらないと
+     * 前提が成立しないため、keep / shrink / update 以外はここで keep へ格下げする
+     * (出力不正ではない: モデルは正しいスキーマで答えている)。wrong-project もここで弾くので、
+     * 以降の候補照合(cands)には進まない。
+     */
+    if (opts.orphan && isOrphanRestricted(verdict)) {
+      out.set(file, {
+        verdict: 'keep',
+        state,
+        reason,
+        issues,
+        instruction: '',
+        demoted: verdict,
+        // 格下げの理由は制限の出どころで分ける(どちらも一時的な環境条件で、解消したら
+        // 再診断に乗せる。selectStale / attachMemoryTriage が条件ごとに解消を判定する)
+        demotedBy: opts.sharedStore ? 'shared-env' : 'orphan',
+        ...idxMatch,
+      });
+      continue;
+    }
+    /*
+     * wrong-project のゲート。移動先は事実(機械シグナル)からしか決められないので:
+     *   - シグナルが無い件は keep へ格下げし、demoted に元の verdict を残す(観察は続ける)
+     *   - シグナルがある件も移動先は候補からの選択だけを受け取り、候補外・欠落なら同じく格下げ
+     * 格下げでは指示文を捨てる。捏造した移動先を含んでいるため貼れない
+     */
+    const cands = candidates.get(file) || [];
+    let dest: Pick<MemoryTriage, 'target' | 'targetMemDir'> = {};
+    if (verdict === 'wrong-project') {
+      /*
+       * 移動先を確定できない wrong-project の格下げ形。demotedBy は理由で分ける:
+       *   - 共有ストア環境(sharedEnv): 移動先の概念そのものが設定で消えている環境条件。
+       *     設定を外せば候補が組めるようになるので、そのときに再診断へ乗せる
+       *   - それ以外: 内容側の理由(機械シグナルが無い / 候補と噛み合わない)。
+       *     本文が変わらない限り再診断しない
+       */
+      const demoted = (): MemoryTriage => ({
+        verdict: 'keep',
+        state,
+        reason,
+        issues,
+        instruction: '',
+        demoted: 'wrong-project',
+        demotedBy: opts.sharedEnv ? 'shared-env' : 'no-signal',
+        ...idxMatch,
+      });
+      if (!cands.length) {
+        out.set(file, demoted());
+        continue;
+      }
+      /*
+       * 候補はプロンプトへ promptPath(改行落とし + 200 字切り)を通した「表示文字列」で
+       * 載せているので、照合も表示文字列で行う(生パスで比べると、長い・改行入りのパスは
+       * 一覧どおりにコピーされても必ず不一致になる)。採用するのは写像で戻した生パス。
+       * 表示が衝突する候補は戻せない(どちらか決められない)ので null にして無効化する。
+       */
+      const byDisplay = new Map<string, string | null>();
+      for (const c of cands) {
+        const d = promptPath(c);
+        // 表示が同じでも生パスまで同じなら衝突ではない(candidates は重複排除済みだが、公開関数として防御)
+        byDisplay.set(d, byDisplay.has(d) && byDisplay.get(d) !== c ? null : c);
+      }
+      const answer = typeof e?.target === 'string' ? e.target.trim() : '';
+      const target = byDisplay.get(promptPath(answer)) ?? null;
+      if (!target) {
+        /*
+         * 2026-08-25 変更: 候補外・欠落・表示衝突の target は「出力不正」から候補なしと同じ格下げへ。
+         * 出力不正は state・reason・issues まで捨てて force 再診断まで固定するため、モデルが
+         * 移動先を 1 回取り違えただけで診断情報が全部消えるという、候補なしとの非対称があった。
+         * 捏造した移動先を採らない目的は格下げでも同じく達成でき、鮮度と理由は観察用に残せる。
+         */
+        out.set(file, demoted());
+        continue;
+      }
+      dest = { target, targetMemDir: targetMemDirOf(target) };
+    }
     const instruction =
       verdict === 'keep' ? '' : normalizeInstruction(String(e?.instruction || ''));
     // 行き先だけ言って指示文が無い件は貼るものが無く、サマリ・試算・まとめコピーで数え方がずれる。
-    // 不正な verdict と同じく「誤った提案を出すより欠けるほうが安全」で出力不正にする
-    if (verdict !== 'keep' && !instruction) {
+    // 不正な verdict と同じく「誤った提案を出すより欠けるほうが安全」で出力不正にする。
+    // ただし移動先が確定した wrong-project は web がテンプレートで指示文を組むので、
+    // モデルが散文を返さなくても貼るものは欠けない(プロンプトでも「パス以外は書かなくてよい」と伝えている)
+    if (verdict !== 'keep' && !instruction && !dest.target) {
       out.set(file, invalidTriage());
       continue;
     }
@@ -712,16 +1090,14 @@ export function parseTriage(
     out.set(file, {
       verdict,
       state,
-      reason: String(e?.reason || '')
-        .trim()
-        .slice(0, 400),
+      reason,
       issues,
-      instruction: instruction.slice(0, 1200),
+      // 移動先が確定した wrong-project は web がテンプレートで指示文を組むので、モデルの散文は
+      // キャッシュにも応答にも残さない(格下げ側と対称。捏造混じりの文面をコピーさせない)
+      instruction: dest.target ? '' : instruction.slice(0, 1200),
+      ...dest,
       ...(body ? { body } : {}),
-      // 欠落・非 boolean は undefined(シグナルを出さない)。モデルが省略しても要素は捨てない
-      ...(typeof e?.index_matches_body === 'boolean'
-        ? { indexMatchesBody: e.index_matches_body }
-        : {}),
+      ...idxMatch,
     });
   }
   return out;
@@ -742,16 +1118,94 @@ export function applyIndexMismatch(r: MemoryTriage, it: SkillItem): MemoryTriage
 }
 
 /*
+ * ゲート導入前(v0.8.0)の wrong-project キャッシュか。移動先はモデルの散文任せで、
+ * 捏造された移動先を含みうる。再診断の対象にする条件と、キャッシュを表示に載せない条件は
+ * 同じでなければならない(片方だけ緩いと捏造がそのまま貼れてしまう)ので 1 箇所に置く。
+ * demoted / error は現状 verdict が keep になるためここには来ないが、防御として条件に残す:
+ * Phase C で demoted が元の verdict を保持する形に変わっても素通りしないため。
+ */
+export function isLegacyWrongProject(e: MemoryTriage): boolean {
+  return e.verdict === 'wrong-project' && !e.target && !e.demoted && !e.error;
+}
+
+/*
+ * 制限つきセクション(プロジェクト不明 / 共有ストア)の表示ゲート(判断 5)。parseTriage は生成時にこの制限を
+ * かけるが、制限の導入前(Phase B まで)に生成されたキャッシュは wrong-project / delete / to-* が
+ * demoted 無しで残り得るので、保存値は書き換えずに表示のたびに読み替える。
+ * verdict が既に keep(= 新形式で格下げ済み、または元から keep)なら isOrphanRestricted が false を
+ * 返すのでそのまま通る(冪等)。target / targetMemDir は置き場所判定の結果なので orphan では持たせず、
+ * body(残す / 削る分類)も keep に対応しないので落とす。
+ * 格下げ理由は制限の出どころで分ける(parseTriage の生成側と同じ区分にする。片方だけずれると、
+ * 同じ状況の件が生成経由か表示ゲート経由かで再診断の扱いが変わってしまう)。
+ */
+export function orphanTriage<T extends MemoryTriage>(
+  e: T,
+  /* 制限の理由が共有ストア(user scope の autoMemoryDirectory)か */
+  sharedStore = false,
+): T {
+  if (e.error || !isOrphanRestricted(e.verdict)) return e;
+  // delete 演算子ではなく分割代入で落とす(元オブジェクトを触らず、落とす鍵を 1 行で見せる)。
+  // body は置き場所判定の結果ではないが keep には対応しない分類なので、防御として一緒に落とす
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 束縛は「落とす」ためだけで値は使わない
+  const { target: _t, targetMemDir: _d, body: _b, ...rest } = e;
+  return {
+    ...(rest as T),
+    verdict: 'keep',
+    demoted: e.verdict,
+    demotedBy: sharedStore ? 'shared-env' : 'orphan',
+    instruction: '',
+  };
+}
+
+/*
+ * 環境条件を理由に格下げされたキャッシュが「条件の解消で失効した」か。再診断(selectStale)と
+ * 表示(attachMemoryTriage)が必ず同じ答えを使うよう 1 箇所に置く
+ * (片方だけ緩いと、制限つきの結果が前提の変わった後も表示に居座る / 逆に、条件が続いている
+ * 環境で毎回 claude を呼び直して同じ格下げを繰り返す)。
+ *   - 'orphan'     : そのセクションが制限つきでなくなったら失効(帰属が決まった)
+ *   - 'shared-env' : 制限が解け、かつ user scope の autoMemoryDirectory も外れたら失効
+ *                    (どちらか一方でも残っていれば、同じ格下げが再現するだけ)
+ *   - 'no-signal'  : 内容側の理由なので環境では失効しない(hash 側の判定に任せる)
+ */
+export function demotionExpired(
+  demotedBy: MemoryTriage['demotedBy'],
+  opts: { restricted?: boolean; sharedEnv?: boolean } = {},
+): boolean {
+  if (opts.restricted) return false;
+  if (demotedBy === 'orphan') return true;
+  if (demotedBy === 'shared-env') return !opts.sharedEnv;
+  return false;
+}
+
+/*
  * 再診断の対象選定。stale 条件は diagnose.ts と同じく本文 hash + lang のみで、
  * 経過日・Read 実績・他メモリの構成変化ではキャッシュを無効化しない(force で全件)。
  * 例外: state(鮮度)を持たない旧形式のエントリは stale(次の差分診断で置き換わる)。
  * 出力不正のエントリは state が無くても stale にしない(同じ出力を繰り返すモデルで無限に呼び直さない)。
+ * 例外 2: wrong-project ゲート導入前の wrong-project(target も demoted も無い)は stale。
+ * 移動先が捏造だった事故の発端そのものなので自動で再診断に乗せる。
+ * 例外 3: 環境条件(orphan / shared-env)を理由に格下げされたエントリは、その条件が解消したら
+ * stale。未マウント・登録抹消・共有ストアといった環境条件が消えたのに、制限つきの診断結果が
+ * 居座り続けないようにする(条件ごとの解消判定は demotionExpired が持つ)。
+ * 全件を stale にはしない(安全化と無関係な旧エントリに再診断コストを払わせない)。
+ * 行き先の追加(to-user-claude-md)は stale の条件にしない: keep は安全側の既定で、新しい行き先へ
+ * 上がらないことは機会損失に留まる(force 再診断で拾えばよい)。Phase B の wrong-project 例外は
+ * 「捏造した移動先を出していた」危険な誤判定の是正で、トリガーの性質が違う。
  */
 export function selectStale(
   items: SkillItem[],
   store: TriageStore,
   lang: Lang,
   force: boolean,
+  opts: {
+    /* そのセクションが制限つきか(判断 5。格下げを解消したときの再診断判定に使う。
+     * 鍵名は互換のため orphan のまま、値は「プロジェクト不明 or 共有ストア」) */
+    orphan?: boolean;
+    /* user scope の autoMemoryDirectory が効いている環境か(shared-env 格下げの解消判定)。
+     * 省略可にしない: 未指定の既定(false)は「環境条件が解消した」= 全件再診断を意味するので、
+     * 渡し忘れが黙って claude 呼び出しを増やす。呼び出し側に必ず解決させる */
+    sharedEnv: boolean;
+  },
 ): SkillItem[] {
   if (force) return [...items];
   return items.filter((it) => {
@@ -760,7 +1214,9 @@ export function selectStale(
       !cached ||
       cached.lang !== lang ||
       cached.hash !== triageHash(it) ||
-      (!cached.state && !cached.error)
+      (!cached.state && !cached.error) ||
+      isLegacyWrongProject(cached) ||
+      demotionExpired(cached.demotedBy, { restricted: opts.orphan, sharedEnv: opts.sharedEnv })
     );
   });
 }
@@ -808,7 +1264,19 @@ export async function triageProject(
   lang: Lang,
   model: AiModel = 'haiku',
   // sections は遅延評価。キャッシュ済みの再訪ではフルスキャンを払わずに済ませる
-  opts: { force?: boolean; files?: string[]; sections?: () => Section[] } = {},
+  opts: {
+    force?: boolean;
+    files?: string[];
+    sections?: () => Section[];
+    /* モデル呼び出しの注入点(既定は runClaude)。配線をテストから 1 本通すために開けてある */
+    run?: (prompt: string) => Promise<string>;
+    /*
+     * autoMemoryDirectory の解決結果の注入点(既定は resolveAutoMemoryDir())。
+     * user scope かどうかで wrong-project の移動先概念が成立するかが決まるため、
+     * 実行機の settings に左右されずにテストできるよう開けてある
+     */
+    autoMemory?: AutoMemoryDirInfo | null;
+  } = {},
 ): Promise<TriageResult[]> {
   const wanted = opts.files?.length ? new Set(opts.files.map((f) => path.basename(f))) : null;
   const targets = wanted
@@ -816,13 +1284,39 @@ export async function triageProject(
     : [...sec.items];
   if (!targets.length) return [];
 
+  /*
+   * 制限つき(判断 5)か。真実源はセクション(scanMemory が付ける)で、理由は 2 つ:
+   *   - orphan: プロジェクトへ逆引きできない
+   *   - sharedStore: autoMemoryDirectory(user scope)による全プロジェクト共有の置き場
+   * どちらも「このプロジェクトのもの」という前提が立たないので、置き場所の判定はさせない。
+   * プロンプト・パース・表示ゲートで同じ値を使う
+   */
+  const restricted = !!sec.orphan || !!sec.sharedStore;
+  /*
+   * user scope の autoMemoryDirectory が効いている環境か。全プロジェクトの memory が 1 つの
+   * 置き場を共有するため「別プロジェクトの memory dir へ移す」という移動先の概念自体が成立せず、
+   * このセクションが共有ストアでなくても(旧 ~/.claude/projects 側の残骸でも)候補を組めない。
+   * 再診断の判定(shared-env 格下げの解消)にも同じ値を使うので、stale 選定より前に出す
+   */
+  const sharedEnv =
+    (opts.autoMemory !== undefined ? opts.autoMemory : resolveAutoMemoryDir())?.scope === 'user';
+  const run = opts.run ?? ((prompt: string) => runClaude(prompt, model, 600000));
   const store = loadTriage();
-  const stale = selectStale(targets, store, lang, !!opts.force);
+  const stale = selectStale(targets, store, lang, !!opts.force, { orphan: restricted, sharedEnv });
   if (stale.length) {
-    const standing = collectTriageContext(sec, opts.sections?.() || []);
+    // 制限つきでは常設文脈(CLAUDE.md 見出し・skill 一覧)をプロンプトに載せない(置き場所判定を
+    // しないため)ので、遅延フルスキャンごとスキップして無駄な走査を払わない
+    const standing = restricted
+      ? { rules: '', skills: '' }
+      : collectTriageContext(sec, opts.sections?.() || []);
     const ctx: TriageContext = {
       projectName: sec.projectName,
       projectPath: sec.projectPath,
+      orphan: restricted,
+      ...(sec.sharedStore ? { sharedStore: true } : {}),
+      // memory の実体の在り処。制限つきのときだけプロンプトに出す
+      // (帰属が決まらない環境でモデルに所在を推測させないための、サーバー側の確定事実)
+      memDir: sec.note,
       index: readIndexText(sec.note),
       usageAvailable: sec.usageAvailable,
       rules: standing.rules,
@@ -844,6 +1338,22 @@ export async function triageProject(
       ...(it.signals || []),
       ...(gitSignals.get(it.path) || []),
     ];
+    /*
+     * 制限つきでは wrong-project そのものを採用しないので、候補は集めない
+     * (プロンプトにも parseTriage にも渡らない = 「選べる」と読める材料を一切出さない)。
+     * 共有ストア環境(sharedEnv)でも同じく候補を組まず、wrong-project は候補なしとして
+     * keep へ格下げさせる(格下げ理由は環境条件なので 'shared-env' になる)
+     */
+    const noDestination = restricted || sharedEnv;
+    const candidatesOf = noDestination
+      ? () => []
+      : (it: SkillItem) => candidatesFor(sec, signalsOf(it));
+    const candidates = new Map<string, string[]>();
+    if (!noDestination)
+      for (const it of stale) {
+        const cands = candidatesOf(it);
+        if (cands.length) candidates.set(path.basename(it.path), cands);
+      }
     // body(残す / 削る分類)の検証には本文が要る。対象は feedback / user 型だけ
     const bodies = new Map<string, string>();
     for (const it of stale) {
@@ -861,11 +1371,13 @@ export async function triageProject(
       PROMPT_MAX_CHARS,
     );
     for (const chunk of chunks) {
-      const text = await runClaude(buildPrompt(chunk, ctx, lang, signalsOf), model, 600000);
+      const text = await run(buildPrompt(chunk, ctx, lang, signalsOf, candidatesOf));
       const parsed = parseTriage(
         text,
         chunk.map((it) => path.basename(it.path)),
         bodies,
+        candidates,
+        { orphan: restricted, sharedStore: !!sec.sharedStore, sharedEnv },
       );
       const generatedAt = new Date().toISOString();
       for (const it of chunk) {
@@ -881,6 +1393,9 @@ export async function triageProject(
           model,
           generatedAt,
         };
+        // 移動先ディレクトリは保存しない。読み手(attach / 結果組み立て)は常に target から
+        // 都度算出するので、キャッシュに古い移動先を残すと誤参照の余地だけが増える
+        delete store[it.path].targetMemDir;
       }
       // チャンクごとに保存する(後続チャンクが失敗しても済んだ分の call を無駄にしない)
       saveTriage(store);
@@ -891,7 +1406,7 @@ export async function triageProject(
   for (const it of targets) {
     const e = store[it.path];
     if (!e) continue;
-    results.push({
+    const raw: TriageResult = {
       file: path.basename(it.path),
       path: it.path,
       verdict: e.verdict,
@@ -902,8 +1417,16 @@ export async function triageProject(
       ...(e.signals?.length ? { signals: e.signals } : {}),
       ...(e.body ? { body: e.body } : {}),
       ...(e.indexMatchesBody !== undefined ? { indexMatchesBody: e.indexMatchesBody } : {}),
+      // wrong-project の移動先(選択済み)と、格下げの記録(要確認の表示に使う)。
+      // 移動先ディレクトリは attachMemoryTriage と同じくキャッシュ値ではなく target から都度算出
+      ...(e.target ? { target: e.target, targetMemDir: targetMemDirOf(e.target) } : {}),
+      ...(e.demoted ? { demoted: e.demoted } : {}),
+      // 格下げ理由も載せる(表示ゲート経由の件は orphanTriage が付けるので、キャッシュ由来と対称に)
+      ...(e.demotedBy ? { demotedBy: e.demotedBy } : {}),
       ...(e.error ? { error: e.error } : {}),
-    });
+    };
+    // 制限つきセクションは表示時にも verdict 制限をかける(制限導入前のキャッシュ対策。判断 5)
+    results.push(restricted ? orphanTriage(raw, !!sec.sharedStore) : raw);
   }
   return results;
 }
@@ -912,20 +1435,37 @@ export async function triageProject(
  * スキャン結果にキャッシュ済み診断を付与(内容が変わっていれば付けない)。
  * store は selectStale と同じくテストから差し替えられるよう引数にする。
  */
-export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: TriageStore): void {
+export function attachMemoryTriage(
+  memory: MemorySection[],
+  lang: Lang,
+  /* 既定は loadTriage()。必須引数(opts)より前なので、既定にしたい呼び出しは undefined を渡す */
+  store: TriageStore | undefined,
+  /* user scope の autoMemoryDirectory が効いている環境か(shared-env 格下げの解消判定。
+   * 呼び出し側の cwd で解決した値を渡す。省略可にしない: 未指定の既定(false)は
+   * 「環境条件が解消した」= 制限つきの診断を隠す判断になり、渡し忘れが表示を変えてしまう) */
+  opts: { sharedEnv: boolean },
+): void {
   if (!memory.length) return;
   // memory が 0 件のときはキャッシュ読み込みごと省く(デフォルト引数だとガードより先に走る)
   const s = store ?? loadTriage();
   for (const sec of memory) {
+    // 制限つき(プロジェクト不明 / 共有ストア)の判定は triageProject と同じ規則で 1 度だけ出す
+    const restricted = !!sec.orphan || !!sec.sharedStore;
     for (const it of sec.items) {
       const cached = s[it.path];
+      // ゲート導入前の wrong-project は付与しない(= 未診断扱い)。捏造された移動先を含む
+      // 指示文を表示・コピーさせないためで、未診断の CTA と selectStale の再診断に自然に乗る。
+      // 環境条件を理由に格下げされた診断も、その条件が解消したら同じく未診断扱い
+      // (制限つきの結果が、帰属が決まった後も居座らないように。selectStale と同じ判定関数)
       if (
         cached &&
         cached.lang === lang &&
         fs.existsSync(it.path) &&
-        cached.hash === triageHash(it)
+        cached.hash === triageHash(it) &&
+        !isLegacyWrongProject(cached) &&
+        !demotionExpired(cached.demotedBy, { restricted, sharedEnv: opts.sharedEnv })
       ) {
-        it.aiTriage = {
+        const raw: MemoryTriage = {
           verdict: cached.verdict,
           ...(cached.state ? { state: cached.state } : {}),
           reason: cached.reason,
@@ -936,9 +1476,19 @@ export function attachMemoryTriage(memory: MemorySection[], lang: Lang, store?: 
           ...(cached.indexMatchesBody !== undefined
             ? { indexMatchesBody: cached.indexMatchesBody }
             : {}),
+          // 移動先ディレクトリはキャッシュ値を信用せず target から都度算出する
+          // (診断後に worktree 化・リネームがあると、固定値は実在しない slug を指すため)
+          ...(cached.target
+            ? { target: cached.target, targetMemDir: targetMemDirOf(cached.target) }
+            : {}),
+          ...(cached.demoted ? { demoted: cached.demoted } : {}),
+          // 格下げ理由も載せる(表示ゲート経由の件は orphanTriage が付けるので、キャッシュ由来と対称に)
+          ...(cached.demotedBy ? { demotedBy: cached.demotedBy } : {}),
           // 出力不正も「診断済み」として載せる(未診断と区別し、再診断を促す)
           ...(cached.error ? { error: cached.error } : {}),
         };
+        // 制限つきセクションは表示時にも verdict 制限をかける(制限導入前のキャッシュ対策。判断 5)
+        it.aiTriage = restricted ? orphanTriage(raw, !!sec.sharedStore) : raw;
       }
     }
   }

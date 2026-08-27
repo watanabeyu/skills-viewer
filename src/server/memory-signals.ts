@@ -23,7 +23,8 @@ export interface SignalOptions {
   memoryType?: MemoryType;
   /* 本文の概算 tok(body-over の判定用) */
   bodyTokens?: number;
-  /* この memory のプロジェクト以外の登録プロジェクト(worktree 関係は除外済み)。other-project の判定用 */
+  /* この memory のプロジェクト以外の登録プロジェクト。自分自身(slug 一致・worktree 関係)と
+   * 入れ子(親子)は呼び出し側(memory.ts)で除外済み。other-project の判定用 */
   otherProjects?: string[];
 }
 
@@ -58,7 +59,7 @@ export function latestDate(body: string, now: number): { value: string; days: nu
 /*
  * 本文が参照するファイルパスのうち存在しないもの。
  * 対象は「/ を含み、末尾が拡張子つきのファイル名」に限る(URL・ブランチ名・パッケージ名を拾わない)。
- * 相対パスは projectPath 基準。projectPath が無い(孤児)なら絶対パスと ~/ だけを見る。
+ * 相対パスは projectPath 基準。projectPath が無い(プロジェクト不明)なら絶対パスと ~/ だけを見る。
  */
 export function missingPaths(body: string, projectPath: string | null, home: string): string[] {
   const out: string[] = [];
@@ -122,7 +123,9 @@ export function extractSignals(
 /*
  * 本文が別の登録プロジェクトの配下パス(絶対 / ~/)を指しているか。
  * 「別プロジェクトの話が混入した memory」の機械的な根拠で、置き場所(wrong-project)の判断材料になる。
- * 呼び出し側で自分自身と worktree 関係のプロジェクトは除いて渡す。
+ * 呼び出し側で自分自身(slug 一致を含む)・worktree 関係・入れ子プロジェクトは除いて渡す。
+ * 値はフルパス(basename だと teamA/ai-workspace と teamB/ai-workspace のような
+ * 同名プロジェクトを区別できないため。区別が目的なので表示側もフルパスのまま出す)。
  */
 export function otherProjectRefs(body: string, home: string, others: string[]): string[] {
   if (!others.length) return [];
@@ -130,11 +133,20 @@ export function otherProjectRefs(body: string, home: string, others: string[]): 
   for (const m of body.matchAll(/(~\/[^\s)）」'"`<>]+|\/[\w.@-]+(?:\/[\w.@-]+)+)/g)) {
     const raw = m[1].replace(/[/.,:;。、)）」]+$/, '');
     const resolved = raw.startsWith('~/') ? path.join(home, raw.slice(2)) : raw;
+    /*
+     * 1 つのパス参照が採るのは最長一致の 1 件だけ。入れ子で登録されたプロジェクト
+     * (親 /a と子 /a/b が両方 ~/.claude.json にある)では、/a/b/x.ts への参照 1 つが
+     * 親子 2 件の候補を生み、粗いほうの親が wrong-project の移動先判断を誤らせる。
+     */
+    let best = '';
     for (const p of others) {
-      if (resolved === p || resolved.startsWith(p + path.sep)) hit.add(path.basename(p));
+      if (resolved !== p && !resolved.startsWith(p + path.sep)) continue;
+      if (p.length > best.length) best = p;
     }
+    if (best) hit.add(best);
   }
-  return [...hit].slice(0, 2);
+  // 上限 3: 参照が複数プロジェクトに散っているとき、2 件では正解が落ちることがある(最長一致で 1 参照 1 件になった分の余裕)
+  return [...hit].slice(0, 3);
 }
 
 /* ---- feedback / user 型の本文構造 ---- */

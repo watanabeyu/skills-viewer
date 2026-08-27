@@ -1,15 +1,19 @@
-import { describe, expect, it } from 'vitest';
-import type { SkillItem } from '../src/shared/types';
+import { afterEach, describe, expect, it } from 'vitest';
+import type { MemorySection, MemoryVerdict, SkillItem } from '../src/shared/types';
 import { itemKey } from '../web/src/api';
 import {
+  estimateLabel,
   backlinksOf,
   brokenLinkCount,
+  copyInstruction,
+  factHeader,
   invocationOf,
   joinInstructions,
   kindMatches,
   memoryListSearch,
   refMatches,
   sameNameOthers,
+  skewedVerdict,
   sortItems,
   sortMemory,
   usageLine,
@@ -20,6 +24,9 @@ import {
 } from '../web/src/util';
 import { setLang, t } from '../web/src/i18n';
 import type { FeedbackBodyPlan } from '../src/shared/types';
+
+/* 言語は各テストの後に必ず既定(en)へ戻す(setLang し忘れが後続テストへ漏れないように) */
+afterEach(() => setLang('en'));
 
 const base = (over: Partial<SkillItem> = {}): SkillItem => ({
   name: 'foo',
@@ -141,6 +148,17 @@ describe('kindMatches / sameNameOthers', () => {
 const mem = (name: string, over: Partial<SkillItem> = {}): SkillItem =>
   base({ name, kind: 'memory', path: `/m/${name}.md`, ...over });
 
+/* 事実ヘッダの元になる 1 プロジェクト分のセクション(note = memory ディレクトリの実パス) */
+const memSection = (items: SkillItem[]): MemorySection => ({
+  id: '-w-alpha',
+  projectPath: '/w/alpha',
+  projectName: 'alpha',
+  note: '/h/.claude/projects/-w-alpha/memory',
+  usageAvailable: true,
+  indexTokens: 0,
+  items,
+});
+
 describe('sortMemory (memory 軸の並び順)', () => {
   const items = [
     mem('b', { indexTokens: 30, bodyTokens: 900, updatedAt: 200 }),
@@ -163,6 +181,14 @@ describe('sortMemory (memory 軸の並び順)', () => {
   });
   it('name は名前順', () => {
     expect(sortMemory(items, 'name').map((i) => i.name)).toEqual(['a', 'b', 'c']);
+  });
+  /*
+   * 計画 13 Phase D round2: 読み込み上限(200 行 / 25KB)の外にある索引行は実際には注入されない。
+   * 「減らす価値が高い順」を意図した並びなので 0 として扱う(セクション合計の数え方と同じ)。
+   */
+  it('index は上限外(indexBeyondLimit)の索引行を 0 として並べる', () => {
+    const withBeyond = [...items, mem('x', { indexTokens: 99, indexBeyondLimit: true })];
+    expect(sortMemory(withBeyond, 'index').map((i) => i.name)).toEqual(['c', 'a', 'b', 'x']);
   });
   it('元の配列を変更しない', () => {
     const before = items.map((i) => i.name);
@@ -219,31 +245,184 @@ describe('joinInstructions / withPreamble (まとめコピーの本文)', () => 
     issues: [],
     instruction,
   });
+  /* 移動先が確定した wrong-project は instruction が空でテンプレートが唯一の出典 */
+  const wrongProject: SkillItem['aiTriage'] = {
+    verdict: 'wrong-project',
+    reason: '',
+    issues: [],
+    instruction: '',
+    target: '/w/other',
+    targetMemDir: '/h/.claude/projects/-w-other/memory',
+  };
   const items = [
     mem('alpha', { aiTriage: tri('- alpha を消す') }),
     mem('beta', { aiTriage: tri('') }), // 提案なし(keep 相当)
     mem('gamma', { aiTriage: tri('- gamma を docs/ へ') }),
     mem('delta'), // 未診断
+    mem('epsilon', { aiTriage: wrongProject }),
   ];
+  const sec = memSection(items);
   const preamble = t('memory.triage.copyPreamble');
 
   it('前置きは本文の先頭に 1 回だけ付く', () => {
-    const text = joinInstructions(items);
+    const text = joinInstructions(sec);
     expect(text.startsWith(preamble + '\n\n')).toBe(true);
     expect(text.split(preamble)).toHaveLength(2); // 出現は 1 回
     expect(withPreamble('body')).toBe(preamble + '\n\nbody');
   });
 
   it('各件は「## name」見出しで区切る', () => {
-    const text = joinInstructions(items);
-    expect(text).toContain('## alpha\n\n- alpha を消す');
-    expect(text).toContain('## gamma\n\n- gamma を docs/ へ');
+    const text = joinInstructions(sec);
+    // 指示文の先頭には機械生成のフルパスアンカーが付く(手選択コピー対策)
+    expect(text).toContain(
+      '## alpha\n\n' + t('memory.triage.tpl.target', { path: '/m/alpha.md' }) + '\n- alpha を消す',
+    );
+    expect(text).toContain(
+      '## gamma\n\n' +
+        t('memory.triage.tpl.target', { path: '/m/gamma.md' }) +
+        '\n- gamma を docs/ へ',
+    );
   });
 
   it('指示文が空の件・未診断の件は含めない', () => {
-    const text = joinInstructions(items);
+    const text = joinInstructions(sec);
     expect(text).not.toContain('## beta');
     expect(text).not.toContain('## delta');
+  });
+
+  /* instruction が空でも移動先が確定していればテンプレートで指示文が組まれるので、母集団に入る */
+  it('instruction が空の wrong-project も見出し・対象ファイル一覧・テンプレート行が載る', () => {
+    const text = joinInstructions(sec);
+    expect(text).toContain(
+      '## epsilon\n\n' + t('memory.triage.tpl.target', { path: '/m/epsilon.md' }),
+    );
+    expect(text).toContain('- This memory is about /w/other');
+    expect(text).toContain('/h/.claude/projects/-w-other/memory');
+    expect(text).toContain(factHeader(sec, ['alpha.md', 'gamma.md', 'epsilon.md']));
+  });
+});
+
+/* 判断 4(計画 13 Phase B): コピー本文の事実ヘッダはモデル出力ではなくスキャン結果から機械生成する */
+describe('factHeader / copyInstruction (コピー本文の事実ヘッダ)', () => {
+  const item = mem('alpha', {
+    aiTriage: { verdict: 'delete', reason: '', issues: [], instruction: '- alpha を消す' },
+  });
+  const sec = memSection([item, mem('beta')]);
+
+  it('memory ディレクトリ・プロジェクト・対象ファイルを 2 行で出す', () => {
+    expect(factHeader(sec, ['a.md', 'b.md'])).toBe(
+      'Target: /h/.claude/projects/-w-alpha/memory (project: /w/alpha)\nTarget files: a.md, b.md',
+    );
+  });
+
+  it('プロジェクト不明は「不明」ラベル(memory ディレクトリは出す)', () => {
+    setLang('ja');
+    expect(factHeader({ ...sec, projectPath: null }, ['a.md'])).toBe(
+      '対象: /h/.claude/projects/-w-alpha/memory(プロジェクト: 不明)\n対象ファイル: a.md',
+    );
+  });
+
+  it('まとめコピーは前置きの直後にヘッダ(対象ファイルは提案のある件だけ)', () => {
+    const text = joinInstructions(sec);
+    expect(text).toBe(
+      t('memory.triage.copyPreamble') +
+        '\n\n' +
+        factHeader(sec, ['alpha.md']) +
+        '\n\n## alpha\n\n' +
+        t('memory.triage.tpl.target', { path: '/m/alpha.md' }) +
+        '\n- alpha を消す',
+    );
+  });
+
+  it('単件コピーも同じヘッダを持つ(対象ファイルはその 1 件)', () => {
+    const text = copyInstruction(sec, item);
+    expect(text).toBe(
+      t('memory.triage.copyPreamble') +
+        '\n\n' +
+        factHeader(sec, ['alpha.md']) +
+        '\n\n' +
+        t('memory.triage.tpl.target', { path: '/m/alpha.md' }) +
+        '\n- alpha を消す',
+    );
+  });
+});
+
+/* 判断 7(計画 13 Phase B): 偏りは verdict を上書きせず警告の材料にするだけ */
+describe('estimateLabel (削減試算の文言分岐)', () => {
+  const item = (verdict: MemoryVerdict, over: Partial<SkillItem> = {}) =>
+    mem('el-' + verdict, {
+      indexTokens: 30,
+      bodyTokens: 200,
+      aiTriage: { verdict, reason: '', issues: [], instruction: '- x' },
+      ...over,
+    });
+
+  it('to-user-claude-md は「全プロジェクト」注記つきの専用文言(estApplyUserClaude)を使う', () => {
+    const label = estimateLabel(item('to-user-claude-md'));
+    expect(label).toContain('EVERY project'); // 既定言語 en。全プロジェクト注入の 2 軸目
+    expect(label).toContain('always-on'); // 常時注入の 1 軸目
+    expect(label).toContain('200');
+  });
+
+  it('to-claude-md は従来の estApplyClaude(1 プロジェクトの常時注入)のまま', () => {
+    const label = estimateLabel(item('to-claude-md'));
+    expect(label).toContain('always-on');
+    expect(label).not.toContain('EVERY project');
+  });
+
+  it('上限外 + delete 系は estApplyBeyond(索引 ±0 の理由)を優先する', () => {
+    const label = estimateLabel(item('delete', { indexBeyondLimit: true }));
+    expect(label).toBe(t('memory.triage.estApplyBeyond'));
+  });
+});
+
+describe('skewedVerdict (提案の偏り検知)', () => {
+  const at = (verdict: MemoryVerdict, over: Partial<SkillItem['aiTriage']> = {}) => ({
+    aiTriage: { verdict, reason: '', issues: [], instruction: '- x', ...over },
+  });
+  const items = (n: number, verdict: MemoryVerdict) =>
+    Array.from({ length: n }, (_, i) => mem('m' + verdict + i, at(verdict)));
+
+  it('非 keep が 5 件以上で 8 割以上が同一なら、その verdict を返す', () => {
+    expect(skewedVerdict(items(5, 'wrong-project'))).toBe('wrong-project');
+    // 5 件中 4 件(80%)は境界で警告あり
+    expect(skewedVerdict([...items(4, 'wrong-project'), ...items(1, 'delete')])).toBe(
+      'wrong-project',
+    );
+  });
+
+  it('件数が足りない・偏っていないときは警告しない', () => {
+    expect(skewedVerdict(items(4, 'wrong-project'))).toBeNull(); // 4 件
+    // 6 件中 4 件(66%)は偏りとみなさない
+    expect(skewedVerdict([...items(4, 'wrong-project'), ...items(2, 'delete')])).toBeNull();
+  });
+
+  it('素の keep と出力不正は母数に入れない', () => {
+    const kept = mem('k', at('keep'));
+    // error は verdict を持つ形でも除外される(keep で渡すと keep 除外のほうで落ちて検証にならない)
+    const broken = mem('e', at('wrong-project', { error: 'invalid-output' as const }));
+    expect(skewedVerdict([...items(5, 'delete'), kept, broken])).toBe('delete');
+    expect(skewedVerdict([...items(4, 'delete'), kept, broken])).toBeNull();
+  });
+
+  it('格下げ済み(demoted)は元の verdict として数える(全件格下げの事故ケースでもバナーが出る)', () => {
+    const demoted = (i: number) => mem('d' + i, at('keep', { demoted: 'wrong-project' as const }));
+    expect(skewedVerdict(Array.from({ length: 5 }, (_, i) => demoted(i)))).toBe('wrong-project');
+    // 格下げと生き残りの wrong-project が混ざっても 1 つの偏りとして数える
+    expect(skewedVerdict([...items(3, 'wrong-project'), demoted(0), demoted(1)])).toBe(
+      'wrong-project',
+    );
+  });
+
+  /*
+   * プロジェクト不明セクションでの格下げ(判断 5)も同じく元の verdict で数える。
+   * 全件が格下げされる状況こそ「診断の前提(プロジェクトの特定)を疑え」という警告の出しどころなので、
+   * 格下げ理由が orphan でもバナーを抑制しない(判断 7)
+   */
+  it('orphan で全件格下げ(delete)でも偏り警告を出す', () => {
+    const demotedDelete = (i: number) =>
+      mem('od' + i, at('keep', { demoted: 'delete' as const, demotedBy: 'orphan' as const }));
+    expect(skewedVerdict(Array.from({ length: 5 }, (_, i) => demotedDelete(i)))).toBe('delete');
   });
 });
 
@@ -303,7 +482,6 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
       '- How to apply は description の再掲なので削除する',
       '- MEMORY.md の索引行の description を「レビュー対応は push まで進めて PR 作成の前で止まる」に書き換える(本文と異なる境界を言っているため)',
     ]);
-    setLang('en');
   });
 
   it('en: 例外だけ残す分類は抜粋を列挙する', () => {
@@ -324,6 +502,53 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
     ).toContain('- The MEMORY.md index line and the body say different things');
   });
 
+  /* 判断 3(計画 13 Phase B): wrong-project の移動先は server 確定の事実で、文面だけ web が組む */
+  const wpItem = {
+    ...base,
+    aiTriage: {
+      verdict: 'wrong-project' as const,
+      reason: '',
+      issues: [],
+      instruction: '- モデルの散文(捏造した移動先を含みうる)',
+      target: '/w/other',
+      targetMemDir: '/h/.claude/projects/-w-other/memory',
+    },
+  };
+
+  it('wrong-project は ja / en とも移動元・移動先・対象ファイルをテンプレートに埋める', () => {
+    for (const lang of ['ja', 'en'] as const) {
+      setLang(lang);
+      const text = effectiveInstruction(wpItem);
+      // 3 値のどれか 1 つでもプレースホルダを取りこぼすと、貼り先が対象を特定できない
+      expect(text).toContain('/w/other');
+      expect(text).toContain('/h/.claude/projects/-w-other/memory');
+      expect(text).toContain('feedback_worktree_reuse.md');
+    }
+  });
+
+  it('wrong-project は target / targetMemDir があれば散文でなくテンプレートを使う', () => {
+    setLang('ja');
+    expect(effectiveInstruction(wpItem).split('\n')).toEqual([
+      t('memory.triage.tpl.target', { path: wpItem.path }),
+      '- この memory は /w/other の話なので、feedback_worktree_reuse.md を /h/.claude/projects/-w-other/memory へ移す',
+      '- 移動先に同じ内容が無いか確認してから移す',
+      '- このプロジェクトの MEMORY.md の該当索引行を削除する',
+      // 索引行が無いと移動先で毎セッション注入されない(移したのに使われない)ので追加まで指示する
+      '- 移動先の MEMORY.md に索引行を追加する(description は現行の索引行を流用)',
+      '- 他メモリからの [[link]] を張り替える',
+    ]);
+    // 移動先が確定していない(server が付けなかった)ときだけ散文にフォールバック
+    expect(
+      effectiveInstruction({
+        ...wpItem,
+        aiTriage: { ...wpItem.aiTriage, target: undefined, targetMemDir: undefined },
+      }),
+    ).toBe(
+      t('memory.triage.tpl.target', { path: wpItem.path }) +
+        '\n- モデルの散文(捏造した移動先を含みうる)',
+    );
+  });
+
   it('effectiveInstruction: body があればテンプレート、無ければ AI の散文、keep や出力不正は空', () => {
     const plan: FeedbackBodyPlan = { why: 'drop', how: 'drop', keepLines: [], index: 'keep' };
     expect(effectiveInstruction(withPlan(plan))).toContain('Replace the body of');
@@ -333,7 +558,7 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
         ...base,
         aiTriage: { verdict: 'to-docs', reason: '', issues: [], instruction: '- 散文' },
       }),
-    ).toBe('- 散文');
+    ).toBe(t('memory.triage.tpl.target', { path: base.path }) + '\n- 散文');
     expect(
       effectiveInstruction({
         ...base,

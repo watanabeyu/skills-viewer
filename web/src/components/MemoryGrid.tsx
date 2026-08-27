@@ -11,7 +11,14 @@ import {
 } from '../util';
 import { t } from '../i18n';
 import { KindBadge } from './GridView';
-import { MemoryHeading, MemoryTypeBadge, TokFacts, UnreadBadge, readsLine } from './MemoryBits';
+import {
+  MemoryHeading,
+  MemoryTypeBadge,
+  TokFacts,
+  UnreadBadge,
+  readsLine,
+  usageTitle,
+} from './MemoryBits';
 
 /* 比較バーの最大幅(モック実測)。最大値のバーをこの幅にして他を比例させる */
 const CMP_MAX_PX = 122;
@@ -56,9 +63,13 @@ function CostBar({
   const n = sec.items.length;
   const bodyTok = sec.items.reduce((sum, it) => sum + (it.bodyTokens || 0), 0);
   const readCount = sec.items.filter((it) => !!it.useCount).length;
-  const per = n ? Math.round(sec.indexTokens / n) : 0;
+  // 分母は上限内の件数。合計(sec.indexTokens)が上限外を除いた値なので、
+  // 全件で割ると「1 件あたり」が実際より小さく出る(0 除算にも注意)
+  const inLimit = n - (sec.indexBeyondCount || 0);
+  const per = inLimit > 0 ? Math.round(sec.indexTokens / inLimit) : 0;
   const max = Math.max(sec.indexTokens, pluginTok, userTok);
   const unit = t('memory.cost.unit');
+  const beyond = sec.indexBeyondCount || 0;
   return (
     <div className="costbar">
       <div className="cell">
@@ -67,7 +78,10 @@ function CostBar({
           {sec.indexTokens.toLocaleString()}
           <span className="u"> {unit}</span>
         </span>
-        <span className="note">{t('memory.cost.indexNote', { n })}</span>
+        <span className="note">
+          {t('memory.cost.indexNote', { n })}
+          {beyond > 0 && '\n' + t('memory.cost.indexBeyond', { n: beyond })}
+        </span>
       </div>
       <div className="cell">
         <span className="k">{t('memory.cost.bodyK')}</span>
@@ -75,7 +89,8 @@ function CostBar({
           {bodyTok.toLocaleString()}
           <span className="u"> {unit}</span>
         </span>
-        <span className="note">
+        {/* 参照件数も transcript 由来なので、共有ストアでは全プロジェクト合算であることを添える */}
+        <span className="note" title={usageTitle(sec)}>
           {sec.usageAvailable
             ? t('memory.cost.bodyNote', { k: readCount, n })
             : t('memory.cost.bodyNoteNA')}
@@ -152,7 +167,9 @@ function MemoryCard({
         <UnreadBadge show={sec.usageAvailable && !it.useCount} />
       </div>
       <p className="desc">{it.description}</p>
-      <div className="usage">{readsLine(it, sec.usageAvailable)}</div>
+      <div className="usage" title={usageTitle(sec)}>
+        {readsLine(it, sec.usageAvailable)}
+      </div>
       <div className="meta">
         <span>{relDaysLabel(it.updatedAt)}</span>
         <span className="meta-r">
@@ -189,7 +206,7 @@ export function MemoryGrid({
   const pluginTok = tokOf('plugin');
   const userTok = tokOf('user');
 
-  // セクション順はサーバー側で確定済み(current 先頭 → 名前順 → 孤児末尾)
+  // セクション順はサーバー側で確定済み(current 先頭 → 名前順 → プロジェクト不明末尾)
   const sections = (data.memory || [])
     .map((sec) => ({
       sec,
@@ -200,12 +217,16 @@ export function MemoryGrid({
     }))
     .filter((s) => s.items.length > 0);
 
-  if (!sections.length)
+  if (!sections.length) {
+    // フィルタ前から 0 件(環境に memory が無い)なら「壊れている」誤解を防ぐため公式仕様を案内する。
+    // 検索・参照フィルタで絞った結果 0 件になっただけなら従来どおり list.empty を出す
+    const envEmpty = !(data.memory || []).some((sec) => sec.items.length > 0);
     return (
       <div className="grid-pad">
-        <div className="empty">{t('list.empty')}</div>
+        <div className="empty">{t(envEmpty ? 'memory.emptyEnv' : 'list.empty')}</div>
       </div>
     );
+  }
 
   return (
     <div className="grid-pad">
