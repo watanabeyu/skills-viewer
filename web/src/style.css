@@ -184,7 +184,23 @@
   --ctx-k-transform: none;
   --ctx-k-tracking: 0;
   --bar-radius: 2px;
-  --mem-tools-pad: 0 32px;
+  /*
+   * ---- memory 一覧・詳細(計画 15 Phase F)。値は docs/design/0.9.0/{Ledger,Console}MemoryList/Detail.dc.html の実測 ----
+   * パネル = 面 + 罫線。見出し帯 40(罫線あり)、行 40、表ヘッダ 30、
+   * 列 20 / 1fr / 80 / 70 / 90 / 70 / 70 / 120 / 70(記号 / 名前と索引行 / 種類 / 鮮度 / 読まれた / 索引 / 本文 / 診断 / 更新)、間 12。
+   * コスト: 左 200、値 26px/500。診断の kv はキー列 120(E1 の 110 より広い)
+   */
+  --mem-hd-h: 40px;
+  --mem-row-h: 40px;
+  --mem-thead-h: 30px;
+  --mem-cols: 20px minmax(0, 1fr) 80px 70px 90px 70px 70px 120px 70px;
+  --mem-cols-nouse: 20px minmax(0, 1fr) 80px 70px 70px 70px 120px 70px;
+  --mem-cost-l: 200px;
+  --mem-cost-cols: minmax(0, 1fr) 90px 150px 240px;
+  --mem-cost-v: 26px;
+  --mem-kv-k-w: 120px;
+  --mem-name-size: 13px;
+  --mem-name-weight: 600;
 
   /*
    * ---- 理解画面と hook 画面(計画 15 Phase E1)。値は docs/design/0.9.0/{Ledger,Console}Understand.dc.html /
@@ -427,7 +443,9 @@
   --ctx-k-transform: uppercase;
   --ctx-k-tracking: 0.08em;
   --bar-radius: 1px;
-  --mem-tools-pad: 0;
+  /* memory 一覧・詳細(ConsoleMemoryList/Detail.dc.html): 見出し帯 36、行 32。列と幅は同じ */
+  --mem-hd-h: 36px;
+  --mem-row-h: 32px;
 
   /* ---- 理解画面と hook 画面。*Understand.dc.html / *Hook.dc.html の Console 実測 ---- */
   --h1-size: 18px;
@@ -545,9 +563,6 @@ button {
   font-family: var(--font-ui);
 }
 /* カードは <button> なので上の書体を継ぐ。説明文(読む文字)だけ本文書体に戻す */
-.card .desc,
-.ccard .cd,
-.ccard .d1,
 .warn-badge .tip {
   font-family: var(--font-body);
 }
@@ -561,45 +576,13 @@ button {
 button,
 input,
 select,
-.hd h1,
-.hd .sub,
-.hd .count,
-.path-sub,
 .sec-h,
-.sec-t,
 .set-label,
 .set-note,
-.kbadge,
-.tbadge,
-.vbadge,
-.unread-badge,
 .warn-badge,
-.orphan-badge,
 .g-manual,
-.chg-title,
-.scope-mini,
-.card .nm,
-.card .meta,
-.ccard .nm,
-.ccard .cn,
-.d-name,
-.tabs,
 .modal h3,
 .drop .di .l1,
-.costbar .k,
-.costbar .u,
-.costbar .note,
-.costbar .cmp .row,
-.cbox .k,
-.cbox .n,
-.foot .k,
-.foot .u,
-.foot .note,
-.instr-t,
-.triage-row .nm,
-.triage-cta .ttl,
-.mem-modal-name,
-.f-row .rk,
 .fk,
 .kv .k,
 .fc-title,
@@ -609,7 +592,9 @@ select,
 .hname,
 .tree-row,
 .stale-note,
-.issue,
+.mcap,
+.mstate,
+.mword,
 .empty {
   font-family: var(--font-ui);
 }
@@ -622,79 +607,6 @@ select,
   padding: var(--main-pad);
 }
 
-/* header */
-.hd {
-  padding: 28px 32px 0;
-}
-.hd .t-row {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  /* 棚卸し見出しの右端にはボタンと 1 行のインライン表示が並ぶので折り返す */
-  flex-wrap: wrap;
-}
-.hd h1 {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  margin: 0;
-  white-space: nowrap;
-  flex: none;
-}
-.hd h1 a {
-  color: var(--text);
-  text-decoration: none;
-}
-.hd h1 a:hover {
-  color: var(--sub);
-}
-.hd .sub {
-  font-size: 12px;
-  color: var(--meta);
-}
-.hd .count {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--meta);
-}
-/* セクション見出し・棚卸しタイトルの副題(フルパス)。同名プロジェクトの区別に使う控えめな 1 行 */
-.path-sub {
-  margin: 2px 0 0;
-  font-size: 11px;
-  color: var(--meta);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sec-h + .path-sub {
-  margin: -4px 0 8px;
-}
-.hd input.q {
-  margin-top: 16px;
-  width: 100%;
-  padding: 11px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-size: 13.5px;
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
-  font-family: var(--font-ui);
-}
-.chip {
-  padding: 6px 14px;
-  border-radius: var(--radius-chip);
-  font-size: 12px;
-  cursor: pointer;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--sub);
-}
-.chip.on {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--bg);
-}
 /* 用途別表示: グループ見出しの絵文字と手動指定バッジ */
 .sec-h .g-emoji {
   font-size: 13px;
@@ -710,9 +622,6 @@ select,
 .sec-h.sub .lbl {
   text-transform: none;
   letter-spacing: 0.02em;
-}
-.left-col .sec-h.sub {
-  padding-left: 6px;
 }
 .g-manual {
   font-size: 10px;
@@ -744,14 +653,6 @@ select,
   max-width: 460px;
   margin: 0 auto 16px;
   line-height: 1.7;
-}
-
-.ctrl-sep {
-  width: 1px;
-  height: 18px;
-  background: var(--border);
-  margin: 0 4px;
-  align-self: center;
 }
 
 /* 並び順セレクト(チップと同じ見た目) */
@@ -791,16 +692,6 @@ select,
   border-color: var(--text);
   color: var(--text);
   font-weight: 600;
-}
-/* コントロール右端(AI メニュー + 設定) */
-.controls-r {
-  margin-left: auto;
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  /* AI 不在の注記・失敗の 1 行が入るので、ボタンを押し出さず折り返す */
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 /* セグメント(種類フィルタ / 並び方): 罫線で繋いだボタン群。選択中は面(強)+ 本文色。塗り(反転)は使わない(0.4) */
@@ -902,12 +793,6 @@ select,
   background: var(--bg);
   padding: 10px 0 8px;
 }
-.sec-h .sq {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex: none;
-}
 .sec-h .lbl {
   font-size: 11px;
   font-weight: 700;
@@ -932,104 +817,6 @@ select,
   font-size: 10.5px;
 }
 
-/* grid + cards */
-.grid-pad {
-  padding: 6px 32px 32px;
-}
-.grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-.card {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  cursor: pointer;
-  text-align: left;
-  min-width: 0;
-}
-.card:hover {
-  border-color: var(--border-strong);
-}
-.card .top {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.card .nm {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  word-break: break-all;
-}
-.card .ver {
-  margin-left: auto;
-  font-size: 10.5px;
-  color: var(--meta);
-  font-family: var(--font-mono);
-  white-space: nowrap;
-}
-.card .desc {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--sub);
-  margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.card .usage {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  background: var(--raised);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  color: var(--sub);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card .meta {
-  display: flex;
-  gap: 8px;
-  font-size: 10.5px;
-  color: var(--meta);
-}
-.card .meta span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.card .meta .meta-r {
-  margin-left: auto;
-  flex: none;
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-}
-/* グループ化オフ時にカード上部へ出す所属ラベル */
-.scope-mini {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--meta);
-  margin-bottom: -4px;
-}
-.dot5 {
-  width: 6px;
-  height: 6px;
-  border-radius: 2px;
-  flex: none;
-}
 .empty {
   text-align: center;
   padding: 44px;
@@ -1041,25 +828,6 @@ select,
   font-size: 11px;
 }
 
-/* kind バッジ(cmd / agent / hook。skill は無印) */
-.kbadge {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--radius-chip);
-  background: var(--raised);
-  color: var(--meta);
-  white-space: nowrap;
-  flex: none;
-  vertical-align: 3px;
-  margin-left: 8px;
-}
-
-/* 同名定義 + diff */
-.pbtn.sm {
-  font-size: 11px;
-  padding: 3px 10px;
-}
 .diff-wrap {
   margin-top: 10px;
 }
@@ -1112,90 +880,6 @@ select,
   border-bottom: 1px solid var(--border);
 }
 
-/* master / detail */
-.md-wrap {
-  display: flex;
-  align-items: stretch;
-}
-.left-col {
-  width: 340px;
-  flex: none;
-  border-right: 1px solid var(--border);
-  padding: 8px 20px 28px 32px;
-  position: sticky;
-  top: 0;
-  max-height: 100vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.ccard {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  cursor: pointer;
-  text-align: left;
-  margin-bottom: 8px;
-}
-.ccard:hover {
-  border-color: var(--border-strong);
-}
-.ccard.sel {
-  border-color: var(--text);
-}
-.ccard .r1 {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.ccard .dot7 {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-}
-.ccard .nm {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text);
-  word-break: break-all;
-}
-.ccard .ver {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--meta);
-  font-family: var(--font-mono);
-}
-.ccard .d1 {
-  font-size: 11.5px;
-  color: var(--meta);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pane {
-  flex: 1;
-  min-width: 0;
-  max-width: 980px;
-  padding: 20px 36px 36px 32px;
-}
-.back {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-chip);
-  font-size: 12px;
-  color: var(--sub);
-  padding: 7px 14px;
-  cursor: pointer;
-}
-.back:hover {
-  background: var(--panel);
-}
 .pbtn {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1208,84 +892,7 @@ select,
 .pbtn:hover {
   background: var(--panel);
 }
-.d-name {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--text);
-  margin: 14px 0 0;
-  word-break: break-all;
-}
-.tabs {
-  display: flex;
-  gap: 20px;
-  margin-top: 18px;
-  border-bottom: 1px solid var(--border);
-}
-.tab {
-  background: none;
-  border: 0;
-  font-size: 13px;
-  color: var(--meta);
-  padding: 8px 2px 10px;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-.tab.on {
-  color: var(--text);
-  font-weight: 600;
-  border-bottom-color: var(--text);
-}
 
-.sec-t {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--meta);
-  margin: var(--section-gap) 0 10px;
-}
-.full-desc {
-  font-size: 13.5px;
-  line-height: 1.8;
-  color: var(--sub);
-  margin: 0;
-  white-space: pre-wrap;
-}
-.f-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  border-bottom: 1px solid var(--border);
-  padding: 8px 4px;
-}
-.f-row .sq6 {
-  width: 6px;
-  height: 6px;
-  border-radius: 2px;
-  background: var(--meta);
-  flex: none;
-}
-.f-row .p {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--sub);
-  word-break: break-all;
-}
-
-/* SKILL.md rendering */
-.fm-box {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--meta);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 18px 0;
-}
 .md-body {
   font-size: 12.5px;
   line-height: 1.9;
@@ -1403,7 +1010,6 @@ select,
   word-break: break-all;
 }
 
-/* delete modal */
 .overlay {
   position: fixed;
   inset: 0;
@@ -1437,64 +1043,7 @@ select,
   justify-content: flex-end;
   gap: 8px;
 }
-/* 棚卸し行の本文モーダル: 設定モーダルより広く、本文は内側でスクロール */
-.modal.mem-modal {
-  width: 760px;
-  max-width: 92vw;
-  max-height: 84vh;
-  display: flex;
-  flex-direction: column;
-  padding: 20px 24px 22px;
-}
-.mem-modal-h {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-.mem-modal-name {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text);
-  word-break: break-all;
-}
-.mem-modal-sp {
-  flex: 1;
-}
-.mem-modal-desc {
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--sub);
-  margin: 0 0 12px;
-}
-.mem-modal-body {
-  overflow: auto;
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
 
-@media (max-width: 900px) {
-  .grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .left-col {
-    display: none;
-  }
-}
-/* フル幅運用: 広い画面ではカラム数を増やしてカードの間延びを防ぐ */
-@media (min-width: 1480px) {
-  .grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-@media (min-width: 1960px) {
-  .grid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-}
-
-/* ---- 診断 (v0.3.0): 未使用バッジ・lint 警告・トークンコスト ---- */
 .warn-badge {
   font-size: 9.5px;
   font-weight: 700;
@@ -1506,29 +1055,6 @@ select,
   background: var(--warn-tint);
   position: relative;
   cursor: help;
-}
-/* カード右上のグループ(バージョン + ⚠)。.ver 単体の margin-left:auto を引き継ぐ */
-.card .top .top-r {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-}
-.card .top .top-r .ver {
-  margin-left: 0;
-}
-/* 名前の下のチップ行(kind / 起動経路 / 未使用) */
-.card .chips {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: -4px;
-}
-.card .chips .kbadge {
-  margin-left: 0;
-  vertical-align: 0;
 }
 /* ⚠ hover の説明 tooltip */
 .warn-badge .tip {
@@ -1566,21 +1092,6 @@ select,
 .warn-badge .tip .tip-line::before {
   content: '· ';
 }
-.card .meta .tok,
-.tok-total {
-  font-family: var(--font-mono);
-  white-space: nowrap;
-}
-.hd .tok-total {
-  cursor: help;
-}
-.sec-h .sec-tok {
-  font-size: 11px;
-  color: var(--meta);
-  font-family: var(--font-mono);
-  white-space: nowrap;
-  cursor: help;
-}
 .lint-row {
   display: flex;
   gap: 8px;
@@ -1593,32 +1104,6 @@ select,
 .lint-row .lint-mark {
   color: var(--warn);
   flex: none;
-}
-
-/* ---- 再訪フック (v0.4.0): What's Changed バナー・スパークライン ---- */
-.chg-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin: 14px 0 -4px;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--raised);
-  font-size: 12px;
-  color: var(--sub);
-}
-.chg-title {
-  font-weight: 700;
-  flex: none;
-}
-/* 注意色のバナー(棚卸しの偏り警告)。骨格は chg-banner のまま、色は warnline に合わせる */
-.chg-banner.warn {
-  margin: 0 0 14px;
-  border-color: var(--warn);
-  background: var(--warn-tint);
-  color: var(--warn);
 }
 
 /*
@@ -1637,662 +1122,6 @@ select,
 }
 .inline-msg.note {
   color: var(--meta);
-}
-
-.diag-box {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  padding: 12px 14px;
-  margin-bottom: 10px;
-}
-
-/* ---- memory (plan 10): 値は docs/plans/design/{Main,Detail,Triage}.dc.html の <style> から実測転記 ----
- * 非採用: モックの `.card .meta .tok i`(本文 tok の淡色表示)は切替条件が特定できないため入れていない。
- * `.sec-t` は skill 詳細と共有のため既存値を維持し、memory 画面は `.sec-t.mem` でモック値に上書きする。
- */
-/* 見出し(Detail / Triage の <style> 実測値: letter-spacing 0.08em / color var(--meta)) */
-.sec-t.mem {
-  letter-spacing: 0.08em;
-  color: var(--meta);
-}
-.orphan-badge {
-  font-size: 10px;
-  color: var(--warn);
-  background: var(--warn-tint);
-  border-radius: var(--radius-chip);
-  padding: 2px 8px;
-  white-space: nowrap;
-}
-/* frontmatter type バッジ(Main .tbadge / .t-*)。user はモックに無いので既存の紫系 */
-.tbadge {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2.5px 8px;
-  border-radius: var(--radius-chip);
-  white-space: nowrap;
-  flex: none;
-}
-.t-project {
-  color: var(--sub);
-  background: var(--raised);
-}
-.t-feedback {
-  color: var(--sub);
-  background: var(--raised);
-}
-.t-reference {
-  color: var(--sub);
-  background: var(--raised);
-}
-.t-user {
-  color: var(--sub);
-  background: var(--raised);
-}
-/* 「直近未参照」(Main .unread-badge。値は .unused-badge と同一) */
-.unread-badge {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2.5px 8px;
-  border-radius: var(--radius-chip);
-  white-space: nowrap;
-  flex: none;
-  color: var(--warn);
-  background: var(--warn-tint);
-}
-
-/* コストバー(Main .costbar) */
-.costbar {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 20px;
-  margin: 4px 0 16px;
-}
-.costbar .cell {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding-right: 28px;
-}
-.costbar .cell + .cell {
-  border-left: 1px solid var(--border);
-  padding-left: 28px;
-}
-.costbar .k {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--meta);
-}
-.costbar .v {
-  font-size: 19px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  letter-spacing: -0.01em;
-}
-.costbar .v.dim {
-  color: var(--meta);
-}
-.costbar .u {
-  font-size: 11px;
-  color: var(--meta);
-  font-weight: 400;
-}
-/* モックの <br> 位置は i18n 文字列の改行で再現する */
-.costbar .note {
-  font-size: 11px;
-  color: var(--meta);
-  line-height: 1.6;
-  white-space: pre-line;
-}
-.costbar .spacer {
-  flex: 1;
-}
-.costbar .act {
-  display: flex;
-  align-items: center;
-  padding-right: 24px;
-}
-.costbar .act .chip {
-  white-space: nowrap;
-}
-.costbar .cmp {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  min-width: 268px;
-  cursor: help;
-}
-.costbar .cmp .row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--sub);
-}
-.costbar .cmp .row .lab {
-  width: 74px;
-  flex: none;
-  color: var(--meta);
-}
-.costbar .cmp .row .bar {
-  height: 7px;
-  border-radius: 3px;
-  flex: none;
-}
-.costbar .cmp .row .num {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--meta);
-}
-/* memory カードの meta 行(Main .card .meta: align-items center / .meta-r gap 10px / .tok b) */
-.mem-card .meta {
-  align-items: center;
-}
-.mem-card .meta .meta-r {
-  gap: 10px;
-}
-.card .meta .tok b {
-  font-weight: 700;
-  color: var(--sub);
-}
-
-/* 詳細(Detail): 左カラムの ccard(.cn / .cd / .cm) */
-.ccard .cn {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  word-break: break-all;
-}
-.ccard .cd {
-  font-size: 11px;
-  color: var(--meta);
-  line-height: 1.5;
-}
-.ccard .cm {
-  display: flex;
-  gap: 8px;
-  font-size: 10px;
-  color: var(--meta);
-  font-family: var(--font-mono);
-  margin-top: 2px;
-}
-.pane-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.pane-top .push {
-  margin-left: auto;
-  display: inline-flex;
-  gap: 8px;
-  /* AI 不在の注記・失敗の 1 行が入るので、ボタンを押し出さず折り返す */
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-}
-/* d-name にバッジを並べる(Detail .d-name: flex / gap 9px) */
-.d-name.mem {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-.d-name.mem .kbadge {
-  margin-left: 0;
-  vertical-align: 0;
-}
-.full-desc.mem {
-  margin-top: 18px;
-}
-.warnline {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--warn);
-  background: var(--warn-tint);
-  border-radius: var(--radius);
-  padding: 10px 13px;
-  margin-top: 12px;
-}
-.cost2 {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.cbox {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.cbox .k {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--meta);
-}
-.cbox .v {
-  font-size: 21px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  letter-spacing: -0.01em;
-}
-.cbox .v small {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--meta);
-}
-.cbox .n {
-  font-size: 11.5px;
-  color: var(--meta);
-  line-height: 1.6;
-}
-.cbox.dim .v {
-  color: var(--meta);
-}
-/* 参照実績の行(Detail .f-row: 9px 4px / 12.5px / .rk 148px) */
-.f-row.mem {
-  padding: 9px 4px;
-  font-size: 12.5px;
-  color: var(--sub);
-}
-.f-row .rk {
-  width: 148px;
-  flex: none;
-  color: var(--meta);
-  font-size: 11.5px;
-}
-.f-row .mono {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-}
-.f-row .dim {
-  color: var(--meta);
-}
-.linkrow {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.lchip {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-chip);
-  font-size: 12px;
-  color: var(--sub);
-  padding: 6px 13px;
-  cursor: pointer;
-}
-.lchip:hover {
-  background: var(--panel);
-}
-.lchip .arrow {
-  color: var(--meta);
-  margin-right: 5px;
-}
-.lchip.dead {
-  color: var(--danger);
-  border-color: var(--danger);
-  background: var(--danger-tint);
-  cursor: help;
-}
-.fm-box.mem {
-  margin: 12px 0 0;
-  line-height: 1.7;
-}
-/* 本文中の [[link]] — 解決済みは遷移リンク、未解決はリンク切れとして装飾 */
-.mem-link {
-  color: var(--text);
-  text-decoration: none;
-  border-bottom: 1px solid var(--border-strong);
-  cursor: pointer;
-}
-.mem-link:hover {
-  border-bottom-color: var(--text);
-}
-.mem-link.broken {
-  color: var(--danger);
-  border-bottom: 1px dashed var(--danger);
-  cursor: help;
-}
-
-/* 棚卸し診断(Triage)— 機械層の事実 + AI の行き先仮説 + 貼る指示文(操作はコピーのみ) */
-.triage-view {
-  padding-bottom: 28px;
-}
-.triage-view .t-row .pbtn.push-r {
-  margin-left: auto;
-}
-.triage-pad {
-  padding: 0 32px;
-}
-.sec-t.tri {
-  margin: 22px 0 10px;
-}
-/* 未診断 / 診断中の案内。「棚卸し診断」は遷移だけで AI は走らないので、状態を行の上で明示する */
-.triage-cta {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  /* 行カード(白)と区別するため、指示文ボックスと同じ暖色ティントにする */
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 22px;
-  margin: 0 0 14px;
-}
-.triage-cta .txt {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.triage-cta .ttl {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--text);
-}
-.triage-cta .bd {
-  font-size: 12px;
-  line-height: 1.65;
-  color: var(--sub);
-}
-.triage-cta .apply {
-  margin-left: auto;
-  background: var(--text);
-  border: 1px solid var(--text);
-  color: var(--bg);
-  border-radius: var(--radius-chip);
-  font-size: 12.5px;
-  font-weight: 600;
-  padding: 9px 20px;
-  font-family: var(--font-ui);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.triage-cta .apply:hover {
-  background: var(--text);
-  border-color: var(--text);
-}
-.triage-cta.busy {
-  border-color: var(--border-strong);
-  background: var(--raised);
-}
-.triage-cta.busy .ttl::before {
-  content: '✦ ';
-}
-.triage-rows.busy {
-  opacity: 0.55;
-  pointer-events: none;
-}
-.triage-row {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 20px;
-  margin-bottom: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.nmline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.nmline .kbadge {
-  margin-left: 0;
-  vertical-align: 0;
-}
-.triage-row .nm {
-  font-size: 14.5px;
-  font-weight: 600;
-  color: var(--text);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  word-break: break-all;
-}
-.triage-row .nm:hover {
-  text-decoration: underline;
-}
-/* verdict バッジ。色は hue、背景は hue + 1c(モックの verdictStyle と同じ) */
-.vbadge {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2.5px 9px;
-  border-radius: var(--radius-chip);
-  white-space: nowrap;
-  /* v-<verdict> の個別ルールが無い場合のフォールバック(新 verdict 追加時に無地バッジにしない) */
-  color: var(--sub);
-  background: var(--raised);
-}
-.vbadge.v-to-docs {
-  color: var(--text);
-  background: var(--raised);
-}
-.vbadge.v-shrink {
-  color: var(--text);
-  background: var(--raised);
-}
-/* v-error は「AI 出力が不正」= 内容を出せない状態。注意色は delete 系と共有する */
-.vbadge.v-wrong-project,
-.vbadge.v-delete,
-.vbadge.v-error {
-  color: var(--danger);
-  background: var(--danger-tint);
-}
-.vbadge.v-keep {
-  color: var(--sub);
-  background: var(--raised);
-}
-/* CLAUDE.md 行きは同系色。user scope 側は「全プロジェクトに効く」ぶん濃い紫で区別する */
-.vbadge.v-to-claude-md {
-  color: var(--text);
-  background: var(--raised);
-}
-.vbadge.v-to-user-claude-md {
-  color: var(--text);
-  background: var(--raised);
-}
-.vbadge.v-to-skill {
-  color: var(--text);
-  background: var(--raised);
-}
-/* 行き先に関わらず出す事実(置き場所の誤り・索引と本文の食い違い)は注意色 */
-.issue.warn {
-  color: var(--warn);
-  background: var(--warn-tint);
-  font-weight: 600;
-}
-/* update は shrink(縮める)と同じ「索引 ±0・本文を直す」系だが区別できる暖色 */
-.vbadge.v-update {
-  color: var(--text);
-  background: var(--raised);
-}
-.toks {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--meta);
-  display: inline-flex;
-  gap: 12px;
-}
-.toks b {
-  color: var(--sub);
-}
-.reason {
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--sub);
-  margin: 0;
-}
-.issues {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.issue {
-  font-size: 11px;
-  color: var(--meta);
-  background: var(--raised);
-  border-radius: var(--radius);
-  padding: 4px 9px;
-  /* other-project シグナルの値がフルパス化して長くなったため、区切りの無い文字列でも折り返す */
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-/* 格下げ件(未検証のモデルの見立て)の根拠。opacity での一律減衰は文字コントラストを直接削るので
- * 使わず(基準チップと同条件を維持)、warn 系の左アクセント(非テキスト 3:1 以上)で区別する */
-.issue.demoted {
-  border-left: 3px solid var(--warn);
-  border-radius: 3px var(--radius) var(--radius) 3px;
-}
-.instr {
-  background: var(--raised);
-  border-radius: var(--radius);
-  padding: 10px 13px;
-  margin-top: 3px;
-}
-.instr-h {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.instr-t {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--meta);
-}
-.instr-d {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--sub);
-  margin-left: auto;
-}
-/* 試算(.instr-d)を持たない発動診断でもコピーは右端に置く */
-.instr-h .instr-t + .copybtn {
-  margin-left: auto;
-}
-.copybtn {
-  font-family: var(--font-ui);
-  font-size: 11px;
-  padding: 4px 11px;
-  border-radius: var(--radius-chip);
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--sub);
-  cursor: pointer;
-}
-.copybtn:hover {
-  background: var(--panel);
-}
-/* 指示文は折りたたまず全文を出す(貼るかどうかの判断がここで完結するように) */
-.instr-body {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.75;
-  color: var(--sub);
-  white-space: pre-line;
-  margin-top: 7px;
-}
-/* 集計フッター。スクロールしても見えるよう sticky */
-.foot {
-  position: sticky;
-  bottom: 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 22px;
-  margin-top: 16px;
-  display: flex;
-  align-items: center;
-  gap: 26px;
-}
-.foot .k {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--meta);
-}
-.foot .v {
-  font-size: 20px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  letter-spacing: -0.01em;
-}
-.foot .v.neg {
-  color: var(--good);
-}
-.foot .u {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--meta);
-}
-.foot .cell {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.foot .note {
-  font-size: 11.5px;
-  color: var(--meta);
-  line-height: 1.6;
-  max-width: 400px;
-}
-.foot .apply {
-  margin-left: auto;
-  background: var(--text);
-  border: 1px solid var(--text);
-  color: var(--bg);
-  border-radius: var(--radius-chip);
-  font-size: 12.5px;
-  font-weight: 600;
-  padding: 9px 20px;
-  font-family: var(--font-ui);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.foot .apply:hover {
-  background: var(--text);
-  border-color: var(--text);
-}
-/* 詳細の概要タブに埋める 1 件分の診断ブロック(diag-box の枠 + 棚卸しの部品) */
-.triage-box {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.triage-whole {
-  align-self: flex-start;
-  font-size: 11.5px;
-  color: var(--text);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-}
-.triage-whole:hover {
-  text-decoration: underline;
 }
 
 /*
@@ -2983,40 +1812,6 @@ button.ctx-row:hover {
   margin: 8px 0 0;
   padding: 6px 0;
   background: transparent;
-}
-
-/* memory 一覧のツールバー(/memory。Phase F で組み替えるまでの仮置き) */
-.mem-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: var(--mem-tools-pad);
-}
-.mem-tools h2 {
-  margin: 0;
-  font-family: var(--h2-font);
-  font-size: var(--h2-size);
-  font-weight: var(--h2-weight);
-  text-transform: var(--h2-transform);
-  letter-spacing: var(--h2-tracking);
-  color: var(--h2-color);
-  white-space: nowrap;
-}
-.mem-tools input.q {
-  flex: 1;
-  min-width: 0;
-  height: var(--search-h);
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--switch-bg);
-  color: var(--text);
-  font-family: var(--font-ui);
-  font-size: 13px;
-  outline: none;
-}
-.mem-tools input.q:focus {
-  border-color: var(--text);
 }
 
 /*
@@ -3944,4 +2739,333 @@ button.crow:hover {
 }
 .md-full .md-body + .md-body {
   margin-top: 0;
+}
+
+/*
+ * ---- memory 一覧・詳細(計画 15 Phase F)。骨格は README 6.2、寸法はトークン(--mem-*)、色はトークンのみ ----
+ * 一覧: 名前と要約 → コスト(左 = 索引 tok、右 = 行数 / 上限のバーと本文合計)→ パネル(見出し 2 段 → 表ヘッダ → 行 → 注記)。
+ * 詳細: 事実の帯(E1 の .facts)→ 索引行 → ✦ 診断(kv)→ 本文。
+ * 押せる行は <button>。鮮度と診断の 4 語は太さを揃え、色だけで分ける(0.4b)。
+ */
+.mpanel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.mpanel .pill {
+  background: var(--raised);
+}
+/* 見出し帯: 名前(h2 と同じ書体)/ 件数 / 置き場 / 右端にボタンとドロップダウン */
+.mhd {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--mem-hd-h);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.mhd > .meta {
+  min-width: 0;
+}
+.mhd > .meta.ellip {
+  flex: 1 1 0;
+}
+.mhd .hd-r {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.mcap {
+  font-family: var(--h2-font);
+  font-size: var(--h2-size);
+  font-weight: var(--h2-weight);
+  text-transform: var(--h2-transform);
+  letter-spacing: var(--h2-tracking);
+  color: var(--h2-color);
+  white-space: nowrap;
+}
+/* 見出しの 2 段目: 検索 + 種類のセグメント(幅に関係なく 2 段。1.2) */
+.mtools {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+/* コスト: 左に索引 tok(大きい等幅)、右に 行数 / 上限 のバーと本文合計 */
+.mcost {
+  display: grid;
+  grid-template-columns: var(--mem-cost-l) minmax(0, 1fr);
+}
+.mcost-l {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.mcost-v {
+  font-size: var(--mem-cost-v);
+  font-weight: 500;
+  line-height: 1.1;
+  text-align: left;
+  justify-self: start;
+  color: var(--text);
+}
+.mcost-v .meta {
+  font-size: 11px;
+}
+.mcost-r {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  min-width: 0;
+}
+.mcost-row {
+  display: grid;
+  grid-template-columns: var(--mem-cost-cols);
+  gap: 12px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text);
+}
+.mcost-row > span {
+  min-width: 0;
+}
+.mcost-row .num {
+  font-size: 13px;
+}
+.mnote {
+  font-size: 12px;
+  color: var(--meta);
+  line-height: 1.6;
+}
+.mfoot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}
+/* 偏り警告(13 の skewedVerdict): 一覧上部の 1 行。verdict は上書きせず確認の順序だけ促す */
+.mskew {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+/* 行: 記号 / 名前と索引行 / 種類 / 鮮度 / 読まれた / 索引 / 本文 / 診断 / 更新 */
+.mrow {
+  display: grid;
+  grid-template-columns: var(--mem-cols);
+  align-items: center;
+  justify-items: start;
+  gap: 12px;
+  width: 100%;
+  min-height: var(--mem-row-h);
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+}
+.mrow.no-uses {
+  grid-template-columns: var(--mem-cols-nouse);
+}
+.mrow:last-of-type {
+  border-bottom: none;
+}
+.mrow:hover {
+  background: var(--raised);
+}
+.mrow.busy {
+  opacity: 0.6;
+}
+.mrow > span {
+  min-width: 0;
+  max-width: 100%;
+}
+.mrow.thead {
+  min-height: var(--mem-thead-h);
+  border-bottom: 1px solid var(--thead-border);
+  color: var(--meta);
+  font-family: var(--thead-font);
+  font-size: var(--thead-size);
+  font-weight: 500;
+  text-transform: var(--thead-transform);
+  letter-spacing: var(--thead-tracking);
+  cursor: default;
+}
+.mrow.thead:hover {
+  background: transparent;
+}
+.mrow .num {
+  font-size: 13px;
+}
+.mrow .num .meta {
+  font-size: 12px;
+}
+.mmark {
+  display: inline-flex;
+  justify-content: center;
+  width: 20px;
+}
+.mmark .mark.sm {
+  margin-left: 0;
+}
+/* 名前(13px/600)の下に索引行の説明(12px 副文)。Console も縦積み(モック実測) */
+.mcell {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.mcell .nm {
+  width: auto;
+  font-size: var(--mem-name-size);
+  font-weight: var(--mem-name-weight);
+}
+.mcell .desc {
+  font-size: 12px;
+}
+/* 鮮度「● 現行」と診断の 4 語: 12px / 13px、太さは揃え色だけ(0.4b) */
+.mstate {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.mword {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.tone-good {
+  color: var(--good);
+}
+.tone-warn {
+  color: var(--warn);
+}
+.tone-sub {
+  color: var(--sub);
+}
+.tone-text {
+  color: var(--text);
+}
+.tone-danger {
+  color: var(--danger);
+}
+/* 詳細: 索引行(等幅 12.5 / 1.7)と右端の状態 */
+.mindex {
+  padding: 12px 16px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.mstatus {
+  font-size: 12px;
+  white-space: nowrap;
+}
+/* 診断の kv: キー列 120、各セル 0 16px(E1 の kv より広い) */
+.mkv {
+  grid-template-columns: var(--mem-kv-k-w) minmax(0, 1fr);
+  column-gap: 0;
+  padding: 0;
+}
+.mkv > span {
+  padding: 0 16px;
+}
+.mkv .k {
+  background: transparent;
+}
+.mkv .v-wrap,
+.mkv .v-col {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.mreason {
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.msignals {
+  gap: 6px;
+  padding: 10px 16px;
+}
+.msig {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+.msig .sub {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.msig-k {
+  min-width: 72px;
+  justify-content: center;
+  color: var(--text);
+  flex: none;
+}
+.mprompt {
+  gap: 8px;
+  padding: 10px 16px 12px;
+}
+.mprompt .grow {
+  flex: 1;
+  min-width: 0;
+}
+.mprompt .instr-pre {
+  padding: 12px 14px;
+}
+/* 事実の帯のリンク: 「このメモが参照: n 件」+ 名前の下線リンク */
+.mlinks {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.mlinks .link {
+  font-size: 12px;
+}
+/* 本文中の [[link]](renderMemoryBody) */
+.mem-link {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+.mem-link:hover {
+  border-bottom-color: var(--text);
+}
+.mem-link.broken {
+  color: var(--danger);
+  border-bottom: 1px dashed var(--danger);
+  cursor: help;
+}
+
+/* 幅 1280 未満: 本文 tok の列を落とし、コストのバーを短くする(数字は tok → 使用回数の順に落とす。0.8) */
+@media (max-width: 1280px) {
+  .mcost-row {
+    grid-template-columns: minmax(0, 1fr) 70px 110px 140px;
+  }
+  .mcost-row > span:first-child {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mrow {
+    grid-template-columns: 20px minmax(0, 1fr) 80px 70px 90px 70px 120px 70px;
+  }
+  .mrow.no-uses {
+    grid-template-columns: 20px minmax(0, 1fr) 80px 70px 70px 120px 70px;
+  }
+  .mrow .c-body {
+    display: none;
+  }
 }

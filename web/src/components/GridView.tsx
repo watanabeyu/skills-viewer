@@ -31,9 +31,6 @@ import { InlineError, InlineNote } from './Inline';
 import { ChangesBlock } from './ChangesBlock';
 import { GroupHeading, ItemRow, GroupHead, TableHead, useNarrow } from './Rows';
 
-/* memory 画面(Phase F で組み替える)が使うバッジは Rows にある。参照元を変えないための再輸出 */
-export { KindBadge } from './Rows';
-
 const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
 const SORT_KEYS: [SortKey, MsgKey][] = [
   ['name', 'sort.name'],
@@ -53,6 +50,8 @@ const SHOW_MAX = 5;
 /*
  * 用途グループの生成/再生成ボタン。環境全体で 1 回の haiku 呼び出しなので
  * job ポーリングは持たず、完了までボタンを busy 表示にして reload で反映する。
+ * v0.8 のヘッダー「✦ AI」メニューにあった再分類はここ(用途別の並びの中)に寄せた(計画 15 Phase F)。
+ * claude CLI 不在時はボタンを無効にし、理由を脇に出す。
  */
 function GroupGenButton({
   label,
@@ -210,13 +209,18 @@ export function GridView({
       const groups = groupByPurpose(filtered, data.groups);
       body = (
         <>
-          {data.groupsStale && (
-            <div className="grp-bar">
-              <span className="stale-note">
-                ⚠ {t('group.stale')} — {t('group.staleAction')}
-              </span>
-            </div>
-          )}
+          {/* 再分類は用途別の並びの中に置く(ヘッダーの AI メニューは廃止)。構成が変わっていれば注記を添える */}
+          <div className="grp-bar">
+            {data.groupsStale && <span className="stale-note">⚠ {t('group.stale')}</span>}
+            <span className="hd-r">
+              <GroupGenButton
+                label={t('group.regen')}
+                title={t('group.generateTitle')}
+                aiAvailable={data.aiAvailable}
+                reload={reload}
+              />
+            </span>
+          </div>
           {groups.length ? (
             groups.map((g) => (
               <div key={g.id} className="grp">

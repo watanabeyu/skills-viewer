@@ -97,9 +97,6 @@ export function migrateLegacyParams(
   return { params: next, memory: view === 'memory' };
 }
 
-/* memory セクションのアクセント色(skill の SRC_COLOR に相当)。専用 hue は持たず副文色(design-system 0.2) */
-export const MEM_COLOR = 'var(--sub)';
-
 export interface FlatItem extends SkillItem {
   key: string;
   secId: string;
@@ -229,22 +226,6 @@ export const fmtDate = (ms?: number) => {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
-
-/*
- * 経過日ラベル(memory の「どれだけ更新されていないか」用)。日付そのものより鮮度が重要なので相対表記。
- */
-export function relDaysLabel(ms?: number): string {
-  if (!ms) return '';
-  const days = Math.floor((Date.now() - ms) / 86400000);
-  return days <= 0 ? t('memory.today') : t('memory.stale', { n: days });
-}
-
-/* M/D 表記(カードの「最終 8/14」用。年は鮮度判断に不要なので省く) */
-export const fmtMD = (ms?: number) => {
-  if (!ms) return '';
-  const d = new Date(ms);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
 };
 
 /* memory 軸の並び順。既定は索引トークン(常時コスト)が多い順 = 減らす価値が高い順 */

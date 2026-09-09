@@ -1,119 +1,58 @@
-import type { MemorySection, SkillItem } from '../api';
-import { MEM_COLOR, fmtMD } from '../util';
-import { memoryTypeLabel, t } from '../i18n';
-
 /*
- * memory の一覧 / 詳細 / 棚卸しで共用する小部品。
- * バッジの文字は kind バッジと同じく言語非依存(type 名そのまま)にし、意訳は tooltip に回す。
+ * memory 一覧・詳細で共用する小部品(計画 15 Phase F)。値の決め方は ../memory.ts(純粋ロジック)にあり、
+ * ここは見た目だけ。押せないラベルは罫線なしのチップ(.pill)、鮮度と診断は色だけで分ける文字(design-system 0.4)。
  */
 
-/* frontmatter type のバッジ(.tbadge .t-<type>)。未指定なら出さない */
-export function MemoryTypeBadge({ it }: { it: SkillItem }) {
+import type { MemorySection, MemorySignal, MemoryTriage, SkillItem } from '../api';
+import { triageMemory } from '../api';
+import { fileName } from '../util';
+import { STATE_TONE, VERDICT_TONE, freshnessOf, verdictWord } from '../memory';
+import { memorySignalLabel, memoryStateLabel, memoryTypeLabel, memoryWordLabel, t } from '../i18n';
+
+/* frontmatter type のチップ。文字は type 名そのまま(言語非依存)、意訳は tooltip。未指定なら出さない */
+export function MemoryTypePill({ it }: { it: SkillItem }) {
   if (!it.memoryType) return null;
   return (
-    <span className={'tbadge t-' + it.memoryType} title={memoryTypeLabel(it.memoryType)}>
+    <span className="pill" title={memoryTypeLabel(it.memoryType)}>
       {it.memoryType}
     </span>
   );
 }
 
-/*
- * 「直近未参照」バッジ。トランスクリプトが無いプロジェクトでは判定不能なので出さない
- * (呼び出し側で usageAvailable を見て show を決める)。
- */
-export function UnreadBadge({ show }: { show: boolean }) {
-  if (!show) return null;
+/* 鮮度「● 現行」。色は状態色(良好 / 警告 / 副文 / 危険)、根拠(AI / 機械)は tooltip */
+export function StateDot({ it }: { it: SkillItem }) {
+  const f = freshnessOf(it);
   return (
-    <span className="unread-badge" title={t('memory.unreadTitle')}>
-      {t('memory.unread')}
+    <span
+      className={'mstate tone-' + STATE_TONE[f.state]}
+      title={t(f.basis === 'ai' ? 'memory.state.byAi' : 'memory.state.byMachine')}
+    >
+      ● {memoryStateLabel(f.state)}
     </span>
   );
 }
 
-/* 索引 N / 本文 N の組。桁は bold(カード・棚卸し行)か素のまま(詳細の左カラム)か */
-export function TokFacts({ it, cls, bold }: { it: SkillItem; cls?: string; bold?: boolean }) {
-  const idx = (it.indexTokens || 0).toLocaleString();
-  const body = (it.bodyTokens || 0).toLocaleString();
-  return (
-    <>
-      {/* 上限外の件は数値こそ同じでも「毎セッション注入されていない」ので、チップは増やさず tooltip で言い分ける */}
-      <span
-        className={cls}
-        title={t(it.indexBeyondLimit ? 'memory.indexTokBeyondTitle' : 'memory.indexTokTitle')}
-      >
-        {t('memory.idx')} {bold ? <b>{idx}</b> : idx}
-      </span>
-      <span className={cls} title={t('memory.bodyTokTitle')}>
-        {t('memory.body')} {bold ? <b>{body}</b> : body}
-      </span>
-    </>
-  );
+/* 診断列の 4 語。未診断は「—」(補足色)。太さは揃え、色だけで分ける */
+export function VerdictWordCell({ tri }: { tri?: MemoryTriage }) {
+  const w = verdictWord(tri);
+  if (!w) return <span className="meta">—</span>;
+  return <span className={'mword tone-' + VERDICT_TONE[w]}>{memoryWordLabel(w)}</span>;
 }
 
-/*
- * セクション見出し・棚卸しタイトルに共通で出す副題 1 行(フルパス)。
- * projectName は basename 由来で同名プロジェクト(teamA/ai-workspace と teamB/ai-workspace)を
- * 区別できないため、見出しの下に必ずフルパスを添える。プロジェクト不明は逆引き先が無いので
- * memory ディレクトリの実パス(note)を、プロジェクトのパスと誤読されないよう別ラベルで出す。
- */
-export function MemoryPathSub({ sec }: { sec: MemorySection }) {
-  // autoMemoryDirectory の置き場は ~/.claude/projects の外にあるので、プロジェクトへ帰属していても
-  // 所在(memory ディレクトリ)を出す。プロジェクト不明も同じく置き場を出す
-  const showMemDir = !sec.projectPath || !!sec.autoDir;
-  const p = showMemDir ? sec.note : sec.projectPath!;
+/* 機械シグナルの 1 行(kind のチップ + 文言)。詳細の診断「シグナル」行で使う */
+export function SignalLine({ s }: { s: MemorySignal }) {
   return (
-    <div className="path-sub" title={p}>
-      {t(showMemDir ? 'memory.secMemDir' : 'memory.secPath', { path: p })}
-    </div>
-  );
-}
-
-/* プロジェクト見出し「MEMORY — <project>」。skill の SectionHeading と同じ骨格(sq / lbl / n / sec-tok / ln) */
-export function MemoryHeading({
-  sec,
-  count,
-  tokLabel,
-}: {
-  sec: MemorySection;
-  count: number;
-  /* 索引トークンの表示文字列(一覧は「≈N tok/セッション」、詳細の左カラムは「≈N」) */
-  tokLabel: string;
-}) {
-  return (
-    <>
-      <div className="sec-h">
-        <span className="sq" style={{ background: MEM_COLOR }} />
-        <span className="lbl">{t('memory.secLabel', { name: sec.projectName })}</span>
-        <span className="n">{count}</span>
-        {!!sec.indexTokens && (
-          <span className="sec-tok" title={t('memory.secTokensTitle')}>
-            {tokLabel}
-          </span>
-        )}
-        {sec.orphan && (
-          <span className="orphan-badge" title={t('memory.orphanTitle')}>
-            {t('memory.orphan')}
-          </span>
-        )}
-        {/* 共有ストア(user scope の autoMemoryDirectory)。帰属が決まらないので棚卸しは orphan と同じ制限になる */}
-        {sec.sharedStore && (
-          <span className="orphan-badge" title={t('memory.sharedStoreTitle')}>
-            {t('memory.sharedStore')}
-          </span>
-        )}
-        <span className="ln" />
-      </div>
-      <MemoryPathSub sec={sec} />
-    </>
+    <span className="msig">
+      <span className="pill msig-k">{s.kind}</span>
+      <span className="sub">{memorySignalLabel(s)}</span>
+    </span>
   );
 }
 
 /*
  * Read / Write など transcript 由来の回数表示に付ける tooltip。共有ストア
  * (user scope の autoMemoryDirectory)の回数は全プロジェクトの transcript を横断した
- * 合算なので、「このプロジェクトでの回数」と誤読されないよう注記を添える
- * (表示する数値・文言そのものは変えない)。base が無く共有ストアでもなければ
- * undefined(title="" を吐かない)。
+ * 合算なので、「このプロジェクトでの回数」と誤読されないよう注記を添える。
  */
 export function usageTitle(sec: MemorySection, base?: string): string | undefined {
   const parts = [base, sec.sharedStore ? t('memory.usage.sharedTitle') : ''].filter(Boolean);
@@ -121,11 +60,29 @@ export function usageTitle(sec: MemorySection, base?: string): string | undefine
 }
 
 /*
- * 参照実績の 1 行(カードの usage 行)。Read 0 は異常ではないので言い切らず、
- * feedback 型は「索引行だけで機能している」と添える。計測不能なら数値を出さない。
+ * 棚卸しの実行。プロジェクト単位(it 省略)は未診断が残っていれば差分診断、全件診断済みなら force で診断し直す。
+ * 1 件(詳細)は診断済みなら force。どちらも既存 POST /api/memory-triage で、結果は再取得で aiTriage に載る。
  */
-export function readsLine(it: SkillItem, usageAvailable: boolean): string {
-  if (!usageAvailable) return t('memory.card.na');
-  if (it.useCount) return t('memory.card.reads', { n: it.useCount, date: fmtMD(it.lastUsed) });
-  return t(it.memoryType === 'feedback' ? 'memory.card.noReadsFeedback' : 'memory.card.noReads');
+export const runTriage = (sec: MemorySection, it?: SkillItem) =>
+  it
+    ? triageMemory(sec.id, [fileName(it.path)], !!it.aiTriage)
+    : triageMemory(
+        sec.id,
+        undefined,
+        sec.items.every((x) => !!x.aiTriage),
+      );
+
+export function EditorIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+    >
+      <path d="M6 3H3v10h10v-3M9 3h4v4M13 3L7 9" />
+    </svg>
+  );
 }

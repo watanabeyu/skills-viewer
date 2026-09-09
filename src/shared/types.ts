@@ -160,6 +160,9 @@ export interface MemoryTriage {
   demotedBy?: 'orphan' | 'no-signal' | 'shared-env';
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
+  /* 生成日時(ISO)とモデル。詳細の診断見出しに「いつ・どのモデルが」を出すためだけの記録(判定には使わない) */
+  generatedAt?: string;
+  model?: AiModel;
 }
 
 /*

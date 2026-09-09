@@ -11,7 +11,6 @@ import { useEffect, useState } from 'react';
 import type { ItemKind, SkillItem, Source } from '../api';
 import { itemKey } from '../api';
 import {
-  KIND_LABEL,
   MARK_CHAR,
   SRC_COLOR,
   invocationLabel,
@@ -23,12 +22,7 @@ import {
 } from '../util';
 import { lintLabel, t } from '../i18n';
 
-/* ---- v0.8 から引き継ぐバッジ(memory 画面と「すべてのプロジェクト」が使う。Phase F で見直す) ---- */
-
-export function KindBadge({ it }: { it: SkillItem }) {
-  const label = KIND_LABEL[it.kind];
-  return label ? <span className="kbadge">{label}</span> : null;
-}
+/* ---- v0.8 から引き継ぐバッジ(「すべてのプロジェクト」の用途別が使う) ---- */
 
 /* hover で警告内容を CSS tooltip 表示(native title より視認性が高い) */
 export function WarnBadge({ it }: { it: SkillItem }) {

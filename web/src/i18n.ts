@@ -7,10 +7,14 @@
 import type {
   Lang,
   LintCode,
+  MemorySignal,
+  MemoryState,
   MemoryType,
   MemoryVerdict,
   RelationType,
 } from '../../src/shared/types';
+/* 型だけの参照(memory.ts → util.ts → i18n.ts の循環は型なので実行時には消える) */
+import type { VerdictWord } from './memory';
 
 export type { Lang };
 
@@ -56,7 +60,6 @@ const en = {
   'view.group': 'By purpose ✦',
   'view.flat': 'Flat',
   'view.title': 'Arrangement: where items live / when to use them / one flat list',
-  'view.memory': 'Memory',
   'filter.kindPrefix': 'Kind: {v}',
   'filter.usePrefix': 'Use: {v}',
   'filter.refPrefix': 'Reads: {v}',
@@ -64,8 +67,6 @@ const en = {
   'filter.refUnread': 'Not read',
   'filter.refTitle':
     'Whether the body was Read within the transcript retention window (default 30 days). Projects without transcripts are excluded from both',
-  'ai.menu': '✦ AI',
-  'ai.menuTitle': 'AI actions: summaries and purpose grouping (claude CLI)',
   'group.other': 'Other',
   'group.manual': 'manual',
   'group.manualTitle':
@@ -77,9 +78,7 @@ const en = {
   'group.empty':
     'No purpose groups yet. One claude CLI call classifies everything installed by when to use it.',
   'group.stale': 'Items changed since the last classification',
-  'group.staleAction': 'reclassify from the ✦ AI menu',
-  'group.menuGenerate': 'Generate purpose groups',
-  'group.menuRegen': 'Reclassify purpose groups',
+  'group.regen': 'Reclassify ✦',
   'alert.groupFailed': 'Classification failed: {msg}',
 
   'list.empty': 'No skills match the filters',
@@ -93,18 +92,11 @@ const en = {
   'badge.unusedTitle':
     'No recorded use within the transcript retention window (default 30 days). Older use is not visible.',
   'badge.warnTitle': 'Description issues:',
-  'sec.tokens': '≈{n} tok/session',
   'app.tokens': '≈{n} tokens/session',
   'app.tokensTitle':
     'Approx. tokens injected into every session in the current project (name + description of built-ins, plugins, user scope and the current project)',
 
   'memory.searchPlaceholder': 'Search memory…',
-  'memory.secLabel': 'MEMORY — {name}',
-  /* basename だけの見出しでは同名プロジェクト(teamA/ai-workspace と teamB/ai-workspace)を区別できないため、
-   * フルパスを副題で必ず添える。プロジェクト不明は逆引き先が無いので memory dir の実パスを、
-   * プロジェクトのパスと誤読されないよう別ラベル(secMemDir)で出す */
-  'memory.secPath': 'Path: {path}',
-  'memory.secMemDir': 'memory dir: {path}',
   'memory.orphan': 'unknown project',
   'memory.sharedStore': 'shared store',
   'memory.sharedStoreTitle':
@@ -118,87 +110,114 @@ const en = {
   'memory.type.feedback': 'Guidance',
   'memory.type.project': 'Project',
   'memory.type.reference': 'Reference',
-  'memory.today': 'updated today',
-  'memory.stale': '{n}d without update',
-  'memory.secTokensTitle':
-    'Approx. tokens of this project’s MEMORY.md index lines. The index lists every memory and is injected into every session, whether or not the bodies are read.',
-  'memory.idx': 'index',
-  'memory.body': 'body',
-  'memory.indexTokTitle':
-    'Always-on cost: this memory’s line in MEMORY.md, injected into every session (0 = not listed in the index)',
-  'memory.indexTokBeyondTitle':
-    'This line is outside MEMORY.md’s read limit (first 200 lines / 25KB) and is NOT injected into every session, so it costs nothing today',
-  'memory.bodyTokTitle': 'Pay-per-use cost: the whole body, charged only when it is Read',
   'memory.readsTitle':
     'Times this memory was Read within the transcript retention window (default 30 days). 0 does not mean it has never been read.',
   'memory.usage.sharedTitle':
     'Summed over the sessions of every project (this is a shared store) — not the count for this project alone.',
   'memory.writesTitle':
     'Times this memory was created or updated (Write / Edit) within the transcript retention window',
-  'memory.unread': 'no recent reads',
-  'memory.unreadTitle':
-    'The body was not Read within the transcript retention window (default 30 days). Not an anomaly: index-line-only memories work without being read.',
   'memory.linkBrokenTitle': 'No memory with this name in this project',
-  'memory.brokenBadgeTitle': '[[link]] targets with no matching memory in this project: {n}',
 
-  /* コストバー: 常時(索引)と従量(本文)を分けて見せる。減らせる変数は件数だけ */
-  'memory.cost.indexK': 'Index — every session',
-  'memory.cost.indexNote':
-    'Index lines for {n} memories are\ninjected unconditionally every session',
+  /* ---- memory 一覧(計画 15 Phase F)。上部のコスト → 見出し 2 段 → 行。文言は docs/design/0.9.0/*MemoryList.dc.html ---- */
+  'memory.list.title': 'memory · {name}',
+  'memory.list.titleAll': 'memory · all projects',
+  'memory.list.lead':
+    'Notes Claude Code wrote for itself in this project. Only the index (MEMORY.md) is read every time; bodies load on demand.',
+  'memory.list.leadAll':
+    'Auto memory of every registered project. Only each project’s index (MEMORY.md) is read every time; bodies load on demand.',
+  'memory.list.emptyProject': 'No auto memory for this project yet.',
+  'memory.cost.index': 'MEMORY.md index',
+  'memory.cost.indexNote': 'read at every start',
+  'memory.cost.lines': 'index lines',
+  'memory.cost.linesOf': '{n} / {limit}',
+  'memory.cost.bodies': 'bodies total',
+  'memory.cost.bodiesNote': 'on demand only',
+  'memory.cost.note':
+    'Bodies are read only when Claude needs them; the per-session cost is the {n}-token index',
+  'memory.hd.cap': 'memory',
+  'memory.hd.meta': '{name} · {path}',
+  'memory.col.name': 'name · index line',
+  'memory.col.type': 'type',
+  'memory.col.state': 'state',
+  'memory.col.reads': 'reads',
+  'memory.col.idx': 'idx',
+  'memory.col.body': 'body',
+  'memory.col.triage': '✦ triage',
+  'memory.col.updated': 'upd',
+  /* 書き換えがある行だけ添える(列名は記号でなく言葉。design-system 決定) */
+  'memory.reads.w': ' · w {n}',
+  'memory.idxMissing': '— ⚠',
+  'memory.idxMissingTitle': 'No line in MEMORY.md — this memory is not injected into sessions',
+  'memory.list.note':
+    'reads = times Claude read the body in the last 30 days of transcripts (w = rewrites). index ⚠ = no line in MEMORY.md. State comes from mechanical signals (dates, missing paths, branch status). Triage ✦ appears only after running it (keep / shrink / move / delete; the destination is in the detail)',
+  /* 診断列の 4 語。移動先(CLAUDE.md / docs / skill …)は詳細の「行き先」で示し、一覧には出さない */
+  'memory.word.keep': 'keep',
+  'memory.word.shrink': 'shrink',
+  'memory.word.move': 'move',
+  'memory.word.delete': 'delete',
+  'memory.word.error': '⚠ re-run',
+  'memory.state.current': 'current',
+  'memory.state.outdated': 'outdated',
+  'memory.state.historical': 'historical',
+  'memory.state.obsolete': 'obsolete',
+  'memory.state.byAi': 'Judged by the triage (see the reason in the detail)',
+  'memory.state.byMachine':
+    'From mechanical signals only (missing paths, done-words, branch status). "current" means no sign of staleness was found',
+  'memory.triage.runShort': '✦ Triage',
+  'memory.triage.runOne': '✦ Triage this memory',
+
+  /* ---- memory 詳細: 事実の帯 → 索引行 → 診断 → 本文。文言は docs/design/0.9.0/*MemoryDetail.dc.html ---- */
+  'memory.fact.reads': 'read by claude · 30d',
+  'memory.fact.times': 'times',
+  'memory.fact.rewrites': ' · rewritten {n}×',
+  'memory.fact.noReads': 'no reads in 30d',
+  'memory.fact.by': 'Claude Code',
+  'memory.fact.session': 'session {id}',
+  'memory.fact.links': 'links',
+  'memory.fact.linksOut': 'links out: {n}',
+  'memory.fact.linksIn': 'linked from: {n}',
+  'memory.index.title': 'index line',
+  'memory.index.meta': 'MEMORY.md · {n} tok · read every time',
+  'memory.index.match': '● matches body',
+  'memory.index.mismatch': '● disagrees with body',
+  'memory.index.unknown': 'not compared yet (run triage)',
+  'memory.index.none': '⚠ no line in MEMORY.md — not injected',
+  'memory.index.beyond': '⚠ beyond the read limit (200 lines / 25 KB) — not injected',
+  'memory.diag.title': '✦ triage',
+  'memory.diag.state': 'state',
+  'memory.diag.verdict': 'verdict',
+  'memory.diag.reason': 'reason',
+  'memory.diag.signals': 'signals',
+  'memory.diag.prompt': 'prompt',
+  'memory.diag.signalsNote': 'mechanical, no AI; shown even before triage runs',
+  'memory.diag.signalsNone': 'no signals',
+  'memory.diag.promptNote':
+    'Paste into Claude Code. The viewer never writes; the check-first steps are part of the prompt',
+  'memory.diag.copy': 'copy prompt',
+  'memory.diag.none':
+    'not triaged yet — the state and signals above are mechanical. Run ✦ triage for a verdict, a reason and a pasteable prompt',
+  'memory.diag.errorNote': 'The model’s output could not be used. Re-run the triage.',
+  'memory.body.title': 'body',
+  'memory.body.meta': '{n} tok · on demand',
+  /* 機械シグナルの文言(kind は言語非依存。value / days は生値) */
+  'memory.signal.date': 'Latest date in the body: {value} ({days}d ago)',
+  'memory.signal.path-missing': 'Referenced path does not exist: {value}',
+  'memory.signal.done-words': 'Words of completion / retirement in the body: {value}',
+  'memory.signal.branch-merged': 'Branch {value} is merged',
+  'memory.signal.branch-missing': 'Branch {value} exists neither locally nor on the remote',
+  'memory.signal.how-restates': 'How to apply restates the description ({value}% similar)',
+  'memory.signal.why-episodic': 'Why is tied to one episode: {value}',
+  'memory.signal.has-exception': 'Has an exception / boundary: {value}',
+  'memory.signal.first-line-restates':
+    'First line restates the description ({value}% similar) — the normal shape',
+  'memory.signal.body-over': 'Long for a feedback memory ({value} tok)',
+  'memory.signal.index-beyond-limit': 'Index line is beyond the read limit (line {value})',
+  'crumb.memory': 'memory',
+
   /* MEMORY.md は毎セッション先頭 200 行 or 25KB までしか読まれない(公式仕様)。その外の索引行は書いてあっても注入されない */
   'memory.cost.indexBeyond': '{n} beyond the limit (not read every session)',
-  'memory.cost.bodyK': 'Bodies — only when read',
-  'memory.cost.bodyNote': 'Costs nothing unless read.\n{k} / {n} read within the retention window',
-  'memory.cost.bodyNoteNA': 'Costs nothing unless read.\nReads cannot be measured (no transcripts)',
-  'memory.cost.perK': 'Per memory',
-  'memory.cost.perNote':
-    'Only the count can be reduced.\nShortening a body does not change the index',
   'memory.cost.unit': 'tok',
-  'memory.cmp.memory': 'memory index',
-  'memory.cmp.plugin': 'plugin',
-  'memory.cmp.user': 'user skill',
-  'memory.cmpTitle':
-    'Per-session injection compared with other always-on sources in this environment (plugin / user skills: name + description totals)',
 
-  /* カード・詳細の参照実績。Read 0 は異常ではないので言い切らない */
-  'memory.card.reads': 'Body read {n}× · last {date}',
-  'memory.card.noReads': 'No recorded body reads',
-  'memory.card.noReadsFeedback': 'No recorded body reads — works from its index line alone',
-  'memory.card.na': 'Reads cannot be measured',
-
-  'memory.back': '← List',
-  'memory.tab.body': 'Body',
-  'memory.warnline': 'Broken links ({n}): {names}',
-  'memory.sec.cost': 'Context cost',
-  'memory.sec.reads': 'Read activity',
-  'memory.sec.links': 'Links',
-  'memory.sec.frontmatter': 'frontmatter',
-  'memory.cbox.indexK': 'Index line — every session',
-  'memory.cbox.indexNote':
-    'Injected unconditionally as one line of MEMORY.md whenever you work in this project.',
-  'memory.cbox.bodyRead': 'Charged only when read. Read {n}× within the retention window.',
-  'memory.cbox.bodyUnread':
-    'Charged only when read. No reads recorded within the retention window.',
-  'memory.cbox.bodyNA': 'Charged only when read. Reads cannot be measured (no transcripts).',
-  'memory.f.reads': 'Body reads',
-  'memory.f.writes': 'Created / updated',
-  'memory.f.origin': 'Origin session',
-  'memory.f.times': '{n}×',
-  'memory.f.last': ' — last {date}',
-  'memory.f.none': 'None',
-  'memory.f.noneNote': ' — within the transcript retention window',
-  'memory.f.na': 'Not measurable',
-  'memory.linkDead': '{name} (broken)',
-
-  /* 棚卸し診断: AI は行き先の仮説と指示文までを出し、実行は貼り先の Claude Code に委ねる */
-  'memory.triage.section': '✦ Triage',
-  'memory.triage.sectionTitle':
-    'Ask the model where each memory of this project should go, and get an instruction to paste into Claude Code',
-  'memory.triage.heading': 'Memory triage',
-  'memory.triage.back': '← Memory list',
-  'memory.triage.title': 'Triage — {project}',
-  'memory.triage.sub':
-    '✦ This tool does not act. For each proposal it prepares an instruction to paste into Claude Code',
   'memory.triage.run': 'Run triage',
   'memory.triage.running': 'Triaging…',
   'memory.triage.rerun': 'Re-run triage',
@@ -206,18 +225,6 @@ const en = {
     'One claude CLI call reads every memory body and proposes a destination (cached per memory; only changed ones are re-asked)',
   'memory.triage.rerunTitle':
     'Re-ask for every memory, ignoring the cache (claude CLI is called once, or a few times for very large projects)',
-  'memory.triage.summary': '{n} triaged — {p} proposals, {k} keep as is',
-  'memory.triage.summaryWithErrors':
-    '{n} triaged — {p} proposals, {k} keep as is, {e} with invalid output',
-  'memory.triage.summaryPending': '{u} of {n} not triaged yet',
-  'memory.triage.ctaTitle': 'Not triaged yet',
-  'memory.triage.ctaBody':
-    'Nothing has been asked of the AI yet — the rows below are facts only. Run triage to read all {n} bodies with the claude CLI (one call; split into a few for very large projects) and get a destination + a paste-ready instruction for each (usually 1–2 minutes).',
-  'memory.triage.ctaPartial':
-    '{u} of {n} memories changed since the last triage. Run triage to re-ask only those with the claude CLI.',
-  'memory.triage.busyTitle': 'Triaging…',
-  'memory.triage.busyBody':
-    'Reading {n} memory bodies with the claude CLI (one call; split into a few for very large projects). This usually takes 1–2 minutes; the page updates when it finishes.',
   'memory.triage.verdict.keep': 'Keep as is',
   'memory.triage.verdict.shrink': 'Shrink the body',
   'memory.triage.verdict.to-claude-md': 'Move to CLAUDE.md',
@@ -227,7 +234,6 @@ const en = {
   'memory.triage.verdict.wrong-project': 'Belongs elsewhere',
   'memory.triage.verdict.to-skill': 'Move to skill',
   'memory.triage.verdict.update': 'Rewrite the body',
-  'memory.triage.openDetail': 'Open detail',
   'memory.triage.tpl.replace':
     '- Replace the body of {file} with the following (leave the index line as is)',
   'memory.triage.tpl.rule': '- Keep the first line (the rule) as is: "{rule}"',
@@ -268,35 +274,20 @@ const en = {
   'memory.signal.index-mismatch': 'Index line and body disagree',
   'memory.signal.other-project': 'Points at a path under another registered project: "{value}"',
   'memory.triage.verdict.error': 'Invalid output — re-run to retry',
-  'memory.triage.seen': 'read {n}×',
-  'memory.triage.unseen': 'no reads',
   'memory.triage.estApply': 'applied: index {n} tok/session',
   'memory.triage.estApplyClaude': 'applied: index {n} · always-on +{m} tok',
   'memory.triage.estApplyUserClaude': 'applied: index {n} · always-on +{m} tok in EVERY project',
   'memory.triage.estApplyBeyond': 'applied: index ±0 (it is not injected in the first place)',
   'memory.triage.estShrink': 'applied: index ±0 · proposes shrinking the body',
   'memory.triage.estUpdate': 'applied: index ±0 · proposes rewriting the body',
-  'memory.triage.instruction': 'Instruction to paste into Claude Code',
   'memory.triage.copy': 'Copy',
   'memory.triage.copied': 'Copied',
-  'memory.triage.footProposals': 'Proposals',
-  'memory.triage.footProposalsUnit': 'items',
-  'memory.triage.footApplied': 'If all applied',
-  'memory.triage.footTokUnit': 'tok/session',
-  'memory.triage.footDiff': 'Delta',
-  'memory.triage.footDiffVal': '{n} tok',
-  'memory.triage.footNote':
-    'Each instruction ends with "check first, then execute" steps and includes the destination path, removing the MEMORY.md index line and rewriting [[link]]s. To do only part of it, say so in the conversation you paste into.',
   /*
    * 指示文の末尾に付く確認手順(design-system 1.3)。memory 棚卸しと skill の発動診断で共用するので
    * 出所を名指ししない。ヘッダは本文より上にあるので「上のヘッダ」を指す。
    */
   'memory.triage.copyPreamble':
     'Before doing any of the above, verify in this order. (1) Check that your working directory matches the project in the header above — if it does not (e.g. this session was started from the home directory), say so and confirm with me before continuing, because relative paths (especially under .claude/) would resolve against the wrong place. (2) Inspect the current state read-only and present the exact work you would do. (3) Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. (4) Execute only after I approve.',
-  'memory.triage.whole': 'Triage the whole project →',
-  'memory.triage.menu': 'Memory triage (current project)',
-  'memory.triage.menuTitle':
-    'Triage the auto memory of the current project: destination, reason and a pasteable instruction',
   'alert.triageFailed': 'Triage failed: {msg}',
 
   'detail.back': '← Back to list',
@@ -392,7 +383,6 @@ const en = {
   'all.more': 'Show {n} more',
   'all.here': 'here',
   'kind.claudeMd': 'CLAUDE.md',
-  'memory.listTitle': 'Memory',
 
   'detail.spark': 'Last 30 days',
   'detail.diagnostics': 'Diagnostics',
@@ -691,7 +681,6 @@ const ja: Record<MsgKey, string> = {
   'view.group': '用途別 ✦',
   'view.flat': '1 列',
   'view.title': '並び: 置き場所別 / 使いどき別 / 1 つのリスト',
-  'view.memory': 'メモリ',
   'filter.kindPrefix': '種類: {v}',
   'filter.usePrefix': '使用: {v}',
   'filter.refPrefix': '参照: {v}',
@@ -699,8 +688,6 @@ const ja: Record<MsgKey, string> = {
   'filter.refUnread': '参照なし',
   'filter.refTitle':
     'トランスクリプト保持期間内(既定30日)に本文が Read されたか。トランスクリプトが無いプロジェクトはどちらにも含めません',
-  'ai.menu': '✦ AI',
-  'ai.menuTitle': 'AI 操作: 要約と用途グルーピング(claude CLI)',
   'group.other': 'その他',
   'group.manual': '手動',
   'group.manualTitle': 'frontmatter の category による手動指定(AI 分類より優先)',
@@ -711,9 +698,7 @@ const ja: Record<MsgKey, string> = {
   'group.empty':
     'まだ用途グループがありません。claude CLI の1回の呼び出しで、インストール済みの全アイテムを「いつ使うか」で分類します。',
   'group.stale': '前回の分類後にスキル構成が変わっています',
-  'group.staleAction': '「✦ AI」メニューから再分類できます',
-  'group.menuGenerate': '用途グループを生成',
-  'group.menuRegen': '用途グループを再分類',
+  'group.regen': '再分類 ✦',
   'alert.groupFailed': '分類に失敗: {msg}',
 
   'list.empty': '条件に一致するスキルがありません',
@@ -726,15 +711,11 @@ const ja: Record<MsgKey, string> = {
   'badge.unusedTitle':
     'トランスクリプト保持期間内(既定30日)に使用記録がありません。それ以前の使用は集計できません',
   'badge.warnTitle': 'description の問題:',
-  'sec.tokens': '≈{n}tok/セッション',
   'app.tokens': '≈{n}トークン/セッション',
   'app.tokensTitle':
     '現在のプロジェクトでのセッションごとに注入されるトークンの概算(built-in・plugin・user・現在プロジェクトの name + description)',
 
   'memory.searchPlaceholder': 'memory を検索…',
-  'memory.secLabel': 'MEMORY — {name}',
-  'memory.secPath': 'パス: {path}',
-  'memory.secMemDir': 'memory ディレクトリ: {path}',
   'memory.orphan': 'プロジェクト不明',
   'memory.sharedStore': '共有ストア',
   'memory.sharedStoreTitle':
@@ -747,80 +728,107 @@ const ja: Record<MsgKey, string> = {
   'memory.type.feedback': '指示・方針',
   'memory.type.project': '進行状況',
   'memory.type.reference': '参照先',
-  'memory.today': '今日 更新',
-  'memory.stale': '{n}日 更新なし',
-  'memory.secTokensTitle':
-    'このプロジェクトの MEMORY.md の索引行の概算トークン。索引は全メモリ分が、本文を読むかどうかに関わらず毎セッション注入されます',
-  'memory.idx': '索引',
-  'memory.body': '本文',
-  'memory.indexTokTitle':
-    '常時コスト: このメモリの MEMORY.md 上の索引行。毎セッション注入されます(0 = 索引に載っていない)',
-  'memory.indexTokBeyondTitle':
-    'この索引行は MEMORY.md の読み込み上限(先頭 200 行 / 25KB)の外にあり、毎セッションは注入されていません(現状の常時コストは 0)',
-  'memory.bodyTokTitle': '従量コスト: 本文全体。Read されたときだけかかります',
   'memory.readsTitle':
     'トランスクリプト保持期間内(既定30日)にこのメモリが Read された回数。0 でも「一度も読まれていない」ことは意味しません',
   'memory.usage.sharedTitle':
     '全プロジェクトのセッションの合算です(このプロジェクトだけの回数ではありません)',
   'memory.writesTitle':
     'トランスクリプト保持期間内にこのメモリが作成・更新された回数(Write / Edit)',
-  'memory.unread': '直近未参照',
-  'memory.unreadTitle':
-    'トランスクリプト保持期間内(既定30日)に本文が Read されていません。索引行だけで機能するメモリでは正常な状態です',
   'memory.linkBrokenTitle': 'このプロジェクトに同名のメモリがありません',
-  'memory.brokenBadgeTitle': 'このプロジェクトに解決先が無い [[link]]: {n} 件',
 
-  'memory.cost.indexK': '索引 — 毎セッション',
-  'memory.cost.indexNote': '{n} 件ぶんの索引行が\n無条件で毎回注入される',
+  'memory.list.title': 'memory · {name}',
+  'memory.list.titleAll': 'memory · すべてのプロジェクト',
+  'memory.list.lead':
+    'Claude Code がこのプロジェクトで自動的に書き溜めた記憶。索引(MEMORY.md)だけが毎回読まれ、本文は必要なときに読まれる。',
+  'memory.list.leadAll':
+    '登録されている全プロジェクトの自動メモリ。各プロジェクトの索引(MEMORY.md)だけが毎回読まれ、本文は必要なときに読まれる。',
+  'memory.list.emptyProject': 'このプロジェクトの自動メモリはまだありません。',
+  'memory.cost.index': 'MEMORY.md 索引',
+  'memory.cost.indexNote': '毎回はじめに読まれる',
+  'memory.cost.lines': '索引の行数',
+  'memory.cost.linesOf': '{n} / {limit}',
+  'memory.cost.bodies': '本文の合計',
+  'memory.cost.bodiesNote': '読まれたときだけ',
+  'memory.cost.note':
+    '本文は Claude Code が必要になったときだけ読む。毎回のコストは索引の {n} tok だけ',
+  'memory.hd.cap': 'memory',
+  'memory.hd.meta': '{name} · {path}',
+  'memory.col.name': '名前 · 索引行',
+  'memory.col.type': '種類',
+  'memory.col.state': '鮮度',
+  'memory.col.reads': '読まれた',
+  'memory.col.idx': '索引',
+  'memory.col.body': '本文',
+  'memory.col.triage': '✦ 診断',
+  'memory.col.updated': '更新',
+  'memory.reads.w': ' · 書 {n}',
+  'memory.idxMissing': '— ⚠',
+  'memory.idxMissingTitle': 'MEMORY.md に行がない — このメモリはセッションに注入されていない',
+  'memory.list.note':
+    '読まれた = 30 日のセッション記録で Claude が本文を読んだ回数(書 = 書き換えた回数)。索引 ⚠ = MEMORY.md に行がない。鮮度は日付・パスの実在・ブランチ状態などの機械シグナルから。診断 ✦ は棚卸しを実行した memory だけ(残す / 縮める / 移動 / 削除。移動先は詳細で)',
+  'memory.word.keep': '残す',
+  'memory.word.shrink': '縮める',
+  'memory.word.move': '移動',
+  'memory.word.delete': '削除',
+  'memory.word.error': '⚠ 再診断',
+  'memory.state.current': '現行',
+  'memory.state.outdated': '古い',
+  'memory.state.historical': '履歴',
+  'memory.state.obsolete': '廃止',
+  'memory.state.byAi': '棚卸しの判定(根拠は詳細の理由に)',
+  'memory.state.byMachine':
+    '機械シグナル(パスの実在・完了語・ブランチ状態)だけから。「現行」は古さの根拠が無いという意味',
+  'memory.triage.runShort': '✦ 棚卸し',
+  'memory.triage.runOne': '✦ この memory を棚卸し',
+
+  'memory.fact.reads': 'Claude が読んだ回数 · 30 日',
+  'memory.fact.times': '回',
+  'memory.fact.rewrites': ' · 書き換え {n} 回',
+  'memory.fact.noReads': '30 日の参照なし',
+  'memory.fact.by': 'Claude Code',
+  'memory.fact.session': 'セッション {id}',
+  'memory.fact.links': 'リンク',
+  'memory.fact.linksOut': 'このメモが参照: {n} 件',
+  'memory.fact.linksIn': 'このメモを参照: {n} 件',
+  'memory.index.title': '索引行',
+  'memory.index.meta': 'MEMORY.md · {n} tok · 毎回読まれる',
+  'memory.index.match': '● 本文と一致',
+  'memory.index.mismatch': '● 本文と食い違う',
+  'memory.index.unknown': '未比較(棚卸しで判定)',
+  'memory.index.none': '⚠ MEMORY.md に行がない — 注入されていない',
+  'memory.index.beyond': '⚠ 読み込み上限(200 行 / 25 KB)の外 — 注入されていない',
+  'memory.diag.title': '✦ 診断',
+  'memory.diag.state': '鮮度',
+  'memory.diag.verdict': '行き先',
+  'memory.diag.reason': '理由',
+  'memory.diag.signals': 'シグナル',
+  'memory.diag.prompt': '指示文',
+  'memory.diag.signalsNote': '機械的に検出。AI は使っていない。棚卸し前はここまでが出る',
+  'memory.diag.signalsNone': 'シグナルなし',
+  'memory.diag.promptNote':
+    'Claude Code に貼る。viewer は書き換えない。確認手順は指示文に含めてある',
+  'memory.diag.copy': '指示文をコピー',
+  'memory.diag.none':
+    '未実行 — 上の鮮度とシグナルは機械判定。✦ 棚卸しで行き先・理由・貼れる指示文が出る',
+  'memory.diag.errorNote': 'モデルの出力を採用できませんでした。再診断してください。',
+  'memory.body.title': '本文',
+  'memory.body.meta': '{n} tok · 読まれたときだけ',
+  'memory.signal.date': '本文の最新の日付: {value}({days} 日前)',
+  'memory.signal.path-missing': '参照しているパスが存在しない: {value}',
+  'memory.signal.done-words': '本文に完了・廃止を表す語: {value}',
+  'memory.signal.branch-merged': 'ブランチ {value} はマージ済み',
+  'memory.signal.branch-missing': 'ブランチ {value} はローカルにもリモートにも無い',
+  'memory.signal.how-restates': 'How to apply が description の再掲({value}% 一致)',
+  'memory.signal.why-episodic': 'Why がエピソード固有: {value}',
+  'memory.signal.has-exception': '例外・境界がある: {value}',
+  'memory.signal.first-line-restates': '1 行目は description の再掲({value}% 一致)— 正常な形',
+  'memory.signal.body-over': 'feedback として本文が長い({value} tok)',
+  'memory.signal.index-beyond-limit': '索引行が読み込み上限の外(行 {value})',
+  'crumb.memory': 'memory',
+
   'memory.cost.indexBeyond': '上限外 {n} 件(毎セッション読まれていない)',
-  'memory.cost.bodyK': '本文 — 参照時のみ',
-  'memory.cost.bodyNote': '読まれない限り 0 コスト。\n保持期間内に参照 {k} / {n} 件',
-  'memory.cost.bodyNoteNA': '読まれない限り 0 コスト。\n参照実績は計測不能(transcript なし)',
-  'memory.cost.perK': '1 件あたり',
-  'memory.cost.perNote': '減らせるのは件数のみ。\n本文を短くしても索引は変わらない',
   'memory.cost.unit': 'tok',
-  'memory.cmp.memory': 'memory 索引',
-  'memory.cmp.plugin': 'plugin',
-  'memory.cmp.user': 'user skill',
-  'memory.cmpTitle':
-    'この環境の他の常時注入元との比較(plugin / user skill は name + description の合計)',
 
-  'memory.card.reads': '本文 {n} 回参照 · 最終 {date}',
-  'memory.card.noReads': '本文の参照記録なし',
-  'memory.card.noReadsFeedback': '本文の参照記録なし — 索引行だけで機能している',
-  'memory.card.na': '参照実績は計測不能',
-
-  'memory.back': '← 一覧',
-  'memory.tab.body': '本文',
-  'memory.warnline': 'リンク切れ {n} 件: {names}',
-  'memory.sec.cost': 'コンテキストコスト',
-  'memory.sec.reads': '参照実績',
-  'memory.sec.links': 'リンク',
-  'memory.sec.frontmatter': 'frontmatter',
-  'memory.cbox.indexK': '索引行 — 毎セッション',
-  'memory.cbox.indexNote':
-    'MEMORY.md の 1 行として、このプロジェクトで作業するたび無条件に注入されます。',
-  'memory.cbox.bodyRead': '読まれたときだけ課金。保持期間内に {n} 回参照。',
-  'memory.cbox.bodyUnread': '読まれたときだけ課金。保持期間内の参照記録はありません。',
-  'memory.cbox.bodyNA': '読まれたときだけ課金。参照実績は計測不能(transcript なし)。',
-  'memory.f.reads': '本文の参照',
-  'memory.f.writes': '作成・更新',
-  'memory.f.origin': '生成元セッション',
-  'memory.f.times': '{n} 回',
-  'memory.f.last': ' — 最終 {date}',
-  'memory.f.none': 'なし',
-  'memory.f.noneNote': ' — トランスクリプト保持期間内',
-  'memory.f.na': '計測不能',
-  'memory.linkDead': '{name}(リンク切れ)',
-
-  'memory.triage.section': '✦ 棚卸し診断',
-  'memory.triage.sectionTitle':
-    'このプロジェクトのメモリの行き先を AI に診断させ、Claude Code に貼れる指示文を作ります',
-  'memory.triage.heading': '棚卸し診断',
-  'memory.triage.back': '← Memory 一覧',
-  'memory.triage.title': '棚卸し診断 — {project}',
-  'memory.triage.sub':
-    '✦ このツールは実行しません。提案ごとに、Claude Code に貼る指示文を用意します',
   'memory.triage.run': '診断を実行',
   'memory.triage.running': '診断中…',
   'memory.triage.rerun': '再診断',
@@ -828,18 +836,6 @@ const ja: Record<MsgKey, string> = {
     '全メモリの本文を 1 回の claude 呼び出しで読み、行き先を提案します(件単位キャッシュ。変更された件だけ再診断)',
   'memory.triage.rerunTitle':
     'キャッシュを無視して全件を診断し直します(claude を呼びます。通常 1 回、件数が非常に多いときは数回)',
-  'memory.triage.summary': '{n} 件を診断 — {p} 件に提案、{k} 件は現状維持',
-  'memory.triage.summaryWithErrors':
-    '{n} 件を診断 — {p} 件に提案、{k} 件は現状維持、{e} 件は出力不正',
-  'memory.triage.summaryPending': '{n} 件中 {u} 件が未診断',
-  'memory.triage.ctaTitle': 'まだ診断していません',
-  'memory.triage.ctaBody':
-    'AI はまだ何も読んでいません(下の行は事実の表示だけ)。「診断を実行」で {n} 件の本文を claude で読み(通常 1 回、件数が非常に多いときは数回に分割)、1 件ごとに行き先と貼れる指示文を出します(通常 1〜2 分)。',
-  'memory.triage.ctaPartial':
-    '前回の診断から {n} 件中 {u} 件が変更されています。「診断を実行」でその {u} 件だけを claude で診断し直します。',
-  'memory.triage.busyTitle': '診断中…',
-  'memory.triage.busyBody':
-    '{n} 件の本文を claude で読んでいます(通常 1 回、件数が非常に多いときは数回に分割)。通常 1〜2 分かかります。終わると画面が更新されます。',
   'memory.triage.verdict.keep': 'このまま',
   'memory.triage.verdict.shrink': '本文を縮める',
   'memory.triage.verdict.to-claude-md': 'CLAUDE.md へ',
@@ -849,7 +845,6 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.verdict.wrong-project': '別プロジェクトの話',
   'memory.triage.verdict.to-skill': 'skill へ',
   'memory.triage.verdict.update': '本文を書き直す',
-  'memory.triage.openDetail': '詳細を開く',
   'memory.triage.tpl.replace': '- {file} の本文を次の構成に置き換える(索引行は変更しない)',
   'memory.triage.tpl.rule': '- 1 行目(ルール)はそのまま残す: 「{rule}」',
   'memory.triage.tpl.whyKeep': '- Why はそのまま残す',
@@ -883,31 +878,16 @@ const ja: Record<MsgKey, string> = {
   'memory.signal.index-mismatch': '索引行と本文が食い違っています',
   'memory.signal.other-project': '別の登録プロジェクト「{value}」配下のパスを指しています',
   'memory.triage.verdict.error': '出力不正 — 再診断で再試行',
-  'memory.triage.seen': '{n} 回参照',
-  'memory.triage.unseen': '参照なし',
   'memory.triage.estApply': '適用で 索引 {n} tok/セッション',
   'memory.triage.estApplyClaude': '適用で 索引 {n} · 常時 +{m} tok',
   'memory.triage.estApplyUserClaude': '適用で 索引 {n} · 全プロジェクト常時 +{m} tok',
   'memory.triage.estApplyBeyond': '適用で 索引 ±0(元から注入されていない)',
   'memory.triage.estShrink': '適用で 索引 ±0 · 本文を縮める提案',
   'memory.triage.estUpdate': '適用で 索引 ±0 · 本文を書き直す提案',
-  'memory.triage.instruction': 'Claude Code への指示文',
   'memory.triage.copy': 'コピー',
   'memory.triage.copied': 'コピーしました',
-  'memory.triage.footProposals': '提案',
-  'memory.triage.footProposalsUnit': '件',
-  'memory.triage.footApplied': '全て適用したとき',
-  'memory.triage.footTokUnit': 'tok/セッション',
-  'memory.triage.footDiff': '差分',
-  'memory.triage.footDiffVal': '{n} tok',
-  'memory.triage.footNote':
-    '各指示文の末尾には「まず確認してから実行」の手順が付き、移動先パス・MEMORY.md の索引行の削除・[[link]] の張り替えまで含まれます。一部だけやりたいときは、貼った先の会話でそう伝えてください。',
   'memory.triage.copyPreamble':
     '上の作業を実行する前に、次の順で確認してください。(1) このセッションの作業ディレクトリが上のヘッダのプロジェクトと一致するか確認する。一致しない場合(ホームディレクトリから起動したセッション等)は、相対パス(特に .claude/ 配下)の解決を誤るため、その旨を指摘して続行の可否を私に確認する。(2) 読み取りだけで現状を確認し、実行する作業内容を提示する。(3) 判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認する。(4) 実行は私の承認を得てから行う。',
-  'memory.triage.whole': 'プロジェクト全体を棚卸し →',
-  'memory.triage.menu': 'memory 棚卸し(現在のプロジェクト)',
-  'memory.triage.menuTitle':
-    '現在のプロジェクトの自動メモリを棚卸しし、行き先・理由・貼れる指示文を出します',
   'alert.triageFailed': '棚卸し診断に失敗: {msg}',
 
   'detail.back': '← 一覧に戻る',
@@ -997,7 +977,6 @@ const ja: Record<MsgKey, string> = {
   'all.more': '他 {n} 件を表示',
   'all.here': '今ここ',
   'kind.claudeMd': 'CLAUDE.md',
-  'memory.listTitle': 'メモリ',
   'alert.ackFailed': '既読化に失敗: {msg}',
 
   'detail.spark': '直近30日',
@@ -1301,6 +1280,16 @@ export const memoryTypeLabel = (type: MemoryType): string => t(`memory.type.${ty
 /* 棚卸し診断の行き先ラベル(verdict は言語非依存キー) */
 export const memoryVerdictLabel = (verdict: MemoryVerdict): string =>
   t(`memory.triage.verdict.${verdict}`);
+
+/* 鮮度(state)のラベル。一覧の「鮮度」列と詳細の診断で共用 */
+export const memoryStateLabel = (state: MemoryState): string => t(`memory.state.${state}`);
+
+/* 診断列の 4 語(+ 出力不正)。太さは揃え、色だけで分ける(design-system 0.4b) */
+export const memoryWordLabel = (word: VerdictWord): string => t(`memory.word.${word}`);
+
+/* 機械シグナルの 1 行。kind ごとの文言に生値(value / days)を埋める */
+export const memorySignalLabel = (s: MemorySignal): string =>
+  t(`memory.signal.${s.kind}`, { value: s.value, days: s.days ?? '' });
 
 /* API エラー {error: code, detail} を表示文言に変換。未知コードは code: detail をそのまま出す */
 export function apiErrorMessage(body: unknown, status: number): string {

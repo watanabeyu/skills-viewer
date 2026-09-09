@@ -4,7 +4,6 @@ import {
   fetchSkills,
   fetchSummaryStatus,
   fromId,
-  generateGroups,
   initToken,
   summarizeAll,
   toId,
@@ -24,33 +23,20 @@ import {
   type SortKey,
   type UseFilter,
 } from './util';
+import { asTypeFilter } from './memory';
 import { GridView } from './components/GridView';
 import { Home } from './components/Home';
-import { MemoryGrid } from './components/MemoryGrid';
+import { MEM_SORT_KEYS, MemoryList } from './components/MemoryGrid';
 import { DetailView, clearMdCache } from './components/DetailView';
 import { ClaudeMdView } from './components/ClaudeMdView';
 import { MemoryDetail } from './components/MemoryDetail';
-import { MemoryTriageView } from './components/MemoryTriageView';
 import { ProjectSwitcher } from './components/ProjectSwitcher';
 import { SettingsModal } from './components/SettingsModal';
-import { AiMenu } from './components/AiMenu';
-import { InlineError, InlineNote } from './components/Inline';
-import { getLang, setLang, t, type Lang, type MsgKey } from './i18n';
+import { getLang, setLang, t, type Lang } from './i18n';
 import { defaultFile } from './claudemd';
 
 /* ラベルは言語切替に追従させるため、キーだけ持ってレンダー時に t() で引く */
 const SORT_KEYS: SortKey[] = ['name', 'uses', 'recent', 'updated', 'tokens'];
-
-/*
- * memory 軸の並び順。URL パラメータは skill 軸の sort と分けて msort に置く
- * (updated は skill = 新しい順 / memory = 古い順で意味が逆、値の集合も違うため)。
- */
-const MEM_SORT_KEYS: [MemorySortKey, MsgKey][] = [
-  ['index', 'sort.memIndex'],
-  ['body', 'sort.memBody'],
-  ['updated', 'sort.memStale'],
-  ['name', 'sort.name'],
-];
 
 export default function App() {
   const [data, setData] = useState<SkillsData | null>(null);
@@ -70,6 +56,8 @@ export default function App() {
   const refParam = params.get('ref');
   // URL パラメータ名は ref のまま。変数・prop 名だけ React の予約 prop 名を避ける
   const refFilter: RefFilter = refParam === 'read' || refParam === 'unread' ? refParam : 'all';
+  /* memory 一覧の種類(frontmatter type)の絞り込み。未知の値は all */
+  const memType = asTypeFilter(params.get('mtype'));
   const kind = (params.get('kind') || 'all') as KindFilter;
   const use = (params.get('use') || 'all') as UseFilter;
   /* ?project=<Section.id | all>。省略時は cwd のプロジェクト(設計判断 13) */
@@ -131,6 +119,21 @@ export default function App() {
   const detailItem = detailId ? all.find((x) => x.key === fromId(detailId)) : undefined;
   /* CLAUDE.md 画面(E2)もパンくず(cwd のプロジェクト / CLAUDE.md)。② はサーバーが cwd で計算した値なので常に cwd */
   const claudeMdRoute = location.pathname.startsWith('/claude-md');
+  const project = useMemo(
+    () => (data ? resolveProject(projectParam, data.sections) : null),
+    [data, projectParam],
+  );
+  /*
+   * memory 一覧・詳細(Phase F)のパンくず: プロジェクト / memory(一覧へ) / 名前。
+   * 一覧はヘッダーの切替(?project=)に従うプロジェクト単位、詳細はその memory が帰属するプロジェクト
+   */
+  const memoryRoute = location.pathname === '/memory' || location.pathname.startsWith('/memory/');
+  const memoryId = location.pathname.match(/^\/memory\/([^/]+)/)?.[1];
+  const memoryItem = memoryId
+    ? (data?.memory || [])
+        .flatMap((s) => s.items.map((it) => ({ sec: s, it })))
+        .find((x) => x.it.path === fromId(memoryId))
+    : undefined;
   const crumb = detailItem
     ? { project: detailItem.scopeLabel, name: detailItem.name }
     : claudeMdRoute && data
@@ -138,11 +141,18 @@ export default function App() {
           project: currentSection(data.sections)?.projectName || fileName(data.cwd),
           name: t('cmd.crumb'),
         }
-      : null;
-  const project = useMemo(
-    () => (data ? resolveProject(projectParam, data.sections) : null),
-    [data, projectParam],
-  );
+      : memoryRoute && data
+        ? {
+            project: memoryItem
+              ? memoryItem.sec.projectName
+              : project === 'all'
+                ? t('proj.all')
+                : project?.projectName || fileName(data.cwd),
+            /* 詳細では「memory」を一覧へのリンクにし、名前を末尾に置く(「← 一覧」の代わり) */
+            name: memoryItem ? memoryItem.it.name : t('crumb.memory'),
+            list: memoryItem ? t('crumb.memory') : '',
+          }
+        : null;
   /* 未知の id(登録から消えた・アイテム 0 件になったプロジェクト)は cwd に落とし、URL からも消す */
   useEffect(() => {
     if (!data || !projectParam || projectParam === 'all') return;
@@ -167,15 +177,11 @@ export default function App() {
     const f = data ? defaultFile(data.claudeMd) : null;
     navigate({ pathname: '/claude-md' + (f ? '/' + toId(f.path) : ''), search: params.toString() });
   };
-  /* 棚卸し診断はプロジェクト単位(id = MemorySection.id = エンコード済みディレクトリ名) */
-  const openTriage = (id: string) => {
-    navigate({ pathname: '/memory/triage/' + id, search: params.toString() });
-  };
 
-  /* ---- AI summarize-all ---- */
+  /* ---- AI summarize-all(ボタンはホーム ③ の見出し行。ジョブの状態はここで持つ) ---- */
   const [aiLabel, setAiLabel] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
-  /* AI 操作(要約・グルーピング)の失敗はヘッダーの AI ボタン脇に 1 行で出す(alert は使わない) */
+  /* 失敗はボタンの脇に 1 行で出す(alert は使わない) */
   const [aiError, setAiError] = useState('');
   const pollTimer = useRef<number>(0);
 
@@ -235,21 +241,11 @@ export default function App() {
     }
   };
 
-  /* ---- AI menu(要約 + 用途グルーピングの集約) ---- */
-  const [aiMenuOpen, setAiMenuOpen] = useState(false);
-  const [groupBusy, setGroupBusy] = useState(false);
-  const onGroupGen = async () => {
-    if (groupBusy) return;
-    setGroupBusy(true);
-    setAiError('');
-    try {
-      await generateGroups();
-      await reload();
-    } catch (e) {
-      setAiError(t('alert.groupFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setGroupBusy(false);
-    }
+  const summary = {
+    label: aiBusy ? aiLabel || t('ai.button') : idleAiLabel,
+    busy: aiBusy,
+    error: aiError,
+    onRun: onAiClick,
   };
 
   if (error)
@@ -258,53 +254,6 @@ export default function App() {
         <div className="empty">{t('app.loadFailed', { msg: error })}</div>
       </div>
     );
-
-  /* memory 一覧のツールバー(検索 / 並び / 参照)。v0.8 のヘッダーにあったものを /memory へ移した。Phase F で組み替える */
-  const memory = data?.memory || [];
-  const refAvailable = memory.some((s) => s.usageAvailable);
-  const memoryToolbar = (
-    <div className="mem-tools">
-      <h2>{t('memory.listTitle')}</h2>
-      <input
-        className="q"
-        placeholder={t('memory.searchPlaceholder')}
-        value={params.get('q') || ''}
-        onChange={(e) => setParam('q', e.target.value || null)}
-      />
-      <select
-        className="sel"
-        value={memSort}
-        onChange={(e) => setParam('msort', e.target.value === 'index' ? null : e.target.value)}
-        title={t('sort.title')}
-      >
-        {MEM_SORT_KEYS.map(([key, msgKey]) => (
-          <option key={key} value={key}>
-            {t(msgKey)}
-          </option>
-        ))}
-      </select>
-      {refAvailable && (
-        <select
-          className={'sel' + (refFilter !== 'all' ? ' on' : '')}
-          value={refFilter}
-          title={t('filter.refTitle')}
-          onChange={(e) => setParam('ref', e.target.value === 'all' ? null : e.target.value)}
-        >
-          {(
-            [
-              ['all', t('kind.all')],
-              ['read', t('filter.refRead')],
-              ['unread', t('filter.refUnread')],
-            ] as [RefFilter, string][]
-          ).map(([key, label]) => (
-            <option key={key} value={key}>
-              {t('filter.refPrefix', { v: label })}
-            </option>
-          ))}
-        </select>
-      )}
-    </div>
-  );
 
   return (
     <div className="app">
@@ -319,6 +268,14 @@ export default function App() {
               {crumb.project}
             </Link>
             <span className="meta">/</span>
+            {crumb.list && (
+              <>
+                <Link className="crumb-p" to={{ pathname: '/memory', search: params.toString() }}>
+                  {crumb.list}
+                </Link>
+                <span className="meta">/</span>
+              </>
+            )}
             <span className="crumb-cur">{crumb.name}</span>
           </span>
         ) : (
@@ -344,34 +301,7 @@ export default function App() {
           </span>
         )}
         <span className="appbar-r">
-          {/* claude CLI 不在は起動時に 1 回だけ検出する。押せない理由をボタン脇に出す */}
-          {data && !data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
-          <InlineError msg={aiError} />
-          <span style={{ position: 'relative' }}>
-            <button
-              className="btn"
-              disabled={!!data && !data.aiAvailable}
-              onClick={() => setAiMenuOpen((v) => !v)}
-              title={t('ai.menuTitle')}
-            >
-              {t('ai.menu')}
-              {aiBusy || groupBusy ? ' …' : data && data.aiStale > 0 ? ` (${data.aiStale})` : ''} ▾
-            </button>
-            {aiMenuOpen && (
-              <AiMenu
-                summaryLabel={aiBusy ? aiLabel || t('ai.button') : idleAiLabel}
-                summaryBusy={aiBusy}
-                onSummarize={onAiClick}
-                groupLabel={data?.groups?.length ? t('group.menuRegen') : t('group.menuGenerate')}
-                groupBusy={groupBusy}
-                groupStale={!!data?.groupsStale}
-                onGroups={onGroupGen}
-                memoryCurrentId={data?.memory?.find((s) => s.isCurrent)?.id}
-                onTriage={openTriage}
-                onClose={() => setAiMenuOpen(false)}
-              />
-            )}
-          </span>
+          {/* AI 操作はヘッダーに置かない: 全件要約はホーム ③、再分類は用途別、棚卸しは memory 一覧(Phase F) */}
           <button className="btn quiet" onClick={() => setSettingsOpen(true)}>
             {t('app.settings')}
           </button>
@@ -415,6 +345,7 @@ export default function App() {
                     onOpenMemory={openMemory}
                     onOpenMemoryList={openMemoryList}
                     onOpenClaudeMd={openClaudeMd}
+                    summary={summary}
                     setParam={setParam}
                     reload={reload}
                   />
@@ -428,40 +359,24 @@ export default function App() {
               path="/skills/:id"
               element={<DetailView data={data} all={all} onOpen={openSkill} reload={reload} />}
             />
-            {/* memory 一覧(Phase F で組み替える。v0.8 の view=memory の後継) */}
+            {/* memory 一覧(Phase F。v0.8 の view=memory と独立した棚卸し画面の後継) */}
             <Route
               path="/memory"
               element={
-                <>
-                  {memoryToolbar}
-                  <MemoryGrid
-                    data={data}
-                    q={q}
-                    sort={memSort}
-                    refFilter={refFilter}
-                    onOpen={openMemory}
-                    onOpenTriage={openTriage}
-                  />
-                </>
-              }
-            />
-            {/* 棚卸し診断はプロジェクト単位の独立画面。:id より前に置いて誤マッチを避ける */}
-            <Route
-              path="/memory/triage/:project"
-              element={<MemoryTriageView data={data} reload={reload} />}
-            />
-            <Route
-              path="/memory/:id"
-              element={
-                <MemoryDetail
+                <MemoryList
                   data={data}
+                  project={project}
                   q={q}
                   sort={memSort}
                   refFilter={refFilter}
+                  type={memType}
+                  setParam={setParam}
+                  onOpen={openMemory}
                   reload={reload}
                 />
               }
             />
+            <Route path="/memory/:id" element={<MemoryDetail data={data} reload={reload} />} />
           </Routes>
         </main>
       )}

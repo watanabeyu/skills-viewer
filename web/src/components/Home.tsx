@@ -31,7 +31,19 @@ import {
 } from '../util';
 import { t, type MsgKey } from '../i18n';
 import { ChangesBlock } from './ChangesBlock';
+import { InlineError, InlineNote } from './Inline';
 import { Bar, GroupHead, ItemRow, TableHead, useNarrow } from './Rows';
+
+/*
+ * 全件要約(summarize-all)の操作。v0.8 のヘッダー「✦ AI」メニューにあったものを ③ の見出し行へ移した
+ * (計画 15 Phase F)。ジョブの状態(ラベル・実行中・失敗)は App が持ち、ここは表示と起動だけ。
+ */
+export interface SummaryAction {
+  label: string;
+  busy: boolean;
+  error: string;
+  onRun: () => void;
+}
 
 const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
 const SORT_KEYS: [SortKey, MsgKey][] = [
@@ -153,6 +165,7 @@ export function ActiveBlock({
   sort,
   kind,
   use,
+  summary,
   onOpen,
   setParam,
 }: {
@@ -162,6 +175,7 @@ export function ActiveBlock({
   sort: SortKey;
   kind: KindFilter;
   use: UseFilter;
+  summary: SummaryAction;
   onOpen: (key: string) => void;
   setParam: (key: string, value: string | null) => void;
 }) {
@@ -190,6 +204,17 @@ export function ActiveBlock({
         <span className="meta">{t(narrow ? 'act.subShort' : 'act.sub')}</span>
         {!usage && <span className="meta">· {t('act.noUsage')}</span>}
         <span className="hd-r">
+          {/* 全件要約(claude CLI)。不在なら押せない理由を脇に出す。失敗も alert でなくここに 1 行 */}
+          <InlineError msg={summary.error} />
+          {!data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
+          <button
+            className="btn quiet"
+            disabled={summary.busy || !data.aiAvailable}
+            onClick={summary.onRun}
+            title={t('ai.buttonTitle')}
+          >
+            ✦ {summary.label}
+          </button>
           {usage && (
             <select
               className={'sel' + (use !== 'all' ? ' on' : '')}
@@ -317,6 +342,7 @@ export function Home({
   onOpenMemory,
   onOpenMemoryList,
   onOpenClaudeMd,
+  summary,
   setParam,
   reload,
 }: {
@@ -330,6 +356,7 @@ export function Home({
   onOpenMemory: (path: string) => void;
   onOpenMemoryList: () => void;
   onOpenClaudeMd: () => void;
+  summary: SummaryAction;
   setParam: (key: string, value: string | null) => void;
   reload: () => Promise<void>;
 }) {
@@ -357,6 +384,7 @@ export function Home({
         sort={sort}
         kind={kind}
         use={use}
+        summary={summary}
         onOpen={onOpen}
         setParam={setParam}
       />

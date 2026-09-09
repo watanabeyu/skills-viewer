@@ -18,6 +18,7 @@ export type {
   Lang,
   MemorySection,
   MemorySignal,
+  MemorySignalKind,
   MemoryState,
   MemoryTriage,
   MemoryType,

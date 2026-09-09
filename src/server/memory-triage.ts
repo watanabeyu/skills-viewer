@@ -1486,6 +1486,9 @@ export function attachMemoryTriage(
           ...(cached.demotedBy ? { demotedBy: cached.demotedBy } : {}),
           // 出力不正も「診断済み」として載せる(未診断と区別し、再診断を促す)
           ...(cached.error ? { error: cached.error } : {}),
+          // いつ・どのモデルが出した診断かを詳細画面の見出しに出す(表示のみ。stale 判定には使わない)
+          ...(cached.generatedAt ? { generatedAt: cached.generatedAt } : {}),
+          ...(cached.model ? { model: cached.model } : {}),
         };
         // 制限つきセクションは表示時にも verdict 制限をかける(制限導入前のキャッシュ対策。判断 5)
         it.aiTriage = restricted ? orphanTriage(raw, !!sec.sharedStore) : raw;
