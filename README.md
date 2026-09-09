@@ -12,7 +12,7 @@ npx skills-viewer
 
 <!-- 相対パス参照: private リポジトリでも GitHub 上で表示でき、npmjs.com は repository フィールドを元に raw URL へ書き換えるため public 化後は npm でも表示される -->
 
-![Skills Viewer — grid view with per-scope grouping, usage stats and AI summaries](docs/screenshot.png)
+![Skills Viewer — grid view with per-scope grouping, usage stats and AI summaries](assets/screenshot.png)
 
 ## Features
 
