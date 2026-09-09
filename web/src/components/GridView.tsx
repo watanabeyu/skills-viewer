@@ -1,131 +1,61 @@
+/*
+ * 「すべてのプロジェクト」(README 6.2 の全プロジェクトビュー)。ホームと同じ骨格で、
+ * ② が無く、③ が「置かれているもの」(全プロジェクトの在庫。出所別 / 用途別 / 1 列)になる。
+ * v0.8 までの「ソース別 / 用途別 / フラット」の表示軸はここの並びに格下げした(README 6.4)。
+ * 寸法は docs/design/0.9.0/{Ledger,Console}All.dc.html の実測(style.css のトークン)。
+ */
+
 import { useState } from 'react';
-import type { SkillsData } from '../api';
-import { generateGroups, itemKey } from '../api';
+import type { Section, SkillsData, Source } from '../api';
+import { generateGroups } from '../api';
 import {
+  changeMarkOf,
+  duplicateNames,
   flatten,
-  fmtDate,
   groupByPurpose,
-  headingOf,
-  invocationLabel,
-  invocationOf,
-  invocationTitle,
-  isUnused,
   kindMatches,
   matches,
+  scopeLabelOf,
+  sectionTokens,
   sortItems,
-  usageLine,
   usageMatches,
-  KIND_LABEL,
-  SRC_COLOR,
+  VIEW_MODES,
+  type FlatItem,
   type KindFilter,
-  type PurposeGroup,
   type SortKey,
   type UseFilter,
   type ViewMode,
 } from '../util';
-import { lintLabel, t } from '../i18n';
+import { t, type MsgKey } from '../i18n';
 import { InlineError, InlineNote } from './Inline';
-import type { Section, SkillItem, Source } from '../api';
+import { ChangesBlock } from './ChangesBlock';
+import { GroupHeading, ItemRow, GroupHead, TableHead, useNarrow } from './Rows';
 
-export function KindBadge({ it }: { it: SkillItem }) {
-  const label = KIND_LABEL[it.kind];
-  return label ? <span className="kbadge">{label}</span> : null;
-}
+/* 理解画面(E1 で組み替えるまで v0.8 のまま)が使うバッジ類は Rows に移した。参照元を変えないための再輸出 */
+export {
+  GroupHeading,
+  InvocationBadge,
+  KindBadge,
+  SectionHeading,
+  UnusedBadge,
+  WarnBadge,
+} from './Rows';
 
-export function UnusedBadge({ show }: { show: boolean }) {
-  if (!show) return null;
-  return (
-    <span className="unused-badge" title={t('badge.unusedTitle')}>
-      {t('badge.unused')}
-    </span>
-  );
-}
-
-/* hover で警告内容を CSS tooltip 表示(native title より視認性が高い) */
-export function WarnBadge({ it }: { it: SkillItem }) {
-  if (!it.lint?.length) return null;
-  return (
-    <span className="warn-badge">
-      ⚠ {it.lint.length}
-      <span className="tip">
-        <span className="tip-t">{t('badge.warnTitle')}</span>
-        {it.lint.map((code) => (
-          <span key={code} className="tip-line">
-            {lintLabel(code)}
-          </span>
-        ))}
-      </span>
-    </span>
-  );
-}
-
-export function InvocationBadge({ it }: { it: SkillItem }) {
-  const inv = invocationOf(it);
-  if (!inv) return null;
-  return (
-    <span
-      className={'inv-badge inv-' + inv.kind + (inv.basis === 'ai' ? ' inv-ai' : '')}
-      title={invocationTitle(it)}
-    >
-      {invocationLabel(inv.kind)}
-      {inv.basis === 'ai' ? ' ✦' : ''}
-    </span>
-  );
-}
-
-export function SectionHeading({
-  section,
-  count,
-  small,
-  tokens,
-}: {
-  section: Section;
-  count: number;
-  small?: boolean;
-  /* セクション全体(フィルタ前)の注入トークン概算。省略時は非表示 */
-  tokens?: number;
-}) {
-  return (
-    <div className={'sec-h' + (small ? ' sm' : '')}>
-      <span className="sq" style={{ background: SRC_COLOR[section.source] }} />
-      <span className="lbl">{headingOf(section)}</span>
-      <span className="n">{count}</span>
-      {!!tokens && (
-        <span className="sec-tok" title={t('app.tokensTitle')}>
-          {t('sec.tokens', { n: tokens.toLocaleString() })}
-        </span>
-      )}
-      <span className="ln" />
-    </div>
-  );
-}
-
-export function GroupHeading({
-  g,
-  count,
-  small,
-  sub,
-}: {
-  g: PurposeGroup;
-  count: number;
-  small?: boolean;
-  /* セクション見出しの配下に出す小見出し(sticky 無し・インデント付き) */
-  sub?: boolean;
-}) {
-  return (
-    <div className={'sec-h' + (small ? ' sm' : '') + (sub ? ' sub' : '')}>
-      <span className="g-emoji">{g.emoji || (g.manual ? '📌' : '📁')}</span>
-      <span className="lbl">{g.label}</span>
-      {g.manual && (
-        <span className="g-manual" title={t('group.manualTitle')}>
-          {t('group.manual')}
-        </span>
-      )}
-      <span className="n">{count}</span>
-      <span className="ln" />
-    </div>
-  );
-}
+const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
+const SORT_KEYS: [SortKey, MsgKey][] = [
+  ['name', 'sort.name'],
+  ['uses', 'sort.uses'],
+  ['recent', 'sort.recent'],
+  ['updated', 'sort.updated'],
+  ['tokens', 'sort.tokens'],
+];
+const VIEW_LABEL: Record<ViewMode, MsgKey> = {
+  source: 'view.source',
+  group: 'view.group',
+  flat: 'view.flat',
+};
+/* 出所ごとに最初に見せる行数。残りは「他 n 件を表示」で開く(モックの見た目) */
+const SHOW_MAX = 5;
 
 /*
  * 用途グループの生成/再生成ボタン。環境全体で 1 回の haiku 呼び出しなので
@@ -158,7 +88,7 @@ function GroupGenButton({
   };
   return (
     <>
-      <button className="chip" disabled={busy || !aiAvailable} onClick={run} title={title}>
+      <button className="btn" disabled={busy || !aiAvailable} onClick={run} title={title}>
         {busy ? t('group.generating') : label}
       </button>
       <InlineError msg={error} />
@@ -167,205 +97,300 @@ function GroupGenButton({
   );
 }
 
-function SkillCard({
-  it,
+/* 出所 1 つ分(見出し + 先頭 SHOW_MAX 行 + 「他 n 件」)。見出しを畳めば行は出ない */
+function SourceGroup({
+  s,
+  items,
+  open,
+  onToggle,
+  usage,
+  changes,
   onOpen,
-  scope,
-  usageAvailable,
 }: {
-  it: SkillItem;
+  s: Section;
+  items: FlatItem[];
+  open: boolean;
+  onToggle: () => void;
+  usage: boolean;
+  changes: SkillsData['changes'];
   onOpen: (key: string) => void;
-  scope?: { label: string; source: Source };
-  usageAvailable: boolean;
 }) {
+  const [more, setMore] = useState(false);
+  const shown = more ? items : items.slice(0, SHOW_MAX);
+  const n = t('act.count', { n: s.items.length });
+  const meta =
+    s.source === 'project'
+      ? (s.isCurrent ? t('all.here') + ' · ' : '') + n
+      : s.source === 'user'
+        ? `~/.claude · ${n}`
+        : n;
   return (
-    <button className="card" onClick={() => onOpen(itemKey(it))}>
-      {scope && (
-        <span className="scope-mini">
-          <span className="dot5" style={{ background: SRC_COLOR[scope.source] }} />
-          {scope.label}
-        </span>
-      )}
-      {/* 1行目は名前 + 右上の注意点(⚠)のみ。チップ類は名前が長いと読みづらいので2行目へ */}
-      <div className="top">
-        <span className="nm">{it.name}</span>
-        <span className="top-r">
-          {it.version && <span className="ver">v{it.version}</span>}
-          <WarnBadge it={it} />
-        </span>
-      </div>
-      {(KIND_LABEL[it.kind] || invocationOf(it) || isUnused(it, usageAvailable)) && (
-        <div className="chips">
-          <KindBadge it={it} />
-          <InvocationBadge it={it} />
-          <UnusedBadge show={isUnused(it, usageAvailable)} />
-        </div>
-      )}
-      <p className="desc">
-        {it.aiSummary && <span className="ai-mark">✦ </span>}
-        {it.aiSummary || it.description}
-      </p>
-      {usageLine(it) && <div className="usage">{usageLine(it)}</div>}
-      <div className="meta">
-        <span>
-          {it.useCount
-            ? t('card.uses', { n: it.useCount, date: fmtDate(it.lastUsed) })
-            : t('card.noUses')}
-        </span>
-        <span className="meta-r">
-          {!!it.tokens && (
-            <span className="tok">{t('card.tokens', { n: it.tokens.toLocaleString() })}</span>
-          )}
-          {it.updatedAt ? <span>{t('card.updated', { date: fmtDate(it.updatedAt) })}</span> : null}
-        </span>
-      </div>
-    </button>
+    <div className="grp">
+      <GroupHead
+        open={open}
+        onToggle={onToggle}
+        source={s.source}
+        name={s.source === 'project' ? s.projectName || '' : s.source}
+        meta={meta}
+        tok={sectionTokens(s)}
+      />
+      {open &&
+        (items.length ? (
+          <>
+            <TableHead usage={usage} />
+            {shown.map((it) => (
+              <ItemRow
+                key={it.key}
+                it={it}
+                source={s.source as Source}
+                scopeLabel={scopeLabelOf(s)}
+                mark={changeMarkOf(it, changes)}
+                usage={usage}
+                onOpen={onOpen}
+              />
+            ))}
+            {items.length > shown.length && (
+              <button className="more meta" onClick={() => setMore(true)}>
+                {t('all.more', { n: items.length - shown.length })}
+              </button>
+            )}
+          </>
+        ) : (
+          <div className="trow-empty meta">{t('act.empty')}</div>
+        ))}
+    </div>
   );
 }
 
-/*
- * skill / command / agent / hook の一覧本体(表示軸・フィルタの対象)。
- * memory は別の軸(view=memory → MemoryGrid)で、ここには一切出さない。
- */
 export function GridView({
   data,
   q,
   sort,
-  view,
+  by,
   kind,
   use,
   onOpen,
+  onOpenMemory,
+  setParam,
   reload,
 }: {
   data: SkillsData;
   q: string;
   sort: SortKey;
-  view: ViewMode;
+  by: ViewMode;
   kind: KindFilter;
   use: UseFilter;
   onOpen: (key: string) => void;
+  onOpenMemory: (path: string) => void;
+  setParam: (key: string, value: string | null) => void;
   reload: () => Promise<void>;
 }) {
-  const pass = (it: SkillItem) =>
-    kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, data.usageAvailable);
-  if (view === 'group') {
-    // 未生成なら生成導線だけを出す(claude CLI が無い環境ではボタンを押せない)
+  const narrow = useNarrow();
+  const usage = data.usageAvailable;
+  const pass = (it: FlatItem) =>
+    kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, usage);
+  const all = flatten(data.sections);
+  const filtered = sortItems(all.filter(pass), sort);
+  const countOf = (src: Source) =>
+    data.sections.filter((s) => s.source === src).reduce((n, s) => n + s.items.length, 0);
+  const projects = data.sections.filter((s) => s.source === 'project');
+  const dups = duplicateNames(all);
+  // プロジェクトと user は開き、plugin / built-in は畳む(モックの初期状態)
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const isOpen = (s: Section) => open[s.id] ?? (s.source === 'project' || s.source === 'user');
+
+  let body;
+  if (by === 'group') {
     if (!data.groups?.length) {
-      return (
-        <div className="grid-pad">
-          <div className="grp-panel">
-            <p>{t('group.empty')}</p>
-            <GroupGenButton
-              label={t('group.generate')}
-              title={t('group.generateTitle')}
-              aiAvailable={data.aiAvailable}
-              reload={reload}
-            />
-          </div>
+      body = (
+        <div className="grp-panel">
+          <p>{t('group.empty')}</p>
+          <GroupGenButton
+            label={t('group.generate')}
+            title={t('group.generateTitle')}
+            aiAvailable={data.aiAvailable}
+            reload={reload}
+          />
         </div>
+      );
+    } else {
+      const groups = groupByPurpose(filtered, data.groups);
+      body = (
+        <>
+          {data.groupsStale && (
+            <div className="grp-bar">
+              <span className="stale-note">
+                ⚠ {t('group.stale')} — {t('group.staleAction')}
+              </span>
+            </div>
+          )}
+          {groups.length ? (
+            groups.map((g) => (
+              <div key={g.id} className="grp">
+                <GroupHeading g={g} count={g.items.length} small />
+                <TableHead usage={usage} />
+                {g.items.map((it) => (
+                  <ItemRow
+                    key={it.key}
+                    it={it}
+                    source={it.source}
+                    scopeLabel={it.scopeLabel}
+                    mark={changeMarkOf(it, data.changes)}
+                    usage={usage}
+                    onOpen={onOpen}
+                  />
+                ))}
+              </div>
+            ))
+          ) : (
+            <div className="trow-empty meta">{t('act.empty')}</div>
+          )}
+        </>
       );
     }
-    // リポジトリ(ソースセクション)ごとに、その中を用途グループで小分けする
-    const sections = data.sections
-      .map((s) => ({
-        section: s,
-        groups: groupByPurpose(sortItems(flatten([s]).filter(pass), sort), data.groups),
-      }))
-      .filter((s) => s.groups.length > 0);
-    return (
-      <div className="grid-pad">
-        {data.groupsStale && (
-          <div className="grp-bar">
-            <span className="stale-note">
-              ⚠ {t('group.stale')} — {t('group.staleAction')}
-            </span>
-          </div>
-        )}
-        {sections.length ? (
-          sections.map(({ section, groups }) => (
-            <div key={section.id}>
-              <SectionHeading
-                section={section}
-                count={groups.reduce((n, g) => n + g.items.length, 0)}
-              />
-              {groups.map((g) => (
-                <div key={g.id} className="sub-grp">
-                  <GroupHeading g={g} count={g.items.length} small sub />
-                  <div className="grid">
-                    {g.items.map((it) => (
-                      <SkillCard
-                        key={it.key}
-                        it={it}
-                        onOpen={onOpen}
-                        usageAvailable={data.usageAvailable}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))
-        ) : (
-          <div className="empty">{t('list.empty')}</div>
-        )}
-      </div>
-    );
-  }
-  if (view === 'source') {
-    const sections = data.sections
-      .map((s) => ({
-        section: s,
-        items: sortItems(s.items.filter(pass), sort),
-        // セクションの注入コストはフィルタと無関係なので全 items で計算する
-        tokens: s.items.reduce((sum, it) => sum + (it.tokens || 0), 0),
-      }))
-      .filter((s) => s.items.length > 0);
-    if (!sections.length)
-      return (
-        <div className="grid-pad">
-          <div className="empty">{t('list.empty')}</div>
-        </div>
-      );
-    return (
-      <div className="grid-pad">
-        {sections.map(({ section, items, tokens }) => (
-          <div key={section.id}>
-            <SectionHeading section={section} count={items.length} tokens={tokens} />
-            <div className="grid">
-              {items.map((it) => (
-                <SkillCard
-                  key={itemKey(it)}
-                  it={it}
-                  onOpen={onOpen}
-                  usageAvailable={data.usageAvailable}
-                />
-              ))}
-            </div>
-          </div>
+  } else if (by === 'flat') {
+    body = filtered.length ? (
+      <>
+        <TableHead usage={usage} />
+        {filtered.map((it) => (
+          <ItemRow
+            key={it.key}
+            it={it}
+            source={it.source}
+            scopeLabel={it.scopeLabel}
+            mark={changeMarkOf(it, data.changes)}
+            usage={usage}
+            onOpen={onOpen}
+          />
         ))}
-      </div>
+      </>
+    ) : (
+      <div className="trow-empty meta">{t('act.empty')}</div>
     );
+  } else {
+    body = data.sections.map((s) => (
+      <SourceGroup
+        key={s.id}
+        s={s}
+        items={sortItems(flatten([s]).filter(pass), sort)}
+        open={isOpen(s)}
+        onToggle={() => setOpen((o) => ({ ...o, [s.id]: !isOpen(s) }))}
+        usage={usage}
+        changes={data.changes}
+        onOpen={onOpen}
+      />
+    ));
   }
-  // グループ化オフのときは所属が見えないので、カード内に所属ラベルを出す
-  const items = sortItems(flatten(data.sections).filter(pass), sort);
+
   return (
-    <div className="grid-pad">
-      <div style={{ height: 18 }} />
-      {items.length ? (
-        <div className="grid">
-          {items.map((it) => (
-            <SkillCard
-              key={it.key}
-              it={it}
-              onOpen={onOpen}
-              scope={{ label: it.scopeLabel, source: it.source }}
-              usageAvailable={data.usageAvailable}
-            />
-          ))}
+    <div className="home">
+      <ChangesBlock
+        data={data}
+        project="all"
+        onOpen={onOpen}
+        onOpenMemory={onOpenMemory}
+        reload={reload}
+      />
+      <section className="blk">
+        <div className="blk-hd">
+          <h2>{t('all.title')}</h2>
+          <span className="pill">{t('act.count', { n: all.length })}</span>
+          <span className="meta">
+            {t('all.sub', {
+              p: projects.length,
+              u: countOf('user'),
+              pl: countOf('plugin'),
+              b: countOf('built-in'),
+            })}
+            {dups.length > 0 &&
+              ' · ' +
+                t('all.dup', {
+                  n: dups.length,
+                  list: dups
+                    .slice(0, 3)
+                    .map((d) => `${d.name}: ${d.scopes.join(' / ')}`)
+                    .join('、'),
+                })}
+          </span>
+          <span className="hd-r">
+            <select
+              className={'sel' + (kind !== 'all' ? ' on' : '')}
+              value={kind}
+              onChange={(e) => setParam('kind', e.target.value === 'all' ? null : e.target.value)}
+            >
+              {KIND_FILTERS.map((key) => (
+                <option key={key} value={key}>
+                  {t('filter.kindPrefix', { v: key === 'all' ? t('kind.all') : key })}
+                </option>
+              ))}
+            </select>
+            {usage && (
+              <select
+                className={'sel' + (use !== 'all' ? ' on' : '')}
+                value={use}
+                title={t('filter.unusedTitle')}
+                onChange={(e) => setParam('use', e.target.value === 'all' ? null : e.target.value)}
+              >
+                {(
+                  [
+                    ['all', t('kind.all')],
+                    ['used', t('filter.used')],
+                    ['unused', t('filter.unused')],
+                  ] as [UseFilter, string][]
+                ).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {t('filter.usePrefix', { v: label })}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select
+              className="sel"
+              value={sort}
+              onChange={(e) => setParam('sort', e.target.value === 'name' ? null : e.target.value)}
+              title={t('sort.title')}
+            >
+              {SORT_KEYS.map(([key, msgKey]) => (
+                <option key={key} value={key}>
+                  {t('sort.prefix', { v: t(msgKey) })}
+                </option>
+              ))}
+            </select>
+          </span>
         </div>
-      ) : (
-        <div className="empty">{t('list.empty')}</div>
-      )}
+        <div className="blk-tools">
+          <label className="search">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            >
+              <circle cx="7" cy="7" r="4.5" />
+              <path d="M10.5 10.5L14 14" />
+            </svg>
+            <input
+              placeholder={t(narrow ? 'act.searchShort' : 'act.search')}
+              value={q}
+              onChange={(e) => setParam('q', e.target.value || null)}
+            />
+          </label>
+          <span className="seg" title={t('view.title')}>
+            {VIEW_MODES.map((v) => (
+              <button
+                key={v}
+                className={by === v ? 'on' : ''}
+                onClick={() => setParam('by', v === 'source' ? null : v)}
+              >
+                {t(VIEW_LABEL[v])}
+              </button>
+            ))}
+          </span>
+        </div>
+        <div className="blk-body list">{body}</div>
+      </section>
     </div>
   );
 }

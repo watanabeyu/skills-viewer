@@ -29,8 +29,7 @@ const MAX_IMPORT_DEPTH = 4;
 
 /* 管理ポリシーの置き場(OS ごとの固定パス)。本文は返さず存在と概算だけ扱う */
 function managedPolicyPath(): string {
-  if (process.platform === 'darwin')
-    return '/Library/Application Support/ClaudeCode/CLAUDE.md';
+  if (process.platform === 'darwin') return '/Library/Application Support/ClaudeCode/CLAUDE.md';
   if (process.platform === 'win32') return 'C:\\Program Files\\ClaudeCode\\CLAUDE.md';
   return '/etc/claude-code/CLAUDE.md';
 }
@@ -145,7 +144,11 @@ function expandImports(
 }
 
 /* 1 ファイル分の読み取り。本文を返さない段(管理ポリシー)は withhold で切り替える */
-function readFile(fp: string, home: string, opts: { withhold?: boolean } = {}): ClaudeMdFile | null {
+function readFile(
+  fp: string,
+  home: string,
+  opts: { withhold?: boolean } = {},
+): ClaudeMdFile | null {
   const raw = readText(fp);
   if (raw === null) return null;
   const ownTokens = estimateTokens(raw);
@@ -188,7 +191,12 @@ function singleLayer(
  */
 function rulesLayer(root: string, home: string): ClaudeMdLayer {
   const dir = path.join(root, '.claude', 'rules');
-  const layer: ClaudeMdLayer = { kind: 'rules', label: path.join(dir, '*.md'), files: [], tokens: 0 };
+  const layer: ClaudeMdLayer = {
+    kind: 'rules',
+    label: path.join(dir, '*.md'),
+    files: [],
+    tokens: 0,
+  };
   let names: string[];
   try {
     names = fs
@@ -217,7 +225,12 @@ function rulesLayer(root: string, home: string): ClaudeMdLayer {
  * git 管理外なら 1 つ上だけ見る(どこまでも遡ると無関係な親の CLAUDE.md を拾う)。
  */
 function parentLayer(root: string, home: string): ClaudeMdLayer {
-  const layer: ClaudeMdLayer = { kind: 'parent', label: path.join(path.dirname(root), 'CLAUDE.md'), files: [], tokens: 0 };
+  const layer: ClaudeMdLayer = {
+    kind: 'parent',
+    label: path.join(path.dirname(root), 'CLAUDE.md'),
+    files: [],
+    tokens: 0,
+  };
   const gitRoot = worktreeRootOf(root);
   const dirs: string[] = [];
   let cur = path.dirname(path.resolve(root));
@@ -267,7 +280,10 @@ export function claudeMdLayers(
 }
 
 /* 差分追跡(snapshot)へ渡す参照。遅延ロードの rules も「変わったら知りたい」ので含める */
-export function claudeMdRefs(scan: ClaudeMdScan, home = os.homedir()): {
+export function claudeMdRefs(
+  scan: ClaudeMdScan,
+  home = os.homedir(),
+): {
   path: string;
   exists: boolean;
   name?: string;

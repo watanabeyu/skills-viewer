@@ -1,10 +1,15 @@
 import type {
+  ChangeEntry,
+  ClaudeMdScan,
   FeedbackBodyPlan,
+  ItemKind,
   MemorySection,
   MemoryVerdict,
   Section,
   SkillGroup,
   SkillItem,
+  SkillsData,
+  SnapshotChanges,
   Source,
 } from './api';
 import { itemKey } from './api';
@@ -27,8 +32,70 @@ export const SRC_TINT: Record<Source, string> = {
 
 export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
 
-/* 一覧の表示軸: ソース別(置き場所)/ 用途別(AI グルーピング)/ メモリ(自動メモリのみ)/ フラット */
-export type ViewMode = 'source' | 'group' | 'memory' | 'flat';
+/*
+ * 「すべてのプロジェクト」の並び: 出所別 / 用途別(AI グルーピング)/ 1 列。
+ * v0.8 までの表示軸(source / group / memory / flat)はホームの 3 ブロック化で廃止し、
+ * 全プロジェクトビューの並びに格下げした(README 6.4)。memory は /memory の別画面。
+ */
+export type ViewMode = 'source' | 'group' | 'flat';
+export const VIEW_MODES: ViewMode[] = ['source', 'group', 'flat'];
+export const asViewMode = (v: string | null): ViewMode =>
+  v === 'group' || v === 'flat' ? v : 'source';
+
+/*
+ * ?project= の解決結果。'all' は全プロジェクト、Section は選ばれた project セクション、
+ * null は「cwd のプロジェクトにアイテムが無い」(セクション自体が無いので id も無い。
+ * 省略時の既定なので URL には何も書かない)。
+ */
+export type ProjectSel = 'all' | Section | null;
+
+/* cwd のプロジェクトのセクション(アイテム 0 件なら無い) */
+export const currentSection = (sections: Section[]): Section | null =>
+  sections.find((s) => s.source === 'project' && s.isCurrent) || null;
+
+/*
+ * ?project= の読み取り。未知の id(登録から消えた・アイテム 0 件になったプロジェクト)は
+ * cwd に落とす(設計判断 13: id は安定だが、指す先が無くなることはある)。
+ * 'user' は「プロジェクトを持たないホーム」で、cwd にセクションが無いときと同じ扱い。
+ */
+export function resolveProject(param: string | null, sections: Section[]): ProjectSel {
+  if (param === 'all') return 'all';
+  if (param && param !== 'user') {
+    const hit = sections.find((s) => s.source === 'project' && s.id === param);
+    if (hit) return hit;
+  }
+  return currentSection(sections);
+}
+
+/*
+ * v0.8 までの共有 URL の互換。旧キーは読んで新キーへ写し、旧キーは消す(書き戻さない)。
+ *   view=group / flat, grouped=0 → project=all&by=…(全プロジェクトの並びに格下げ)
+ *   view=source                  → 既定なので消すだけ
+ *   view=memory                  → memory 一覧は /memory の別画面(呼び出し側が遷移する)
+ *   unused=1                     → use=unused
+ * 旧キーが 1 つも無ければ null(何もしない)。
+ */
+export function migrateLegacyParams(
+  params: URLSearchParams,
+): { params: URLSearchParams; memory: boolean } | null {
+  const view = params.get('view');
+  const grouped = params.get('grouped');
+  const unused = params.get('unused');
+  if (view === null && grouped === null && unused === null) return null;
+  const next = new URLSearchParams(params);
+  next.delete('view');
+  next.delete('grouped');
+  next.delete('unused');
+  if (view === 'group' || view === 'flat') {
+    next.set('project', 'all');
+    next.set('by', view);
+  } else if (grouped === '0' && view !== 'source') {
+    next.set('project', 'all');
+    next.set('by', 'flat');
+  }
+  if (unused === '1' && !next.get('use')) next.set('use', 'unused');
+  return { params: next, memory: view === 'memory' };
+}
 
 /* memory セクションのアクセント色(skill の SRC_COLOR に相当)。専用 hue は持たず副文色(design-system 0.2) */
 export const MEM_COLOR = 'var(--sub)';
@@ -440,10 +507,9 @@ export function skewedVerdict(items: SkillItem[]): MemoryVerdict | null {
   return top[1] / verdicts.length >= 0.8 ? top[0] : null;
 }
 
-/* memory 一覧(view=memory)へ戻る URL。詳細のタブ状態は持ち越さない(次のカードが本文タブで開くのを防ぐ) */
+/* memory 一覧(/memory)へ戻る URL の query。詳細のタブ状態は持ち越さない(次のカードが本文タブで開くのを防ぐ) */
 export function memoryListSearch(params: URLSearchParams): string {
   const next = new URLSearchParams(params);
-  next.set('view', 'memory');
   next.delete('tab');
   return next.toString();
 }
@@ -501,4 +567,192 @@ export function sortItems<T extends SkillItem>(items: T[], sort: SortKey): T[] {
   else if (sort === 'tokens') arr.sort((a, b) => (b.tokens || 0) - (a.tokens || 0) || byName(a, b));
   else arr.sort(byName);
   return arr;
+}
+
+/* ---- ホーム(計画 15 Phase D): 変化の行・セッションの文脈 ---- */
+
+/* 変化の記号(design-system 0.3)。add = +、mod = ~、del = − */
+export type ChangeMark = 'add' | 'mod' | 'del';
+export const MARK_CHAR: Record<ChangeMark, string> = { add: '+', mod: '~', del: '−' };
+
+/*
+ * 一覧の行に添える変化の記号。差分の識別子は kind + path(snapshot と同じ)。
+ * 消えたものは一覧に存在しないので add / mod だけが返る。
+ */
+export function changeMarkOf(
+  it: { kind: ItemKind; path: string },
+  changes: SnapshotChanges | null,
+): 'add' | 'mod' | null {
+  if (!changes || !it.path) return null;
+  const same = (e: ChangeEntry) => e.kind === it.kind && e.path === it.path;
+  if (changes.added.some(same)) return 'add';
+  if (changes.updated.some(same)) return 'mod';
+  return null;
+}
+
+/* ホーム ① の 1 行。ChangeEntry に、一覧側から引ける事実(説明・発動・更新日・出所の名前)を添える */
+export interface ChangeRow {
+  mark: ChangeMark;
+  entry: ChangeEntry;
+  /* 対応する現在のアイテム(消えたものと CLAUDE.md には無い) */
+  item?: SkillItem;
+  /* 出所チップの文言(project はプロジェクト名) */
+  scopeLabel: string;
+  /* project 出所のとき、その項目が属するプロジェクトのセクション(逆引きできなければ undefined) */
+  section?: Section;
+  /* 表示用の日時(git の author date。無ければファイルの更新日) */
+  when?: number;
+}
+
+const isUnder = (p: string, dir: string) =>
+  !!dir && (p === dir || p.startsWith(dir.endsWith('/') ? dir : dir + '/'));
+
+/*
+ * 変化 1 件がどのプロジェクトのものかを逆引きする。skill / CLAUDE.md はパスがプロジェクト配下、
+ * memory は ~/.claude/projects/<slug>/memory 配下なので MemorySection.projectPath 経由で引く。
+ */
+function projectOfChange(e: ChangeEntry, data: SkillsData): Section | undefined {
+  const projects = data.sections.filter((s) => s.source === 'project');
+  if (e.kind === 'memory') {
+    const sec = (data.memory || []).find((m) => m.items.some((it) => it.path === e.path));
+    return sec?.projectPath ? projects.find((p) => p.note === sec.projectPath) : undefined;
+  }
+  // 入れ子のプロジェクト(親と子が両方登録)は最長一致で子に寄せる
+  return projects
+    .filter((p) => isUnder(e.path, p.note))
+    .sort((a, b) => b.note.length - a.note.length)[0];
+}
+
+function itemOfChange(e: ChangeEntry, data: SkillsData): SkillItem | undefined {
+  if (e.kind === 'claude-md') return undefined;
+  if (e.kind === 'memory')
+    return (data.memory || []).flatMap((m) => m.items).find((it) => it.path === e.path);
+  return data.sections
+    .flatMap((s) => s.items)
+    .find((it) => it.path === e.path && it.kind === e.kind);
+}
+
+/*
+ * ① の行を組む。順は 増えた → 変わった → 消えた(記号の強さの順。0.3)。
+ * project は、指定があればそのプロジェクトのものだけに絞る(user / plugin はどのプロジェクトの
+ * セッションにも効くので常に残す)。'all' は絞らない。
+ */
+export function changeRows(data: SkillsData, project: ProjectSel): ChangeRow[] {
+  const ch = data.changes;
+  if (!ch) return [];
+  const build = (mark: ChangeMark, entries: ChangeEntry[]): ChangeRow[] =>
+    entries.map((entry) => {
+      const item = itemOfChange(entry, data);
+      const section = entry.source === 'project' ? projectOfChange(entry, data) : undefined;
+      const authored = entry.authoredAt ? Date.parse(entry.authoredAt) : NaN;
+      return {
+        mark,
+        entry,
+        item,
+        section,
+        scopeLabel: entry.source === 'project' ? section?.projectName || 'project' : entry.source,
+        when: Number.isFinite(authored) ? authored : item?.updatedAt || undefined,
+      };
+    });
+  const rows = [
+    ...build('add', ch.added),
+    ...build('mod', ch.updated),
+    ...build('del', ch.removed),
+  ];
+  if (project === 'all') return rows;
+  return rows.filter(
+    (r) => r.entry.source !== 'project' || (project !== null && r.section?.id === project.id),
+  );
+}
+
+/* 変化のあるプロジェクトの数(全プロジェクトの見出し「n 件 · m プロジェクト」用) */
+export const changedProjectCount = (rows: ChangeRow[]) =>
+  new Set(rows.filter((r) => r.section).map((r) => r.section!.id)).size;
+
+/* 相対日(誰が・いつ)。当日 / 昨日 / n 日前。日付そのものより新しさが要る場面用 */
+export function relTimeLabel(ms?: number): string {
+  if (!ms) return '';
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  if (days <= 0) return t('time.today');
+  if (days === 1) return t('time.yesterday');
+  return t('time.daysAgo', { n: days });
+}
+
+/* ホーム ② の 1 行。limit が null の行(CLAUDE.md 群)にはバーを出さない(0.5) */
+export interface ContextRow {
+  key: 'claudeMd' | 'memory' | 'descriptions';
+  tok: number;
+  /* 0..1 の比(上限のある行だけ)。1 超は超過 */
+  ratio: number | null;
+  over: boolean;
+}
+
+/*
+ * ② の内訳。memory が無い(索引の行が 0)なら MEMORY.md の行を出さない(README 6.3)。
+ * 合計は 3 内訳の和で、viewer から見えないもの(システムプロンプト・MCP・hook の出力)は含まない。
+ */
+export function contextRows(data: SkillsData): ContextRow[] {
+  const c = data.context;
+  const rows: ContextRow[] = [{ key: 'claudeMd', tok: c.claudeMd.tok, ratio: null, over: false }];
+  if (c.memoryIndex.lines > 0) {
+    rows.push({
+      key: 'memory',
+      tok: c.memoryIndex.tok,
+      ratio: c.memoryIndex.lines / c.memoryIndex.limitLines,
+      over: c.memoryIndex.lines > c.memoryIndex.limitLines,
+    });
+  }
+  rows.push({
+    key: 'descriptions',
+    tok: c.descriptions.tok,
+    ratio: c.descriptions.limit > 0 ? c.descriptions.tok / c.descriptions.limit : null,
+    over: c.descriptions.tok > c.descriptions.limit,
+  });
+  return rows;
+}
+
+export const contextTotal = (rows: ContextRow[]) => rows.reduce((n, r) => n + r.tok, 0);
+
+/* CLAUDE.md 群の注記(user 1 件 · project なし · rules なし)に使う段ごとの件数 */
+export function claudeMdCounts(scan: ClaudeMdScan): {
+  user: number;
+  project: number;
+  rules: number;
+} {
+  const n = (kinds: string[]) =>
+    scan.layers.filter((l) => kinds.includes(l.kind)).reduce((s, l) => s + l.files.length, 0);
+  return {
+    user: n(['user']),
+    project: n(['project', 'project-dot', 'local']),
+    rules: n(['rules']),
+  };
+}
+
+/*
+ * ③「効いているもの」の並び: 選んだプロジェクト → user → plugin → built-in。
+ * 他プロジェクトのセクションはこのセッションには効かないので含めない。
+ */
+export function sessionSections(sections: Section[], project: Section | null): Section[] {
+  return [...(project ? [project] : []), ...sections.filter((s) => s.source !== 'project')];
+}
+
+/* セクション(フィルタ前)の毎セッション注入トークン合計 */
+export const sectionTokens = (s: Section) => s.items.reduce((n, it) => n + (it.tokens || 0), 0);
+
+/*
+ * 同名の別定義の組(全プロジェクトの見出し脇「同名 1 組(code-review: user / almoha-roadmap)」用)。
+ * short name で突き合わせ、hook は対象外(sameNameOthers と同じ規則)。
+ */
+export function duplicateNames(all: FlatItem[]): { name: string; scopes: string[] }[] {
+  const by = new Map<string, FlatItem[]>();
+  for (const it of all) {
+    if (it.kind === 'hook') continue;
+    const short = it.name.split(':').pop() || it.name;
+    if (!by.has(short)) by.set(short, []);
+    by.get(short)!.push(it);
+  }
+  return [...by]
+    .filter(([, items]) => items.length > 1)
+    .map(([name, items]) => ({ name, scopes: items.map((it) => it.scopeLabel) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

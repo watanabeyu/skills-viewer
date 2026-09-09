@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   fetchSkills,
   fetchSummaryStatus,
@@ -10,38 +10,31 @@ import {
   type SkillsData,
 } from './api';
 import {
+  asViewMode,
   flatten,
-  kindMatches,
-  matches,
-  refMatches,
-  usageMatches,
+  migrateLegacyParams,
+  resolveProject,
   type FlatItem,
   type KindFilter,
   type MemorySortKey,
   type RefFilter,
   type SortKey,
   type UseFilter,
-  type ViewMode,
 } from './util';
 import { GridView } from './components/GridView';
+import { Home } from './components/Home';
 import { MemoryGrid } from './components/MemoryGrid';
 import { DetailView, clearMdCache } from './components/DetailView';
 import { MemoryDetail } from './components/MemoryDetail';
 import { MemoryTriageView } from './components/MemoryTriageView';
-import { ChangesBanner } from './components/ChangesBanner';
+import { ProjectSwitcher } from './components/ProjectSwitcher';
 import { SettingsModal } from './components/SettingsModal';
 import { AiMenu } from './components/AiMenu';
 import { InlineError, InlineNote } from './components/Inline';
 import { getLang, setLang, t, type Lang, type MsgKey } from './i18n';
 
 /* ラベルは言語切替に追従させるため、キーだけ持ってレンダー時に t() で引く */
-const SORT_KEYS: [SortKey, MsgKey][] = [
-  ['name', 'sort.name'],
-  ['uses', 'sort.uses'],
-  ['recent', 'sort.recent'],
-  ['updated', 'sort.updated'],
-  ['tokens', 'sort.tokens'],
-];
+const SORT_KEYS: SortKey[] = ['name', 'uses', 'recent', 'updated', 'tokens'];
 
 /*
  * memory 軸の並び順。URL パラメータは skill 軸の sort と分けて msort に置く
@@ -54,25 +47,17 @@ const MEM_SORT_KEYS: [MemorySortKey, MsgKey][] = [
   ['name', 'sort.name'],
 ];
 
-const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
-
-const VIEW_MODES: [ViewMode, MsgKey][] = [
-  ['source', 'view.source'],
-  ['group', 'view.group'],
-  ['memory', 'view.memory'],
-  ['flat', 'view.flat'],
-];
-
 export default function App() {
   const [data, setData] = useState<SkillsData | null>(null);
   const [error, setError] = useState('');
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const q = (params.get('q') || '').toLowerCase();
   // 未知の値(他軸の並び順が混ざった共有 URL 等)は select の空欄を避けるため既定に落とす
   const sortParam = params.get('sort');
-  const sort: SortKey = SORT_KEYS.some(([k]) => k === sortParam) ? (sortParam as SortKey) : 'name';
+  const sort: SortKey = SORT_KEYS.includes(sortParam as SortKey) ? (sortParam as SortKey) : 'name';
   const msortParam = params.get('msort');
   const memSort: MemorySortKey = MEM_SORT_KEYS.some(([k]) => k === msortParam)
     ? (msortParam as MemorySortKey)
@@ -80,17 +65,29 @@ export default function App() {
   const refParam = params.get('ref');
   // URL パラメータ名は ref のまま。変数・prop 名だけ React の予約 prop 名を避ける
   const refFilter: RefFilter = refParam === 'read' || refParam === 'unread' ? refParam : 'all';
-  // v0.5.0 までの共有 URL(grouped=0)はフラット表示として解釈する
-  const view = (params.get('view') ||
-    (params.get('grouped') === '0' ? 'flat' : 'source')) as ViewMode;
   const kind = (params.get('kind') || 'all') as KindFilter;
-  // v0.3.0 の共有 URL(unused=1)も unused 扱いで解釈する
-  const use = (params.get('use') || (params.get('unused') === '1' ? 'unused' : 'all')) as UseFilter;
+  const use = (params.get('use') || 'all') as UseFilter;
+  /* ?project=<Section.id | all>。省略時は cwd のプロジェクト(設計判断 13) */
+  const projectParam = params.get('project');
+  /* 「すべてのプロジェクト」の並び(出所別 / 用途別 / 1 列)。v0.8 の view の後継 */
+  const by = asViewMode(params.get('by'));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lang, setLangState] = useState<Lang>(getLang());
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
+
+  /*
+   * v0.8 までの共有 URL(view / grouped / unused)は読み取って新クエリへ写し替え、旧キーは消す。
+   * view=memory はホームの軸ではなく /memory の別画面になったので遷移で受ける。
+   */
+  useEffect(() => {
+    const m = migrateLegacyParams(params);
+    if (!m) return;
+    if (m.memory && location.pathname === '/')
+      navigate({ pathname: '/memory', search: m.params.toString() }, { replace: true });
+    else setParams(m.params, { replace: true });
+  }, [params, setParams, navigate, location.pathname]);
 
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
@@ -124,44 +121,28 @@ export default function App() {
   }, [reload]);
 
   const all: FlatItem[] = useMemo(() => (data ? flatten(data.sections) : []), [data]);
-  const memory = useMemo(() => data?.memory || [], [data]);
-  const memoryCount = memory.reduce((n, s) => n + s.items.length, 0);
-  /* 参照フィルタはトランスクリプトのあるプロジェクトが 1 つも無ければ意味が無いので出さない */
-  const refAvailable = memory.some((s) => s.usageAvailable);
-  const shownCount = useMemo(() => {
-    if (view === 'memory')
-      return memory.reduce(
-        (n, s) =>
-          n +
-          s.items.filter((it) => matches(it, q) && refMatches(it, refFilter, s.usageAvailable))
-            .length,
-        0,
-      );
-    return all.filter(
-      (it) =>
-        kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, !!data?.usageAvailable),
-    ).length;
-  }, [all, memory, view, q, kind, use, refFilter, data]);
-
-  /* 現在プロジェクトでの1セッションに注入される分(built-in + plugin + user + current project) */
-  const sessionTokens = useMemo(() => {
-    if (!data) return 0;
-    return data.sections
-      .filter((s) => s.source !== 'project' || s.isCurrent)
-      .flatMap((s) => s.items)
-      .reduce((sum, it) => sum + (it.tokens || 0), 0);
-  }, [data]);
+  const project = useMemo(
+    () => (data ? resolveProject(projectParam, data.sections) : null),
+    [data, projectParam],
+  );
+  /* 未知の id(登録から消えた・アイテム 0 件になったプロジェクト)は cwd に落とし、URL からも消す */
+  useEffect(() => {
+    if (!data || !projectParam || projectParam === 'all') return;
+    if (project === 'all' || project?.id === projectParam) return;
+    setParam('project', null);
+    // setParam は params から都度作る関数なので依存に入れない(入れると毎レンダー再登録される)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, projectParam, project]);
 
   const openSkill = (key: string) => {
-    // memory 軸のまま skill 詳細に入ると DetailView の「← 一覧」が memory 一覧に戻ってしまうので
-    // (What's Changed バナー経由で起きる)、view を落として skill 側の一覧に戻す
-    const next = new URLSearchParams(params);
-    if (view === 'memory') next.delete('view');
-    navigate({ pathname: '/skills/' + toId(key), search: next.toString() });
+    navigate({ pathname: '/skills/' + toId(key), search: params.toString() });
   };
   /* memory は同名の別定義が無いので、識別子はファイルパスだけで足りる */
   const openMemory = (path: string) => {
     navigate({ pathname: '/memory/' + toId(path), search: params.toString() });
+  };
+  const openMemoryList = () => {
+    navigate({ pathname: '/memory', search: params.toString() });
   };
   /* 棚卸し診断はプロジェクト単位(id = MemorySection.id = エンコード済みディレクトリ名) */
   const openTriage = (id: string) => {
@@ -255,188 +236,114 @@ export default function App() {
       </div>
     );
 
+  /* memory 一覧のツールバー(検索 / 並び / 参照)。v0.8 のヘッダーにあったものを /memory へ移した。Phase F で組み替える */
+  const memory = data?.memory || [];
+  const refAvailable = memory.some((s) => s.usageAvailable);
+  const memoryToolbar = (
+    <div className="mem-tools">
+      <h2>{t('memory.listTitle')}</h2>
+      <input
+        className="q"
+        placeholder={t('memory.searchPlaceholder')}
+        value={params.get('q') || ''}
+        onChange={(e) => setParam('q', e.target.value || null)}
+      />
+      <select
+        className="sel"
+        value={memSort}
+        onChange={(e) => setParam('msort', e.target.value === 'index' ? null : e.target.value)}
+        title={t('sort.title')}
+      >
+        {MEM_SORT_KEYS.map(([key, msgKey]) => (
+          <option key={key} value={key}>
+            {t(msgKey)}
+          </option>
+        ))}
+      </select>
+      {refAvailable && (
+        <select
+          className={'sel' + (refFilter !== 'all' ? ' on' : '')}
+          value={refFilter}
+          title={t('filter.refTitle')}
+          onChange={(e) => setParam('ref', e.target.value === 'all' ? null : e.target.value)}
+        >
+          {(
+            [
+              ['all', t('kind.all')],
+              ['read', t('filter.refRead')],
+              ['unread', t('filter.refUnread')],
+            ] as [RefFilter, string][]
+          ).map(([key, label]) => (
+            <option key={key} value={key}>
+              {t('filter.refPrefix', { v: label })}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+
   return (
-    <div className="wrap">
-      <div className="hd">
-        <div className="t-row">
-          <h1>
-            <Link to={{ pathname: '/', search: params.toString() }}>Skills Viewer</Link>
-          </h1>
-          <span className="sub">{t('app.subtitle')}</span>
-          <span className="count">
-            {data ? t('app.count', { shown: shownCount, total: all.length + memoryCount }) : '…'}
+    <div className="app">
+      {/* ヘッダーは「Skills Viewer / プロジェクト切替 / 設定」だけ(design-system 1.1) */}
+      <header className="appbar">
+        <h1>
+          <Link to={{ pathname: '/', search: params.toString() }}>Skills Viewer</Link>
+        </h1>
+        {data && (
+          <ProjectSwitcher
+            data={data}
+            project={project}
+            onSelect={(id) => {
+              const next = new URLSearchParams(params);
+              if (id === null) next.delete('project');
+              else next.set('project', id);
+              if (id !== 'all') next.delete('by');
+              navigate({ pathname: '/', search: next.toString() });
+            }}
+          />
+        )}
+        {data && project === 'all' && (
+          <span className="meta">
+            {t('proj.allSub', {
+              n: data.sections.filter((s) => s.source === 'project').length,
+            })}
           </span>
-          {sessionTokens > 0 && (
-            <span className="count tok-total" title={t('app.tokensTitle')}>
-              {t('app.tokens', { n: sessionTokens.toLocaleString() })}
-            </span>
-          )}
-        </div>
-        <input
-          className="q"
-          placeholder={t(view === 'memory' ? 'memory.searchPlaceholder' : 'app.searchPlaceholder')}
-          value={params.get('q') || ''}
-          onChange={(e) => setParam('q', e.target.value || null)}
-        />
-        <div className="controls">
-          <span className="seg" title={t('view.title')}>
-            {VIEW_MODES.map(([key, msgKey]) => (
-              <button
-                key={key}
-                className={view === key ? 'on' : ''}
-                onClick={() => {
-                  // 旧パラメータ(grouped=0)は新パラメータ設定時に掃除する
-                  const next = new URLSearchParams(params);
-                  next.delete('grouped');
-                  if (key === 'source') next.delete('view');
-                  else next.set('view', key);
-                  setParams(next, { replace: true });
-                }}
-              >
-                {t(msgKey)}
-              </button>
-            ))}
-          </span>
-          {view === 'memory' ? (
-            <>
-              <select
-                className="sel"
-                value={memSort}
-                onChange={(e) =>
-                  setParam('msort', e.target.value === 'index' ? null : e.target.value)
-                }
-                title={t('sort.title')}
-              >
-                {MEM_SORT_KEYS.map(([key, msgKey]) => (
-                  <option key={key} value={key}>
-                    {t(msgKey)}
-                  </option>
-                ))}
-              </select>
-              {/* memory 軸では種類は memory 固定(選択肢は 1 つ)。適用中と分かるよう on 強調 */}
-              <select className="sel on" defaultValue="memory">
-                <option value="memory">{t('filter.kindPrefix', { v: 'memory' })}</option>
-              </select>
-              {refAvailable && (
-                <select
-                  className={'sel' + (refFilter !== 'all' ? ' on' : '')}
-                  value={refFilter}
-                  title={t('filter.refTitle')}
-                  onChange={(e) =>
-                    setParam('ref', e.target.value === 'all' ? null : e.target.value)
-                  }
-                >
-                  {(
-                    [
-                      ['all', t('kind.all')],
-                      ['read', t('filter.refRead')],
-                      ['unread', t('filter.refUnread')],
-                    ] as [RefFilter, string][]
-                  ).map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {t('filter.refPrefix', { v: label })}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </>
-          ) : (
-            <>
-              <select
-                className="sel"
-                value={sort}
-                onChange={(e) =>
-                  setParam('sort', e.target.value === 'name' ? null : e.target.value)
-                }
-                title={t('sort.title')}
-              >
-                {SORT_KEYS.map(([key, msgKey]) => (
-                  <option key={key} value={key}>
-                    {t(msgKey)}
-                  </option>
-                ))}
-              </select>
-              {/* kind / 使用実績はボタン群だと場所を取るので、並び順と同じ select に統一 */}
-              <select
-                className={'sel' + (kind !== 'all' ? ' on' : '')}
-                value={kind}
-                onChange={(e) => setParam('kind', e.target.value === 'all' ? null : e.target.value)}
-              >
-                {KIND_FILTERS.map((key) => (
-                  <option key={key} value={key}>
-                    {t('filter.kindPrefix', { v: key === 'all' ? t('kind.all') : key })}
-                  </option>
-                ))}
-              </select>
-              {data?.usageAvailable && (
-                <select
-                  className={'sel' + (use !== 'all' ? ' on' : '')}
-                  value={use}
-                  title={t('filter.unusedTitle')}
-                  onChange={(e) => {
-                    // 旧パラメータ(unused=1)は新パラメータ設定時に掃除する
-                    const next = new URLSearchParams(params);
-                    next.delete('unused');
-                    if (e.target.value === 'all') next.delete('use');
-                    else next.set('use', e.target.value);
-                    setParams(next, { replace: true });
-                  }}
-                >
-                  {(
-                    [
-                      ['all', t('kind.all')],
-                      ['used', t('filter.used')],
-                      ['unused', t('filter.unused')],
-                    ] as [UseFilter, string][]
-                  ).map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {t('filter.usePrefix', { v: label })}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </>
-          )}
-          <span className="controls-r">
-            {/* claude CLI 不在は起動時に 1 回だけ検出する。押せない理由をボタン脇に出す */}
-            {data && !data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
-            <InlineError msg={aiError} />
-            <span style={{ position: 'relative' }}>
-              <button
-                className="chip"
-                disabled={!!data && !data.aiAvailable}
-                onClick={() => setAiMenuOpen((v) => !v)}
-                title={t('ai.menuTitle')}
-              >
-                {t('ai.menu')}
-                {aiBusy || groupBusy
-                  ? ' …'
-                  : data && data.aiStale > 0
-                    ? ` (${data.aiStale})`
-                    : ''}{' '}
-                ▾
-              </button>
-              {aiMenuOpen && (
-                <AiMenu
-                  summaryLabel={aiBusy ? aiLabel || t('ai.button') : idleAiLabel}
-                  summaryBusy={aiBusy}
-                  onSummarize={onAiClick}
-                  groupLabel={data?.groups?.length ? t('group.menuRegen') : t('group.menuGenerate')}
-                  groupBusy={groupBusy}
-                  groupStale={!!data?.groupsStale}
-                  onGroups={onGroupGen}
-                  memoryCurrentId={data?.memory?.find((s) => s.isCurrent)?.id}
-                  onTriage={openTriage}
-                  onClose={() => setAiMenuOpen(false)}
-                />
-              )}
-            </span>
-            <button className="chip" onClick={() => setSettingsOpen(true)}>
-              {t('app.settings')}
+        )}
+        <span className="appbar-r">
+          {/* claude CLI 不在は起動時に 1 回だけ検出する。押せない理由をボタン脇に出す */}
+          {data && !data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
+          <InlineError msg={aiError} />
+          <span style={{ position: 'relative' }}>
+            <button
+              className="btn"
+              disabled={!!data && !data.aiAvailable}
+              onClick={() => setAiMenuOpen((v) => !v)}
+              title={t('ai.menuTitle')}
+            >
+              {t('ai.menu')}
+              {aiBusy || groupBusy ? ' …' : data && data.aiStale > 0 ? ` (${data.aiStale})` : ''} ▾
             </button>
+            {aiMenuOpen && (
+              <AiMenu
+                summaryLabel={aiBusy ? aiLabel || t('ai.button') : idleAiLabel}
+                summaryBusy={aiBusy}
+                onSummarize={onAiClick}
+                groupLabel={data?.groups?.length ? t('group.menuRegen') : t('group.menuGenerate')}
+                groupBusy={groupBusy}
+                groupStale={!!data?.groupsStale}
+                onGroups={onGroupGen}
+                memoryCurrentId={data?.memory?.find((s) => s.isCurrent)?.id}
+                onTriage={openTriage}
+                onClose={() => setAiMenuOpen(false)}
+              />
+            )}
           </span>
-        </div>
-      </div>
+          <button className="btn quiet" onClick={() => setSettingsOpen(true)}>
+            {t('app.settings')}
+          </button>
+        </span>
+      </header>
       {settingsOpen && (
         <SettingsModal
           lang={lang}
@@ -444,69 +351,94 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
         />
       )}
-      {data?.changes && <ChangesBanner changes={data.changes} onOpen={openSkill} reload={reload} />}
       {data && (
-        <Routes>
-          <Route
-            path="/"
-            element={
-              view === 'memory' ? (
-                <MemoryGrid
+        <main className="wrap">
+          <Routes>
+            <Route
+              path="/"
+              element={
+                project === 'all' ? (
+                  <GridView
+                    data={data}
+                    q={q}
+                    sort={sort}
+                    by={by}
+                    kind={kind}
+                    use={use}
+                    onOpen={openSkill}
+                    onOpenMemory={openMemory}
+                    setParam={setParam}
+                    reload={reload}
+                  />
+                ) : (
+                  <Home
+                    data={data}
+                    project={project}
+                    q={q}
+                    sort={sort}
+                    kind={kind}
+                    use={use}
+                    onOpen={openSkill}
+                    onOpenMemory={openMemory}
+                    onOpenMemoryList={openMemoryList}
+                    setParam={setParam}
+                    reload={reload}
+                  />
+                )
+              }
+            />
+            <Route
+              path="/skills/:id"
+              element={
+                <DetailView
                   data={data}
-                  q={q}
-                  sort={memSort}
-                  refFilter={refFilter}
-                  onOpen={openMemory}
-                  onOpenTriage={openTriage}
-                />
-              ) : (
-                <GridView
-                  data={data}
+                  all={all}
                   q={q}
                   sort={sort}
-                  view={view}
+                  view={project === 'all' ? by : 'source'}
                   kind={kind}
                   use={use}
                   onOpen={openSkill}
                   reload={reload}
                 />
-              )
-            }
-          />
-          <Route
-            path="/skills/:id"
-            element={
-              <DetailView
-                data={data}
-                all={all}
-                q={q}
-                sort={sort}
-                view={view}
-                kind={kind}
-                use={use}
-                onOpen={openSkill}
-                reload={reload}
-              />
-            }
-          />
-          {/* 棚卸し診断はプロジェクト単位の独立画面。:id より前に置いて誤マッチを避ける */}
-          <Route
-            path="/memory/triage/:project"
-            element={<MemoryTriageView data={data} reload={reload} />}
-          />
-          <Route
-            path="/memory/:id"
-            element={
-              <MemoryDetail
-                data={data}
-                q={q}
-                sort={memSort}
-                refFilter={refFilter}
-                reload={reload}
-              />
-            }
-          />
-        </Routes>
+              }
+            />
+            {/* memory 一覧(Phase F で組み替える。v0.8 の view=memory の後継) */}
+            <Route
+              path="/memory"
+              element={
+                <>
+                  {memoryToolbar}
+                  <MemoryGrid
+                    data={data}
+                    q={q}
+                    sort={memSort}
+                    refFilter={refFilter}
+                    onOpen={openMemory}
+                    onOpenTriage={openTriage}
+                  />
+                </>
+              }
+            />
+            {/* 棚卸し診断はプロジェクト単位の独立画面。:id より前に置いて誤マッチを避ける */}
+            <Route
+              path="/memory/triage/:project"
+              element={<MemoryTriageView data={data} reload={reload} />}
+            />
+            <Route
+              path="/memory/:id"
+              element={
+                <MemoryDetail
+                  data={data}
+                  q={q}
+                  sort={memSort}
+                  refFilter={refFilter}
+                  reload={reload}
+                />
+              }
+            />
+          </Routes>
+        </main>
       )}
     </div>
   );

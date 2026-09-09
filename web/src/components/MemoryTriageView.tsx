@@ -314,7 +314,10 @@ export function MemoryTriageView({
     <div className="triage-view">
       <div className="hd">
         <div className="t-row">
-          <button className="pbtn" onClick={() => navigate({ pathname: '/', search: listSearch })}>
+          <button
+            className="pbtn"
+            onClick={() => navigate({ pathname: '/memory', search: listSearch })}
+          >
             {t('memory.triage.back')}
           </button>
           <h1>{t('memory.triage.title', { project: sec.projectName })}</h1>

@@ -196,7 +196,10 @@ export function MemoryDetail({
       </div>
       <div className="pane">
         <div className="pane-top">
-          <button className="back" onClick={() => navigate({ pathname: '/', search: listSearch })}>
+          <button
+            className="back"
+            onClick={() => navigate({ pathname: '/memory', search: listSearch })}
+          >
             {t('memory.back')}
           </button>
           {/* memory は完全読み取り専用: 削除・コピーは置かない(変更は指示文経由で Claude Code に委ねる) */}

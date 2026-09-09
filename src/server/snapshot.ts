@@ -44,6 +44,12 @@ const SNAPSHOT_VERSION = 2;
 interface SnapshotFile {
   v: number;
   entries: Snapshot;
+  /*
+   * この基準を保存した時刻(ISO 8601)。ホーム ①(増えた・変わった)の
+   * 「いつ既読にしてから」の起点として web に返す。v2 で足したので、
+   * v2 のまま欠けている(この追加より前に保存された)ファイルもあり得る。
+   */
+  ackedAt?: string;
 }
 
 const SNAPSHOT_FILE = path.join(os.homedir(), '.cache', 'skills-viewer', 'snapshot.json');
@@ -111,12 +117,12 @@ export function buildSnapshot(
 }
 
 /* file はテスト注入用(実環境の ~/.cache を書き換えずに検証するため) */
-function loadSnapshot(file: string): Snapshot | null {
+function loadSnapshot(file: string): { entries: Snapshot; ackedAt?: string } | null {
   try {
     const parsed: SnapshotFile = JSON.parse(fs.readFileSync(file, 'utf8'));
     // v1(フラットなパスキー・source 無し)は比較できないので基準なしに落とす
     if (!parsed || parsed.v !== SNAPSHOT_VERSION || !parsed.entries) return null;
-    return parsed.entries;
+    return { entries: parsed.entries, ...(parsed.ackedAt ? { ackedAt: parsed.ackedAt } : {}) };
   } catch {
     return null;
   }
@@ -125,7 +131,11 @@ function loadSnapshot(file: string): Snapshot | null {
 function saveSnapshot(snap: Snapshot, file: string): void {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const out: SnapshotFile = { v: SNAPSHOT_VERSION, entries: snap };
+    const out: SnapshotFile = {
+      v: SNAPSHOT_VERSION,
+      entries: snap,
+      ackedAt: new Date().toISOString(),
+    };
     fs.writeFileSync(file, JSON.stringify(out, null, 1));
   } catch {
     /* キャッシュが書けなくても本体機能には影響させない */
@@ -211,10 +221,11 @@ export function computeChanges(
     saveSnapshot(cur, file);
     return null;
   }
-  const d = diffSnapshot(prev, cur);
+  const d = diffSnapshot(prev.entries, cur);
   if (!d.added.length && !d.updated.length && !d.removed.length) return null;
   attachGitAuthors(d);
-  return d;
+  // 「いつ既読にしてから」の起点。この追加より前に保存された基準には無いので省略する
+  return prev.ackedAt ? { ...d, since: prev.ackedAt } : d;
 }
 
 /* 「既読にする」: 現在の状態を新しい基準として保存する */

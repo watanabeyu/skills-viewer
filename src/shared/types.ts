@@ -354,6 +354,11 @@ export interface SnapshotChanges {
   added: ChangeEntry[];
   updated: ChangeEntry[];
   removed: ChangeEntry[];
+  /*
+   * この差分の起点(前回「既読にする」を押した時刻。ISO 8601)。
+   * ホーム ① の「いつ既読にしてから」に使う。起点を持たない古い基準では省略される。
+   */
+  since?: string;
 }
 
 export interface Section {
@@ -371,13 +376,7 @@ export interface Section {
 
 /* 注入順の段。managed は OS が配る管理ポリシー、project-dot は <project>/.claude/CLAUDE.md */
 export type ClaudeMdLayerKind =
-  | 'managed'
-  | 'user'
-  | 'project'
-  | 'project-dot'
-  | 'local'
-  | 'rules'
-  | 'parent';
+  'managed' | 'user' | 'project' | 'project-dot' | 'local' | 'rules' | 'parent';
 
 /* @import の展開結果。skipped が付いているものは中身を数えていない */
 export interface ClaudeMdImport {

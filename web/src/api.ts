@@ -6,6 +6,7 @@ import { loadAiModel } from './settings';
 
 export type {
   ChangeEntry,
+  ClaudeMdScan,
   FeedbackBodyPlan,
   ItemKind,
   Invocation,

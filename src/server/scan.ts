@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Lang, Section, SkillItem } from '../shared/types';
 import { estimateTokens, lintItem } from './lint';
+import { encodeProjectPath } from './usage';
 
 export const HOME = os.homedir();
 
@@ -412,6 +413,16 @@ function attachRefs(sections: Section[]): void {
   }
 }
 
+/*
+ * project セクションの id。URL(?project=<id>)に載せて共有・リロードをまたぐので、
+ * 配列の位置ではなくパスから決める(設計判断 13)。listProjects は毎リクエスト
+ * ~/.claude.json を読み直し、アイテム 0 件のプロジェクトを除いて並べ替えるため、
+ * 位置ベース('proj-' + index)だとプロジェクトの増減で指す先がずれる。
+ * エンコードは transcript のディレクトリ名・MemorySection.id と同じ規則。
+ */
+export const projectSectionId = (projectPath: string): string =>
+  'proj-' + encodeProjectPath(path.resolve(projectPath));
+
 /* 並び順: current プロジェクト → 他プロジェクト → user → plugin → built-in */
 export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
   const cwdResolved = path.resolve(cwd);
@@ -425,8 +436,8 @@ export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
     );
 
   const sections: Section[] = [
-    ...projects.map((p, i) => ({
-      id: 'proj-' + i,
+    ...projects.map((p) => ({
+      id: projectSectionId(p.path),
       source: 'project' as const,
       projectName: path.basename(p.path),
       isCurrent: p.current,

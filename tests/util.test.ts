@@ -20,8 +20,19 @@ import {
   usageMatches,
   buildFeedbackInstruction,
   effectiveInstruction,
+  changeMarkOf,
+  changeRows,
+  changedProjectCount,
+  claudeMdCounts,
+  contextRows,
+  contextTotal,
+  duplicateNames,
+  migrateLegacyParams,
+  resolveProject,
+  sessionSections,
   type FlatItem,
 } from '../web/src/util';
+import type { Section, SkillsData, SnapshotChanges } from '../src/shared/types';
 import { setLang, t } from '../web/src/i18n';
 import type { FeedbackBodyPlan } from '../src/shared/types';
 
@@ -405,10 +416,10 @@ describe('skewedVerdict (提案の偏り検知)', () => {
 });
 
 describe('memoryListSearch (memory 一覧へ戻る URL)', () => {
-  it('view=memory を立て、詳細のタブ状態は捨てる(他の条件は保つ)', () => {
-    const params = new URLSearchParams('q=foo&msort=body&tab=body&view=source');
+  it('詳細のタブ状態は捨てる(他の条件は保つ)。view は v0.9.0 で廃止したので立てない', () => {
+    const params = new URLSearchParams('q=foo&msort=body&tab=body');
     const next = new URLSearchParams(memoryListSearch(params));
-    expect(next.get('view')).toBe('memory');
+    expect(next.get('view')).toBeNull();
     expect(next.get('tab')).toBeNull();
     expect(next.get('q')).toBe('foo');
     expect(next.get('msort')).toBe('body');
@@ -549,5 +560,293 @@ describe('buildFeedbackInstruction / effectiveInstruction (テンプレート指
         },
       }),
     ).toBe('');
+  });
+});
+
+/* ---- ホーム(計画 15 Phase D) ---- */
+
+const secOf = (over: Partial<Section>): Section => ({
+  id: 'user',
+  source: 'user',
+  note: '/h/.claude',
+  items: [],
+  ...over,
+});
+const projA = secOf({
+  id: 'proj--w-alpha',
+  source: 'project',
+  projectName: 'alpha',
+  isCurrent: true,
+  note: '/w/alpha',
+  items: [base({ path: '/w/alpha/.claude/skills/foo/SKILL.md' })],
+});
+const projB = secOf({
+  id: 'proj--w-beta',
+  source: 'project',
+  projectName: 'beta',
+  note: '/w/beta',
+  items: [base({ name: 'bar', path: '/w/beta/.claude/skills/bar/SKILL.md' })],
+});
+const userSec = secOf({
+  items: [base({ name: 'foo', path: '/h/.claude/skills/foo/SKILL.md', tokens: 10 })],
+});
+const pluginSec = secOf({ id: 'plugin', source: 'plugin', note: '/h/.claude/plugins' });
+const builtinSec = secOf({ id: 'builtin', source: 'built-in', note: '' });
+const sections = [projA, projB, userSec, pluginSec, builtinSec];
+
+const dataOf = (over: Partial<SkillsData> = {}): SkillsData => ({
+  generatedAt: '',
+  cwd: '/w/alpha',
+  sections,
+  aiStale: 0,
+  aiAvailable: true,
+  usageAvailable: true,
+  changes: null,
+  claudeMd: { layers: [], tokens: 0 },
+  budget: { used: 0, limit: 2000, source: 'default' },
+  context: {
+    claudeMd: { tok: 1180 },
+    memoryIndex: { tok: 310, lines: 2, limitLines: 200, limitBytes: 25 * 1024 },
+    descriptions: { tok: 3370, count: 21, hiddenCount: 2, limit: 2000 },
+  },
+  ...over,
+});
+
+describe('resolveProject (?project= の解決。設計判断 13)', () => {
+  it('all はそのまま、既知の id はそのセクション', () => {
+    expect(resolveProject('all', sections)).toBe('all');
+    expect(resolveProject('proj--w-beta', sections)).toBe(projB);
+  });
+  it('省略・user・未知の id は cwd のプロジェクトに落とす', () => {
+    expect(resolveProject(null, sections)).toBe(projA);
+    expect(resolveProject('user', sections)).toBe(projA);
+    expect(resolveProject('proj-0', sections)).toBe(projA);
+    expect(resolveProject('proj--w-gone', sections)).toBe(projA);
+  });
+  it('cwd のプロジェクトにアイテムが無ければ null(セクション自体が無い)', () => {
+    expect(resolveProject(null, [userSec, pluginSec, builtinSec])).toBeNull();
+  });
+});
+
+describe('migrateLegacyParams (v0.8 の view / grouped / unused の互換)', () => {
+  it('旧キーが無ければ null(何もしない)', () => {
+    expect(migrateLegacyParams(new URLSearchParams('q=x&project=all'))).toBeNull();
+  });
+  it('view=group / flat は全プロジェクトの並びへ写し、旧キーは消す', () => {
+    const m = migrateLegacyParams(new URLSearchParams('view=group&q=x'))!;
+    expect(m.params.get('project')).toBe('all');
+    expect(m.params.get('by')).toBe('group');
+    expect(m.params.get('view')).toBeNull();
+    expect(m.params.get('q')).toBe('x');
+    expect(m.memory).toBe(false);
+    expect(migrateLegacyParams(new URLSearchParams('view=flat'))!.params.get('by')).toBe('flat');
+  });
+  it('view=source は既定なので消すだけ。view=memory は memory 画面への遷移を求める', () => {
+    const src = migrateLegacyParams(new URLSearchParams('view=source'))!;
+    expect(src.params.toString()).toBe('');
+    const mem = migrateLegacyParams(new URLSearchParams('view=memory&msort=body'))!;
+    expect(mem.memory).toBe(true);
+    expect(mem.params.get('view')).toBeNull();
+    expect(mem.params.get('msort')).toBe('body');
+  });
+  it('grouped=0(v0.5.0)はフラット、unused=1(v0.3.0)は use=unused', () => {
+    const g = migrateLegacyParams(new URLSearchParams('grouped=0'))!;
+    expect(g.params.get('project')).toBe('all');
+    expect(g.params.get('by')).toBe('flat');
+    expect(g.params.get('grouped')).toBeNull();
+    const u = migrateLegacyParams(new URLSearchParams('unused=1'))!;
+    expect(u.params.get('use')).toBe('unused');
+    expect(u.params.get('unused')).toBeNull();
+    // 新キーが既にあれば旧キーで上書きしない
+    expect(migrateLegacyParams(new URLSearchParams('unused=1&use=used'))!.params.get('use')).toBe(
+      'used',
+    );
+  });
+});
+
+describe('changeMarkOf / changeRows (① 増えた・変わった)', () => {
+  const changes: SnapshotChanges = {
+    added: [
+      {
+        name: 'foo',
+        kind: 'skill',
+        path: '/w/alpha/.claude/skills/foo/SKILL.md',
+        source: 'project',
+        author: 'tanaka',
+        authoredAt: '2026-09-06T00:00:00Z',
+      },
+      {
+        name: 'bar',
+        kind: 'skill',
+        path: '/w/beta/.claude/skills/bar/SKILL.md',
+        source: 'project',
+      },
+    ],
+    updated: [
+      { name: 'foo', kind: 'skill', path: '/h/.claude/skills/foo/SKILL.md', source: 'user' },
+    ],
+    removed: [{ name: 'old', kind: 'command', path: '/h/.claude/commands/old.md', source: 'user' }],
+  };
+
+  it('kind + path で突き合わせ、増えた = add / 変わった = mod。消えたものは一覧に無いので出ない', () => {
+    expect(changeMarkOf(projA.items[0], changes)).toBe('add');
+    expect(changeMarkOf(userSec.items[0], changes)).toBe('mod');
+    expect(changeMarkOf(base({ path: '/x/none.md' }), changes)).toBeNull();
+    expect(changeMarkOf(projA.items[0], null)).toBeNull();
+    // path が同じでも kind が違えば別物
+    expect(changeMarkOf(base({ kind: 'command', path: projA.items[0].path }), changes)).toBeNull();
+  });
+
+  it('順は 増えた → 変わった → 消えた。project の項目はプロジェクトへ逆引きされる', () => {
+    const rows = changeRows(dataOf({ changes }), 'all');
+    expect(rows.map((r) => r.mark)).toEqual(['add', 'add', 'mod', 'del']);
+    expect(rows[0].section).toBe(projA);
+    expect(rows[0].scopeLabel).toBe('alpha');
+    expect(rows[0].item).toBe(projA.items[0]);
+    expect(rows[0].when).toBe(Date.parse('2026-09-06T00:00:00Z'));
+    expect(rows[1].section).toBe(projB);
+    expect(rows[2].scopeLabel).toBe('user');
+    expect(rows[3].item).toBeUndefined();
+    expect(changedProjectCount(rows)).toBe(2);
+  });
+
+  it('プロジェクトを選ぶと、そのプロジェクトのものと user / plugin だけに絞る', () => {
+    const rows = changeRows(dataOf({ changes }), projA);
+    expect(rows.map((r) => r.entry.name)).toEqual(['foo', 'foo', 'old']);
+    expect(rows.map((r) => r.entry.source)).toEqual(['project', 'user', 'user']);
+  });
+
+  it('差分が無ければ空(① は「変化なし」の 1 行に畳む)', () => {
+    expect(changeRows(dataOf(), 'all')).toEqual([]);
+  });
+
+  it('memory の変化は MemorySection.projectPath 経由でプロジェクトを引く', () => {
+    const memChanges: SnapshotChanges = {
+      added: [
+        {
+          name: 'note',
+          kind: 'memory',
+          path: '/h/.claude/projects/-w-alpha/memory/note.md',
+          source: 'project',
+        },
+      ],
+      updated: [],
+      removed: [],
+    };
+    const memory: MemorySection[] = [
+      {
+        id: '-w-alpha',
+        projectPath: '/w/alpha',
+        projectName: 'alpha',
+        note: '/h/.claude/projects/-w-alpha/memory',
+        isCurrent: true,
+        usageAvailable: false,
+        indexTokens: 0,
+        items: [
+          base({
+            name: 'note',
+            kind: 'memory',
+            path: '/h/.claude/projects/-w-alpha/memory/note.md',
+          }),
+        ],
+      },
+    ];
+    const rows = changeRows(dataOf({ changes: memChanges, memory }), projA);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].section).toBe(projA);
+    expect(rows[0].item?.kind).toBe('memory');
+    // 別プロジェクトを選ぶと出ない
+    expect(changeRows(dataOf({ changes: memChanges, memory }), projB)).toHaveLength(0);
+  });
+});
+
+describe('contextRows (② セッションの文脈の分岐。README 6.3)', () => {
+  it('3 内訳。CLAUDE.md 群には上限(バー)が無く、description は 1% 予算との比で超過を判定', () => {
+    const rows = contextRows(dataOf());
+    expect(rows.map((r) => r.key)).toEqual(['claudeMd', 'memory', 'descriptions']);
+    expect(rows[0].ratio).toBeNull();
+    expect(rows[1].ratio).toBeCloseTo(2 / 200);
+    expect(rows[1].over).toBe(false);
+    expect(rows[2].ratio).toBeCloseTo(3370 / 2000);
+    expect(rows[2].over).toBe(true);
+    expect(contextTotal(rows)).toBe(1180 + 310 + 3370);
+  });
+  it('memory が無ければ MEMORY.md の行を出さない', () => {
+    const d = dataOf();
+    d.context.memoryIndex = { tok: 0, lines: 0, limitLines: 200, limitBytes: 25 * 1024 };
+    const rows = contextRows(d);
+    expect(rows.map((r) => r.key)).toEqual(['claudeMd', 'descriptions']);
+    expect(contextTotal(rows)).toBe(1180 + 3370);
+  });
+  it('claudeMdCounts は段ごとの件数(project は project / project-dot / local の和)', () => {
+    const f = (p: string) => ({
+      path: p,
+      ownTokens: 1,
+      tokens: 1,
+      updatedAt: '',
+      headings: [],
+      imports: [],
+    });
+    const n = claudeMdCounts({
+      tokens: 0,
+      layers: [
+        { kind: 'managed', label: '', files: [], tokens: 0 },
+        { kind: 'user', label: '', files: [f('/h/.claude/CLAUDE.md')], tokens: 0 },
+        { kind: 'project', label: '', files: [], tokens: 0 },
+        { kind: 'project-dot', label: '', files: [f('/w/a/.claude/CLAUDE.md')], tokens: 0 },
+        { kind: 'local', label: '', files: [f('/w/a/CLAUDE.local.md')], tokens: 0 },
+        { kind: 'rules', label: '', files: [], tokens: 0 },
+      ],
+    });
+    expect(n).toEqual({ user: 1, project: 2, rules: 0 });
+  });
+});
+
+describe('sessionSections / duplicateNames (③ 効いているもの・同名)', () => {
+  it('選んだプロジェクト → user → plugin → built-in。他プロジェクトは含めない', () => {
+    expect(sessionSections(sections, projA).map((s) => s.id)).toEqual([
+      'proj--w-alpha',
+      'user',
+      'plugin',
+      'builtin',
+    ]);
+    expect(sessionSections(sections, null).map((s) => s.id)).toEqual(['user', 'plugin', 'builtin']);
+  });
+  it('同名の別定義を short name でまとめ、置き場所を並べる', () => {
+    const all: FlatItem[] = [
+      {
+        ...projA.items[0],
+        key: 'a',
+        secId: projA.id,
+        source: 'project',
+        scopeLabel: 'alpha',
+        hasMd: true,
+      },
+      {
+        ...userSec.items[0],
+        key: 'u',
+        secId: 'user',
+        source: 'user',
+        scopeLabel: 'user',
+        hasMd: true,
+      },
+      {
+        ...projB.items[0],
+        key: 'b',
+        secId: projB.id,
+        source: 'project',
+        scopeLabel: 'beta',
+        hasMd: true,
+      },
+      {
+        ...base({ name: 'x:foo', kind: 'hook' }),
+        key: 'h',
+        secId: 'user',
+        source: 'user',
+        scopeLabel: 'user',
+        hasMd: false,
+      },
+    ];
+    expect(duplicateNames(all)).toEqual([{ name: 'foo', scopes: ['alpha', 'user'] }]);
   });
 });
