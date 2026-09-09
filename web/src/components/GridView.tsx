@@ -13,15 +13,12 @@ import {
   duplicateNames,
   flatten,
   groupByPurpose,
-  KIND_FILTERS,
   kindMatches,
   matches,
   scopeLabelOf,
   sectionTokens,
   sortItems,
   usageMatches,
-  USE_FILTERS,
-  labelOfUseFilter,
   VIEW_MODES,
   type FlatItem,
   type KindFilter,
@@ -32,15 +29,9 @@ import {
 import { t, type MsgKey } from '../i18n';
 import { InlineError, InlineNote } from './Inline';
 import { ChangesBlock } from './ChangesBlock';
-import { GroupHeading, ItemRow, GroupHead, TableHead, useNarrow } from './Rows';
+import { KindSelect, SearchBox, Seg, SortSelect, UseSelect } from './ListTools';
+import { GroupHeading, ItemRow, GroupHead, TableHead } from './Rows';
 
-const SORT_KEYS: [SortKey, MsgKey][] = [
-  ['name', 'sort.name'],
-  ['uses', 'sort.uses'],
-  ['recent', 'sort.recent'],
-  ['updated', 'sort.updated'],
-  ['tokens', 'sort.tokens'],
-];
 const VIEW_LABEL: Record<ViewMode, MsgKey> = {
   source: 'view.source',
   group: 'view.group',
@@ -181,7 +172,6 @@ export function GridView({
   setParam: (key: string, value: string | null) => void;
   reload: () => Promise<void>;
 }) {
-  const narrow = useNarrow();
   const usage = data.usageAvailable;
   const pass = (it: FlatItem) =>
     kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, usage);
@@ -315,75 +305,20 @@ export function GridView({
                 })}
           </span>
           <span className="hd-r">
-            <select
-              className={'sel' + (kind !== 'all' ? ' on' : '')}
-              value={kind}
-              onChange={(e) => setParam('kind', e.target.value === 'all' ? null : e.target.value)}
-            >
-              {KIND_FILTERS.map((key) => (
-                <option key={key} value={key}>
-                  {t('filter.kindPrefix', { v: key === 'all' ? t('kind.all') : key })}
-                </option>
-              ))}
-            </select>
-            {usage && (
-              <select
-                className={'sel' + (use !== 'all' ? ' on' : '')}
-                value={use}
-                title={t('filter.unusedTitle')}
-                onChange={(e) => setParam('use', e.target.value === 'all' ? null : e.target.value)}
-              >
-                {USE_FILTERS.map((key) => (
-                  <option key={key} value={key}>
-                    {t('filter.usePrefix', { v: labelOfUseFilter(key) })}
-                  </option>
-                ))}
-              </select>
-            )}
-            <select
-              className="sel"
-              value={sort}
-              onChange={(e) => setParam('sort', e.target.value === 'name' ? null : e.target.value)}
-              title={t('sort.title')}
-            >
-              {SORT_KEYS.map(([key, msgKey]) => (
-                <option key={key} value={key}>
-                  {t('sort.prefix', { v: t(msgKey) })}
-                </option>
-              ))}
-            </select>
+            {/* 種類はここでは select(在庫の全体を出すので絞り込みが 3 つ並ぶ。ホーム ③ はセグメント) */}
+            <KindSelect kind={kind} setParam={setParam} />
+            <UseSelect use={use} usage={usage} setParam={setParam} />
+            <SortSelect sort={sort} setParam={setParam} />
           </span>
         </div>
         <div className="blk-tools">
-          <label className="search">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <circle cx="7" cy="7" r="4.5" />
-              <path d="M10.5 10.5L14 14" />
-            </svg>
-            <input
-              placeholder={t(narrow ? 'act.searchShort' : 'act.search')}
-              value={q}
-              onChange={(e) => setParam('q', e.target.value || null)}
-            />
-          </label>
-          <span className="seg" title={t('view.title')}>
-            {VIEW_MODES.map((v) => (
-              <button
-                key={v}
-                className={by === v ? 'on' : ''}
-                onClick={() => setParam('by', v === 'source' ? null : v)}
-              >
-                {t(VIEW_LABEL[v])}
-              </button>
-            ))}
-          </span>
+          <SearchBox q={q} setParam={setParam} />
+          <Seg
+            options={VIEW_MODES.map((v): [ViewMode, string] => [v, t(VIEW_LABEL[v])])}
+            value={by}
+            onPick={(v) => setParam('by', v === 'source' ? null : v)}
+            title={t('view.title')}
+          />
         </div>
         <div className="blk-body list">{body}</div>
       </section>

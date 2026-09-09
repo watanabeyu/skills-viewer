@@ -26,15 +26,14 @@ import {
   sessionSections,
   sortItems,
   usageMatches,
-  USE_FILTERS,
-  labelOfUseFilter,
   type KindFilter,
   type SortKey,
   type UseFilter,
 } from '../util';
-import { t, type MsgKey } from '../i18n';
+import { t } from '../i18n';
 import { ChangesBlock } from './ChangesBlock';
 import { InlineError, InlineNote } from './Inline';
+import { SearchBox, Seg, SortSelect, UseSelect } from './ListTools';
 import { Bar, GroupHead, ItemRow, TableHead, useNarrow } from './Rows';
 
 /*
@@ -47,14 +46,6 @@ export interface SummaryAction {
   error: string;
   onRun: () => void;
 }
-
-const SORT_KEYS: [SortKey, MsgKey][] = [
-  ['name', 'sort.name'],
-  ['uses', 'sort.uses'],
-  ['recent', 'sort.recent'],
-  ['updated', 'sort.updated'],
-  ['tokens', 'sort.tokens'],
-];
 
 /* ---- ② セッションの文脈 ---- */
 
@@ -217,64 +208,21 @@ export function ActiveBlock({
           >
             ✦ {summary.label}
           </button>
-          {usage && (
-            <select
-              className={'sel' + (use !== 'all' ? ' on' : '')}
-              value={use}
-              title={t('filter.unusedTitle')}
-              onChange={(e) => setParam('use', e.target.value === 'all' ? null : e.target.value)}
-            >
-              {USE_FILTERS.map((key) => (
-                <option key={key} value={key}>
-                  {t('filter.usePrefix', { v: labelOfUseFilter(key) })}
-                </option>
-              ))}
-            </select>
-          )}
-          <select
-            className="sel"
-            value={sort}
-            onChange={(e) => setParam('sort', e.target.value === 'name' ? null : e.target.value)}
-            title={t('sort.title')}
-          >
-            {SORT_KEYS.map(([key, msgKey]) => (
-              <option key={key} value={key}>
-                {t('sort.prefix', { v: t(msgKey) })}
-              </option>
-            ))}
-          </select>
+          <UseSelect use={use} usage={usage} setParam={setParam} />
+          <SortSelect sort={sort} setParam={setParam} />
         </span>
       </div>
       <div className="blk-tools">
-        <label className="search">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-          >
-            <circle cx="7" cy="7" r="4.5" />
-            <path d="M10.5 10.5L14 14" />
-          </svg>
-          <input
-            placeholder={t(narrow ? 'act.searchShort' : 'act.search')}
-            value={q}
-            onChange={(e) => setParam('q', e.target.value || null)}
-          />
-        </label>
-        <span className="seg">
-          {KIND_FILTERS.map((k) => (
-            <button
-              key={k}
-              className={kind === k ? 'on' : ''}
-              onClick={() => setParam('kind', k === 'all' ? null : k)}
-            >
-              {k === 'all' ? t('kind.all') : k}
-            </button>
-          ))}
-        </span>
+        <SearchBox q={q} setParam={setParam} />
+        {/* 種類はここでは押し分けの見えるセグメントで出す(絞り込みが 1 つしか無いので select に畳まない) */}
+        <Seg
+          options={KIND_FILTERS.map((k): [KindFilter, string] => [
+            k,
+            k === 'all' ? t('kind.all') : k,
+          ])}
+          value={kind}
+          onPick={(k) => setParam('kind', k === 'all' ? null : k)}
+        />
       </div>
       <div className="blk-body list">
         {/* cwd のプロジェクトにアイテムが無いときも「このプロジェクト · 0 件」の見出しは残す */}
