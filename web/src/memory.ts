@@ -12,7 +12,6 @@ import type {
   MemoryState,
   MemoryTriage,
   MemoryType,
-  Section,
   SkillItem,
   SkillsData,
 } from './api';
@@ -139,27 +138,21 @@ export function memoryRows(sec: MemorySection, f: ListFilter): SkillItem[] {
 
 /*
  * 一覧に出すセクション。プロジェクト単位(README 6.2)なので、ヘッダーの切替(?project=)に従う:
- *   'all'          = 全セクション(プロジェクト不明・共有ストアもここでだけ見える)
- *   それ以外(Section / null)= サーバーが計算した対象(SkillsData.selected)に帰属するセクション
+ *   all = true   全セクション(プロジェクト不明・共有ストアもここでだけ見える)
+ *   all = false  サーバーが「選んだプロジェクトのもの」と印を付けたセクション(isCurrent)
  *
- * 判定は Section ではなく selected を基準にする(計画 16 Phase A)。サーバーは選んだプロジェクトを
- * 起点に置き場を解決するので、isCurrent は「cwd」ではなく「選んだプロジェクト(+ その本体)」の印。
- * cwd を特別扱いすると、user scope の autoMemoryDirectory(projectPath なし)や
- * .claude/ を追跡している worktree を cwd 以外から選んだときに一覧だけが空になる。
- *   - projectPath === selected.path         そのプロジェクトの置き場
- *   - projectPath === selected.mainPath     worktree を選んだとき、memory は本体に収束する
- *   - projectPath === null && isCurrent      置き場を逆引きできない autoMemoryDirectory / 共有ストア
+ * 引数を boolean にしてあるのは、ここで使うのが「すべてのプロジェクトかどうか」だけだから
+ * (どのプロジェクトかは web が決め直さない。計画 16 判断 3)。
+ * 述語は ②(サーバーの session context)と同じ isCurrent 1 本にする(計画 16 レビュー 2 周目)。
+ * サーバーは選んだプロジェクトを起点に置き場を走査する(memorySections(selectedPath))ので、
+ * isCurrent は「cwd」ではなく「選んだプロジェクト(+ その本体)」の印であり、
+ * user scope の autoMemoryDirectory(projectPath なし)にも付く。
+ * ここで selected.path / mainPath から組み直すと、逆引きに失敗した worktree などで
+ * ② には出るのに一覧だけが空になる ── 判定の出所を 1 つに保つ。
  */
-export function sectionsFor(data: SkillsData, project: Section | 'all' | null): MemorySection[] {
+export function sectionsFor(data: SkillsData, all: boolean): MemorySection[] {
   const memory = data.memory || [];
-  if (project === 'all') return memory;
-  const sel = data.selected;
-  return memory.filter(
-    (m) =>
-      m.projectPath === sel.path ||
-      m.projectPath === sel.mainPath ||
-      (m.projectPath === null && !!m.isCurrent),
-  );
+  return all ? memory : memory.filter((m) => m.isCurrent);
 }
 
 /* ---- 上部のコスト(索引 = 毎回、本文 = 読まれたときだけ) ---- */

@@ -759,7 +759,8 @@ function itemOfChange(e: ChangeEntry, data: SkillsData): SkillItem | undefined {
  * セッションにも効くので常に残す)。'all' は絞らない。
  * CLAUDE.md だけは Section 経由の逆引きに載せない ── skill / command / agent が 1 件も無い
  * プロジェクトには Section が無く、逆引きが必ず失敗して変化そのものが消えるため(計画 16 Phase D)。
- * 選んだプロジェクト(worktree なら本体も)の配下かどうかで判定する。
+ * ② が読んでいる段そのもの(data.claudeMd)か、選んだプロジェクト(worktree なら本体も)の
+ * 配下かどうかで判定する。
  */
 export function changeRows(data: SkillsData, project: ProjectSel): ChangeRow[] {
   const ch = data.changes;
@@ -785,8 +786,15 @@ export function changeRows(data: SkillsData, project: ProjectSel): ChangeRow[] {
   ];
   if (project === 'all') return rows;
   const sel = data.selected;
+  /*
+   * ② が数えている段の実ファイル集合。サブディレクトリを登録したプロジェクトでは、親ディレクトリの
+   * CLAUDE.md も段として読まれる(サーバーは claudeMdLayers({ root: selectedPath }) で組む)ので、
+   * selected.path の前方一致だけだと ② にコストが出ている段が ① から落ちる。
+   * 消えた段は claudeMd に載らない(= 集合に無い)ため、前方一致の判定も残す。
+   */
+  const loaded = new Set(data.claudeMd.layers.flatMap((l) => l.files.map((f) => f.path)));
   const underSelected = (p: string) =>
-    isUnder(p, sel.path) || (!!sel.mainPath && isUnder(p, sel.mainPath));
+    loaded.has(p) || isUnder(p, sel.path) || (!!sel.mainPath && isUnder(p, sel.mainPath));
   return rows.filter((r) => {
     if (r.entry.source !== 'project') return true;
     if (r.entry.kind === 'claude-md') return underSelected(r.entry.path);

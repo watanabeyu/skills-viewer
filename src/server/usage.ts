@@ -65,20 +65,29 @@ export function dayKey(ts: number): string {
  * 追随するようになり、1 つの値を上書きする方式だと切替のたびに全エントリが無効化されて
  * transcript(実測 456MB)を丸ごと読み直すことになる。選択の往復で使う鍵は数個なので、
  * 上限を数エントリに置いて古い鍵から捨てれば足りる。
+ *
+ * 捨てる順は LRU(レビュー 2 周目): ヒット時に順序を更新しない FIFO だと、5 つ目の鍵を作った
+ * 時点で「いちばん古く挿入された鍵」= 通常は既定(空)の鍵が落ち、そこへ戻ったときに
+ * 全 transcript を読み直す(実測 705ms)。使ったばかりの鍵を末尾へ動かせば、
+ * 往復している鍵は常に生き残る。
  */
 const MAX_ROOTS_CACHES = 4;
 const usageCaches = new Map<string, Map<string, { mtimeMs: number } & ScanResult>>();
 
 function cacheFor(rootsKey: string): Map<string, { mtimeMs: number } & ScanResult> {
-  let cache = usageCaches.get(rootsKey);
-  if (!cache) {
-    cache = new Map();
-    usageCaches.set(rootsKey, cache);
-    // 挿入順(Map の反復順)の古い鍵から捨てる。往復する 2〜3 鍵は常に作り直しの対象外になる
-    if (usageCaches.size > MAX_ROOTS_CACHES) {
-      const oldest = usageCaches.keys().next().value;
-      if (oldest !== undefined) usageCaches.delete(oldest);
-    }
+  const hit = usageCaches.get(rootsKey);
+  if (hit) {
+    // 最近使ったものを末尾へ(Map の反復順 = 挿入順なので、消して入れ直すと順序が更新される)
+    usageCaches.delete(rootsKey);
+    usageCaches.set(rootsKey, hit);
+    return hit;
+  }
+  const cache = new Map<string, { mtimeMs: number } & ScanResult>();
+  usageCaches.set(rootsKey, cache);
+  // 反復順のいちばん前 = 最後に使ったのがいちばん古い鍵から捨てる
+  if (usageCaches.size > MAX_ROOTS_CACHES) {
+    const oldest = usageCaches.keys().next().value;
+    if (oldest !== undefined) usageCaches.delete(oldest);
   }
   return cache;
 }

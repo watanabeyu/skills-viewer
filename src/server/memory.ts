@@ -27,11 +27,32 @@ export interface MemoryScanOptions {
 }
 
 /*
+ * `.git` 側の管理ファイル(worktree の `.git` ファイル・`.git/worktrees/<name>/{gitdir,HEAD}`)を
+ * 読む上限。中身はパス 1 行 / ref 1 行で数十バイトしかない。ここを無制限に読むと、リポジトリを
+ * clone しただけで巨大なファイルを毎リクエスト読まされる(claude-md.ts の MAX_FILE_BYTES と同じ趣旨)。
+ */
+const MAX_GIT_META_BYTES = 4 * 1024;
+
+/* 管理ファイルを 1 つ読む。無い・大きすぎる・読めないは null(その 1 件だけスキップさせる) */
+function readGitMeta(fp: string): string | null {
+  try {
+    if (fs.statSync(fp).size > MAX_GIT_META_BYTES) return null;
+    return fs.readFileSync(fp, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/*
  * dir が属する git のメインワークツリーのルート。git コマンドは呼ばず .git だけを見る。
  *   - `<dir>/.git` がディレクトリ = 通常のリポジトリなので dir 自身
  *   - `<dir>/.git` がファイル = worktree。中身の `gitdir: <p>` が
  *     `…/.git/worktrees/<name>` ならその 3 つ上がメインワークツリーのルート
  * それ以外(submodule の gitdir、.git が無い、読めない)は null。
+ *
+ * `.git` ファイルの読み取りは readGitMeta に寄せる(レビュー 2 周目): この関数は worktreesOf の
+ * 逆リンク検証から「clone に含まれるファイル」に対して呼ばれる ── 外から届く側なので、
+ * 上限なしの readFileSync だと巨大な `.git` ファイルを毎リクエスト丸ごと読むことになる。
  */
 export function mainWorktreeOf(dir: string): string | null {
   const gitPath = path.join(dir, '.git');
@@ -42,12 +63,8 @@ export function mainWorktreeOf(dir: string): string | null {
     return null; // git 管理下でないディレクトリ
   }
   if (stat.isDirectory()) return path.resolve(dir);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(gitPath, 'utf8');
-  } catch {
-    return null;
-  }
+  const raw = readGitMeta(gitPath);
+  if (raw === null) return null;
   const m = raw.match(/^gitdir:\s*(.+)$/m);
   if (!m) return null;
   const gitdir = m[1].trim();
@@ -65,23 +82,6 @@ export interface WorktreeEntry {
   name: string;
   /* チェックアウト中のブランチ。detached HEAD では付かない */
   branch?: string;
-}
-
-/*
- * `.git/worktrees/<name>/` の管理ファイル(gitdir / HEAD)の読み取り上限。
- * 中身はパス 1 行 / ref 1 行で数十バイトしかない。ここを無制限に読むと、リポジトリを
- * clone しただけで巨大なファイルを毎リクエスト読まされる(claude-md.ts の MAX_FILE_BYTES と同じ趣旨)。
- */
-const MAX_GIT_META_BYTES = 4 * 1024;
-
-/* 管理ファイルを 1 つ読む。無い・大きすぎる・読めないは null(その 1 件だけスキップさせる) */
-function readGitMeta(fp: string): string | null {
-  try {
-    if (fs.statSync(fp).size > MAX_GIT_META_BYTES) return null;
-    return fs.readFileSync(fp, 'utf8');
-  } catch {
-    return null;
-  }
 }
 
 /*
@@ -110,10 +110,16 @@ export function worktreesOf(mainDir: string): WorktreeEntry[] {
   const mainAbs = path.resolve(mainDir);
   const out: WorktreeEntry[] = [];
   for (const d of dirs) {
-    const gitdir = readGitMeta(path.join(base, d.name, 'gitdir'))?.trim();
+    const admin = path.join(base, d.name);
+    const gitdir = readGitMeta(path.join(admin, 'gitdir'))?.trim();
     if (!gitdir) continue; // gitdir が無い / 読めない / 大きすぎる管理ディレクトリ
-    // git は通常フルパスを書くが、相対で書かれていても壊れないよう mainDir を起点に解決する
-    const root = path.dirname(path.resolve(mainDir, gitdir));
+    /*
+     * git は通常フルパスを書くが、`git worktree add --relative-paths`(git 2.48+)や
+     * worktree.useRelativePaths=true では相対パスを書く。git はそれを**この管理ディレクトリ**
+     * (`<main>/.git/worktrees/<name>`)を起点に解決するので、こちらも同じ起点で解決する
+     * ── 本体(mainDir)起点だと解決先が存在せず、相対で書かれた worktree が丸ごと落ちる。
+     */
+    const root = path.dirname(path.resolve(admin, gitdir));
     try {
       if (!fs.statSync(root).isDirectory()) continue;
     } catch {
@@ -123,7 +129,7 @@ export function worktreesOf(mainDir: string): WorktreeEntry[] {
     const back = mainWorktreeOf(root);
     if (!back || !(samePath(back, mainAbs) || samePath(realDir(back), realDir(mainAbs)))) continue;
     let branch: string | undefined;
-    const head = readGitMeta(path.join(base, d.name, 'HEAD'));
+    const head = readGitMeta(path.join(admin, 'HEAD'));
     const m = head
       ?.split('\n', 1)[0]
       .trim()

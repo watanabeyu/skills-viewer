@@ -21,7 +21,7 @@ import type {
   SkillsData,
   Worktree,
 } from '../shared/types';
-import { listProjects, projectSectionId, scanSections } from './scan';
+import { HOME, listProjects, projectSectionId, scanSections } from './scan';
 import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
 import {
   publicMemory,
@@ -54,7 +54,12 @@ import { previousContent } from './diff';
 import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
 
-const TOKEN = crypto.randomBytes(16).toString('hex');
+/*
+ * この起動限りの mutation トークン(/api/token で同一オリジンにだけ配る)。
+ * export はテスト用(tests/handle-api.test.ts が handleApi を 1 往復させるのに要る)。
+ * 値は起動ごとの乱数で、外に配る経路は /api/token のままなので許可の範囲は変わらない。
+ */
+export const TOKEN = crypto.randomBytes(16).toString('hex');
 
 /*
  * claude CLI があるか(AI 機能の可否)。起動時に 1 回だけ `claude --version` を実行して覚える。
@@ -286,15 +291,70 @@ function primeMemoryRoots(cwd: string): void {
 }
 
 /*
- * 登録済みプロジェクトの本体から列挙した linked worktree(id 付き。計画 16 Phase C)。
- * 切替の候補・selected.mainPath・応答の worktrees が必ず同じ集合を見るよう 1 か所に置く。
- * id をサーバーが作るのは、web がパスから組み立てると規則が二重定義になるため(判断 2)。
+ * 登録簿と worktree 列挙の結果一式。3 つは必ず同じ 1 回の列挙から作る
+ * (切替の候補・selected.mainPath・応答の worktrees・CLAUDE.md の追跡対象がずれないように)。
  */
-export function projectWorktrees(cwd: string): Worktree[] {
-  return worktreesForProjects(listProjects(cwd)).map((w) => ({
+interface ProjectSets {
+  /* listProjects の結果 = ~/.claude.json の登録簿 + cwd(実在するディレクトリだけ) */
+  projects: string[];
+  /* projects の本体から列挙した linked worktree(id 付き。計画 16 Phase C) */
+  worktrees: Worktree[];
+  /* ?project=<id> の解決候補 = projects ∪ worktrees の path */
+  candidates: string[];
+}
+
+/*
+ * 登録簿(~/.claude.json)の版。mtime(ns)とサイズが変わったらメモを捨てる。
+ * 読めない環境(登録簿が無い)は 'none' で固定 ── その場合の候補は cwd だけなので組み直す意味が無い。
+ */
+function registryStamp(): string {
+  try {
+    const st = fs.statSync(path.join(HOME, '.claude.json'), { bigint: true });
+    return `${st.mtimeNs}:${st.size}`;
+  } catch {
+    return 'none';
+  }
+}
+
+/*
+ * 候補一式のメモ(レビュー 2 周目)。resolveAutoMemoryDir の autoDirMemo と同じ流儀で、
+ * 「登録簿が変わっていなければ組み直さない」。
+ *
+ * なぜ要るか: 組むのは listProjects × 2 + worktreesForProjects(本体ごとの readdir + 逆リンク検証)で、
+ * 実環境(33 project / 73 worktree)では 6.3ms/req かかる。web は読み取り系にも常に
+ * `data.selected.id` を付けるので、選択が cwd(既定)のままでも /api/file・/api/diff が毎回これを
+ * 払っていた ── `.claude` 配下と分かれば 0.01ms で終わる判定の手前で 10ms 級の前段が乗る。
+ *
+ * 限界: worktree の増減や、登録済みディレクトリが消えたことは ~/.claude.json が動くまで
+ * 反映されない(起動し直せば必ず組み直す)。列挙の起点は登録簿なので、鍵をそこに置いている。
+ * 返す配列はメモと共有しているので、呼び出し側で書き換えないこと。
+ */
+let setsMemo: { key: string; sets: ProjectSets } | undefined;
+
+function projectSets(cwd: string): ProjectSets {
+  const key = path.resolve(cwd) + '\0' + registryStamp();
+  if (setsMemo?.key === key) return setsMemo.sets;
+  const projects = listProjects(cwd);
+  const worktrees: Worktree[] = worktreesForProjects(projects).map((w) => ({
+    // id をサーバーが作るのは、web がパスから組み立てると規則が二重定義になるため(判断 2)
     id: projectSectionId(w.path),
     ...w,
   }));
+  const sets: ProjectSets = {
+    projects,
+    worktrees,
+    candidates: [...new Set([...projects, ...worktrees.map((w) => w.path)])],
+  };
+  setsMemo = { key, sets };
+  return sets;
+}
+
+/*
+ * 登録済みプロジェクトの本体から列挙した linked worktree(id 付き。計画 16 Phase C)。
+ * 切替の候補・selected.mainPath・応答の worktrees が必ず同じ集合を見るよう 1 か所に置く。
+ */
+export function projectWorktrees(cwd: string): Worktree[] {
+  return projectSets(cwd).worktrees;
 }
 
 /*
@@ -302,16 +362,10 @@ export function projectWorktrees(cwd: string): Worktree[] {
  * worktree を足すのは、「claude を起動して登録された」かつ「.claude/ に 1 件以上ある」ものしか
  * 登録簿に出ないため ── 登録の有無に依らず選べるようにする(計画 16 判断 5・6)。
  * 足すのは列挙した path だけで、生のパスは入らない。
- *
- * worktrees を引数で受け取れるのは、1 リクエストの中で列挙を 2 回走らせないため
- * (レビュー 1 周目の実測: /api/skills 1 回で listProjects が 5〜7 回、worktreesForProjects が
- * 3 回走っていた)。collect は冒頭で 1 回だけ組み、以降はそれを配り回す。
+ * 1 リクエストの中で何度呼んでも列挙は 1 回きり(projectSets のメモ)。
  */
-export function projectCandidates(
-  cwd: string,
-  worktrees: Worktree[] = projectWorktrees(cwd),
-): string[] {
-  return [...new Set([...listProjects(cwd), ...worktrees.map((w) => w.path)])];
+export function projectCandidates(cwd: string): string[] {
+  return projectSets(cwd).candidates;
 }
 
 /*
@@ -348,6 +402,14 @@ export function resolveSelectedProject(
 ): string {
   const fallback = path.resolve(cwd);
   if (!id || id === 'all') return fallback;
+  /*
+   * 既定(cwd を選んでいる)なら候補を組まずに返す(レビュー 2 周目)。web は読み取り系にも
+   * 常に data.selected.id を付けるので、選択が cwd のままでも /api/file・/api/diff が毎回
+   * ここを通る ── 候補の組み立ては実環境で 6.3ms/req あり、`.claude` 配下と分かれば
+   * 0.01ms で済む判定の手前でそれを払うことになる。cwd の id は必ず候補にあり、
+   * 別の候補と衝突していれば下の分岐でも cwd に落ちるので、答えは変わらない。
+   */
+  if (id === projectSectionId(fallback)) return fallback;
   /*
    * projectSectionId は非可逆(英数字以外を '-' に潰す)なので、`~/w/foo.bar` と `~/w/foo-bar` は
    * 同じ id になる。どちらを指しているか決められない以上、勝手に片方を選ばない
@@ -401,19 +463,23 @@ export function changeInputs(
  * (計画 16 判断 1・4)。cwd はその既定値でしかないが、①(changes)と起動時サマリは
  * cwd 起点のまま(判断 8)。
  *
- * worktree の列挙と候補は冒頭で 1 回だけ組み、選択の解決・selectedProject・CLAUDE.md の
- * 追跡対象に配り回す(レビュー 1 周目: 同じ集合を 3 か所が別々に組み直していた)。
+ * 登録簿・worktree の列挙・候補は projectSets から 1 組で受け取り、選択の解決・selectedProject・
+ * CLAUDE.md の追跡対象・① の絞り込みに配り回す(レビュー 1 周目: 同じ集合を 3 か所が別々に
+ * 組み直していた。2 周目でメモに載せ、リクエストをまたいでも登録簿が変わるまで組み直さない)。
  */
 export function collect(cwd: string, lang: Lang, projectId: string | null): SkillsData {
-  const worktrees = projectWorktrees(cwd);
-  const candidates = projectCandidates(cwd, worktrees);
+  const { projects, worktrees, candidates } = projectSets(cwd);
   const selectedPath = resolveSelectedProject(cwd, projectId, candidates);
   const selected = selectedProject(cwd, selectedPath, worktrees);
   // 以降の絞り込みは「解決したパスの Section id」で見る(受け取った id をそのまま信じない)
   const selectedId = selected.id;
   const isCwd = selected.isCwd;
   primeMemoryRoots(selectedPath);
-  const sections = scanSections(cwd, lang);
+  /*
+   * 走査対象は登録簿 ∪ 選んだプロジェクト(レビュー 2 周目)。未登録の worktree を選ぶと
+   * ③ が必ず 0 件になっていた ── 候補には worktree 列挙が入るのに、走査は登録簿だけだった。
+   */
+  const sections = scanSections(cwd, lang, selectedPath);
   const usageAvailable = attributeUsage(sections);
   const summaries = loadSummaries();
   for (const sec of sections) {
@@ -460,7 +526,19 @@ export function collect(cwd: string, lang: Lang, projectId: string | null): Skil
    * ── 集合は最初から cwd 抜きに全プロジェクト分なので、選択が cwd かどうかに依らない。
    */
   const cwdMemory = isCwd ? memory : scanMemory(cwd);
-  const chIn = changeInputs(cwd, lang, candidates, { sections, memory: cwdMemory });
+  /*
+   * ① の Section も cwd 起点に揃える: 選択で足した Section(登録簿に無い worktree を選んだとき
+   * だけ現れる)は ack 側の走査(scanSections(cwd, lang) = 登録簿だけ)に出てこないので、
+   * 入れたままだと「既読にしても消えない差分」になる。登録簿にあるものは選択に依らず走査される
+   * ので、この filter が効くのは未登録の worktree を選んでいる間だけ。
+   */
+  const trackedSections = projects.includes(selectedPath)
+    ? sections
+    : sections.filter((s) => s.id !== selectedId);
+  const chIn = changeInputs(cwd, lang, candidates, {
+    sections: trackedSections,
+    memory: cwdMemory,
+  });
   return {
     generatedAt: new Date().toISOString(),
     cwd,
@@ -504,7 +582,12 @@ function langOf(v: unknown): Lang {
   return v === 'ja' ? 'ja' : 'en';
 }
 
-function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: string): void {
+/*
+ * /api/* の 1 往復。export はテスト用(tests/handle-api.test.ts):
+ * ハンドラの結線 ── どのパラメータをどの検証に渡しているか ── は関数単体のテストでは
+ * 落ちないので、req / res の最小スタブで実際に通す(レビュー 2 周目の指摘)。
+ */
+export function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: string): void {
   const send = (code: number, obj: unknown) => {
     res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(obj));
@@ -541,12 +624,9 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       if (url.pathname === '/api/diff')
         return send(
           200,
-          previousContent(
-            url.searchParams.get('src') || '',
-            cwd,
-            undefined, // rootOf(テスト注入用)は既定のまま
-            resolveSelectedProject(cwd, url.searchParams.get('project')),
-          ),
+          previousContent(url.searchParams.get('src') || '', cwd, {
+            selectedPath: resolveSelectedProject(cwd, url.searchParams.get('project')),
+          }),
         );
       throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {

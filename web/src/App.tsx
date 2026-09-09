@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   fetchSkills,
@@ -40,6 +40,8 @@ const SORT_KEYS: SortKey[] = ['name', 'uses', 'recent', 'updated', 'tokens'];
 export default function App() {
   const [data, setData] = useState<SkillsData | null>(null);
   const [error, setError] = useState('');
+  /* トークン取得の失敗(取得エラーとは別。initToken の効果の注記を参照) */
+  const [tokenError, setTokenError] = useState('');
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -94,20 +96,32 @@ export default function App() {
    * cwd に落とした正当な応答まで「不一致」で捨ててしまう(計画 16 Phase B)。
    * 失敗も同じ世代で見る: A → B と切り替えて A だけ失敗したとき、B の正しいデータが入っているのに
    * エラー画面へ固定されないように(成功したら前のエラーは消す)。
+   * 保持は useRef で行う ── useMemo はキャッシュの破棄が許され、作り直されると世代が 0 に戻る。
    */
-  const gate = useMemo(() => latestGate(), []);
-  const reload = useCallback(async () => {
-    clearMdCache();
-    const isLatest = gate();
-    try {
-      const next = await fetchSkills(projectParam);
-      if (!isLatest()) return;
-      setData(next);
-      setError('');
-    } catch (e) {
-      if (isLatest()) setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [gate, projectParam]);
+  const gate = useRef(latestGate()).current;
+  /*
+   * silent = 失敗を全画面のエラーにしない再取得。エラー画面はヘッダーも切替も持たないので、
+   * poll や操作(要約・棚卸しの後の取り直し)の失敗までそこへ固定すると、ブラウザの再読み込み
+   * 以外に戻る道が無くなる。全画面へ落としてよいのは初回取得と切替だけ(レビュー 2 周目)。
+   * 成功はどちらでも前のエラーを消す(次の取得で復帰できるように)。
+   */
+  const load = useCallback(
+    async (silent: boolean) => {
+      clearMdCache();
+      const isLatest = gate();
+      try {
+        const next = await fetchSkills(projectParam);
+        if (!isLatest()) return;
+        setData(next);
+        setError('');
+      } catch (e) {
+        if (!silent && isLatest()) setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [gate, projectParam],
+  );
+  /* 子(ホーム・一覧・詳細)へ渡す再取得は操作起点なので silent。失敗はその場の局所表示に任せる */
+  const reload = useCallback(() => load(true), [load]);
 
   /*
    * poll(要約ジョブ)から呼ぶ再取得。reload そのものを依存にすると ?project= を変えるたびに
@@ -115,7 +129,11 @@ export default function App() {
    * 閉じ込めた reload を後から実行して画面が前のプロジェクトへ戻る。identity を切り離す。
    */
   const reloadRef = useRef(reload);
-  useEffect(() => {
+  /*
+   * 代入は layout effect で行う: passive effect の flush 前にポーリングの timeout が発火すると、
+   * ref がまだ前の reload(= 前の projectParam)のままになる
+   */
+  useLayoutEffect(() => {
     reloadRef.current = reload;
   }, [reload]);
 
@@ -127,9 +145,13 @@ export default function App() {
     void reload();
   };
 
-  /* トークンは mutation にしか要らないので初回だけ(GET /api/skills には不要) */
+  /*
+   * トークンは mutation にしか要らないので初回だけ(GET /api/skills には不要)。
+   * 失敗は取得エラーとは別に持つ: 同じ state に入れると /api/skills 成功時の setError('') が
+   * 消してしまい、以後の mutation が 403 で落ちても理由が画面のどこにも残らない
+   */
   useEffect(() => {
-    initToken().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    initToken().catch((e) => setTokenError(e instanceof Error ? e.message : String(e)));
   }, []);
 
   /*
@@ -138,8 +160,8 @@ export default function App() {
    * 突き合わせずに済ませる。前例は言語切替(changeLang → reload)
    */
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void load(false);
+  }, [load]);
 
   const all: FlatItem[] = useMemo(() => (data ? flatten(data.sections) : []), [data]);
   /* 理解画面ではプロジェクト切替の位置がパンくず(プロジェクト / 名前)になる(design-system 1.1) */
@@ -216,7 +238,7 @@ export default function App() {
    * ポーリングの世代。チェーンは 1 本だけ生かす: cleanup 後や再開後に戻ってきた古い応答が
    * timeout を張り直す(= 止まらないチェーンが増える)のを止める。取得の世代とは別に持つ。
    */
-  const pollGate = useMemo(() => latestGate(), []);
+  const pollGate = useRef(latestGate()).current;
   const poll = useCallback(async () => {
     const isLatest = pollGate();
     try {
@@ -225,7 +247,10 @@ export default function App() {
       if (!st.finished) {
         setAiBusy(true);
         setAiLabel(t('ai.progress', { done: st.done, total: st.total }));
-        pollTimer.current = window.setTimeout(poll, 1500);
+        // 予約済みの 1 回にも世代を効かせる(cleanup 後や再開後に発火してもチェーンを継がない)
+        pollTimer.current = window.setTimeout(() => {
+          if (isLatest()) void poll();
+        }, 1500);
         return;
       }
       if (st.total > 0) {
@@ -275,7 +300,7 @@ export default function App() {
     setAiError('');
     try {
       await summarizeAll(force);
-      poll();
+      void poll();
     } catch (e) {
       setAiError(t('ai.startFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
@@ -288,10 +313,12 @@ export default function App() {
     onRun: onAiClick,
   };
 
-  if (error)
+  /* 全画面に落とすのは初回取得・切替の失敗とトークン取得の失敗だけ(他は silent で握りつぶす) */
+  const fatal = error || tokenError;
+  if (fatal)
     return (
       <div className="wrap">
-        <div className="empty">{t('app.loadFailed', { msg: error })}</div>
+        <div className="empty">{t('app.loadFailed', { msg: fatal })}</div>
       </div>
     );
 

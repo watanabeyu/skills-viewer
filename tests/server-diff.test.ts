@@ -30,9 +30,9 @@ describe('resolveDiffTarget(パス検証)', () => {
 
   it('.md 以外は not-md', () => {
     const p = inScope('settings.json');
-    expect(() => resolveDiffTarget(p, cwd, rootOf)).toThrow(ApiError);
+    expect(() => resolveDiffTarget(p, cwd, { rootOf })).toThrow(ApiError);
     try {
-      resolveDiffTarget(p, cwd, rootOf);
+      resolveDiffTarget(p, cwd, { rootOf });
     } catch (e) {
       expect((e as ApiError).code).toBe('not-md');
     }
@@ -41,7 +41,7 @@ describe('resolveDiffTarget(パス検証)', () => {
   it('.git 配下は拒否(リポジトリ判定より前)', () => {
     for (const p of ['/repo/.git/config.md', '/repo/.git/hooks/x.md', '/repo/a/.git/b.md']) {
       try {
-        resolveDiffTarget(p, cwd, rootOf);
+        resolveDiffTarget(p, cwd, { rootOf });
         throw new Error('should have thrown: ' + p);
       } catch (e) {
         expect((e as ApiError).code).toBe('not-readable-path');
@@ -50,25 +50,27 @@ describe('resolveDiffTarget(パス検証)', () => {
   });
 
   it('root の外へ出る相対パスは境界の外なので out-of-scope', () => {
-    expect(resolveDiffTarget('/repo/../outside/a.md', cwd, rootOf)).toEqual({
+    expect(resolveDiffTarget('/repo/../outside/a.md', cwd, { rootOf })).toEqual({
       reason: 'out-of-scope',
     });
   });
 
   it('`..` を含んでいても境界内に収まるものは通り、正規化された相対パスになる', () => {
-    expect(resolveDiffTarget(inScope('skills/../commands/c.md'), cwd, rootOf)).toEqual({
+    expect(resolveDiffTarget(inScope('skills/../commands/c.md'), cwd, { rootOf })).toEqual({
       root,
       relPath: '.claude/commands/c.md',
     });
   });
 
   it('git 管理外(worktreeRootOf が null)は not-git', () => {
-    expect(resolveDiffTarget(inScope('a.md'), cwd, () => null)).toEqual({ reason: 'not-git' });
+    expect(resolveDiffTarget(inScope('a.md'), cwd, { rootOf: () => null })).toEqual({
+      reason: 'not-git',
+    });
   });
 
   it('~/.claude 配下(user scope)は履歴を出さない', () => {
     const p = path.join(os.homedir(), '.claude', 'skills', 'x', 'SKILL.md');
-    expect(resolveDiffTarget(p, cwd, rootOf)).toEqual({ reason: 'user-scope' });
+    expect(resolveDiffTarget(p, cwd, { rootOf })).toEqual({ reason: 'user-scope' });
   });
 
   /*
@@ -77,12 +79,12 @@ describe('resolveDiffTarget(パス検証)', () => {
    */
   it('境界の外(.claude / autoMemoryDirectory / CLAUDE.md 群のどれでもない)は out-of-scope', () => {
     for (const p of ['/repo/README.md', '/repo/docs/notes.md', '/other/private.md']) {
-      expect(resolveDiffTarget(p, cwd, rootOf)).toEqual({ reason: 'out-of-scope' });
+      expect(resolveDiffTarget(p, cwd, { rootOf })).toEqual({ reason: 'out-of-scope' });
     }
   });
 
   it('プロジェクトの .claude 配下は通る', () => {
-    expect(resolveDiffTarget(inScope('skills/x/SKILL.md'), cwd, rootOf)).toEqual({
+    expect(resolveDiffTarget(inScope('skills/x/SKILL.md'), cwd, { rootOf })).toEqual({
       root,
       relPath: '.claude/skills/x/SKILL.md',
     });
@@ -94,7 +96,7 @@ describe('resolveDiffTarget(パス検証)', () => {
    */
   it('境界内の字句だが root の外に出るものは not-readable-path', () => {
     try {
-      resolveDiffTarget('/other/.claude/skills/x/SKILL.md', cwd, rootOf);
+      resolveDiffTarget('/other/.claude/skills/x/SKILL.md', cwd, { rootOf });
       throw new Error('should have thrown');
     } catch (e) {
       expect((e as ApiError).code).toBe('not-readable-path');
@@ -118,7 +120,9 @@ describe('resolveDiffTarget(symlink で境界の外へ出られないこと)', (
     fs.symlinkSync(path.join(base, 'other-repo'), path.join(cloned, '.claude', 'link'));
 
     const target = path.join(cloned, '.claude', 'link', 'notes', 'private.md');
-    expect(resolveDiffTarget(target, cloned, () => other)).toEqual({ reason: 'out-of-scope' });
+    expect(resolveDiffTarget(target, cloned, { rootOf: () => other })).toEqual({
+      reason: 'out-of-scope',
+    });
     expect(previousContent(target, cloned)).toEqual({
       available: false,
       reason: 'out-of-scope',
@@ -142,7 +146,9 @@ describe('resolveDiffTarget(symlink の先のディレクトリが消えてい�
     fs.symlinkSync(path.join('..', '..', 'other'), path.join(proj, '.claude', 'rel'));
     // other/sub は HEAD にはあるがワーキングツリーには無い、という想定(ディレクトリごと不在)
     const target = path.join(proj, '.claude', 'rel', 'sub', 'x.md');
-    expect(resolveDiffTarget(target, proj, () => other)).toEqual({ reason: 'out-of-scope' });
+    expect(resolveDiffTarget(target, proj, { rootOf: () => other })).toEqual({
+      reason: 'out-of-scope',
+    });
     expect(previousContent(target, proj)).toEqual({ available: false, reason: 'out-of-scope' });
   });
 

@@ -855,6 +855,26 @@ describe('projectRows (worktree を本体の下へ寄せる)', () => {
     expect(head?.id).toBeUndefined(); // 解決できる候補が無いので押せない
     expect(head?.subs.map((r) => r.path)).toEqual(['/w/alpha-wt']);
   });
+
+  /*
+   * heading は「走査していないので 0 件とは言えない行」の印(切替は「アイテムがありません」を出さない)。
+   * 印を落としても他のテストは緑のままだったので、付く行・付かない行をここで固定する。
+   */
+  it('登録簿に無い本体(worktree を束ねるためだけの行)は heading', () => {
+    const { others } = projectRows(dataOf({ worktrees: [{ ...wt, mainPath: '/w/gamma' }] }));
+    expect(others.find((r) => r.path === '/w/gamma')?.heading).toBe(true);
+  });
+
+  it('走査した結果 0 件だった行(Section が無いだけ)には heading が付かない', () => {
+    // cwd に定義が 1 件も無い応答。行は出るが「見出しだけ」ではないので 0 件と言ってよい
+    const noItems = dataOf({ cwd: '/w/gamma', sections: [projB, userSec, pluginSec, builtinSec] });
+    const { current } = projectRows(noItems);
+    expect(current?.path).toBe('/w/gamma');
+    expect(current?.section).toBeNull();
+    expect(current?.heading).toBeUndefined();
+    // 登録簿にある本体の下にぶら下がる worktree の行も同じ(走査はしている)
+    expect(projectRows(dataOf({ worktrees: [wt] })).current?.subs[0].heading).toBeUndefined();
+  });
 });
 
 /*
@@ -868,6 +888,10 @@ const appSource = async (): Promise<string> => {
   const path = await import('node:path');
   return fs.readFileSync(path.join(import.meta.dirname, '..', 'web', 'src', 'App.tsx'), 'utf8');
 };
+
+/* 件数を数える検査はコメントを落とした本体を見る(説明文にも同じ識別子が出るため) */
+const appCode = async (): Promise<string> =>
+  (await appSource()).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 describe('?project= を web が書き換えないこと(計画 16 判断 3)', () => {
   it('App が project パラメータを消す経路を持たない', async () => {
@@ -899,20 +923,68 @@ describe('App の取得とポーリングの結線', () => {
     const deps = src.match(/const poll = useCallback\([\s\S]*?\n {2}\}, \[([^\]]*)\]\);/);
     expect(deps?.[1]).toBe('pollGate');
     expect(src).toContain('await reloadRef.current();');
+    // ref の代入は layout effect(passive の flush 前に timeout が発火すると古い reload を呼ぶ)
+    expect(src).toMatch(/useLayoutEffect\(\(\) => \{\s*\n\s*reloadRef\.current = reload;/);
+  });
+
+  /*
+   * 世代の生成源そのものを固定する(レビュー 2 周目)。ここが latestGate から離れたり、
+   * isLatest の生成が増減したりしても、下の setError の文字列検査だけでは気づけない
+   * ── const isLatest = X() の X が「取得(gate)」と「ポーリング(pollGate)」の 2 つだけであること、
+   * 世代の保持が useMemo(キャッシュの破棄が許される = 世代が 0 に戻りうる)でないことを見る。
+   */
+  it('世代は latestGate を useRef で持ち、isLatest の生成源は gate / pollGate の 2 つだけ', async () => {
+    const code = await appCode();
+    expect(code).toContain('const gate = useRef(latestGate()).current;');
+    expect(code).toContain('const pollGate = useRef(latestGate()).current;');
+    // 生成源はこの 2 か所だけ(useMemo に戻していない)
+    expect([...code.matchAll(/latestGate\(\)/g)]).toHaveLength(2);
+    expect(code).not.toMatch(/useMemo\(\(\) => latestGate\(\)/);
+    const gens = [...code.matchAll(/const isLatest = (\w+)\(\)/g)].map((m) => m[1]).sort();
+    expect(gens).toEqual(['gate', 'pollGate']);
+    // 自前の世代カウンタ(useRef(0) + インクリメント)へ戻っていないこと。数える ref は timeout の id だけ
+    expect(code).not.toMatch(/useRef\(0\)/);
+    expect([...code.matchAll(/useRef<number>\(0\)/g)]).toHaveLength(1);
+    expect(code).not.toMatch(/\+\+\s*\w+\.current|\w+\.current\s*\+\+/);
   });
 
   /*
    * 取得の失敗も世代で見る。A → B と切り替えて A だけ失敗したとき、B の正しいデータが
    * 入っているのにエラー画面へ固定されると、切替では復帰できない(成功時に消すこと)。
+   * さらに、全画面のエラーへ落としてよいのは初回取得と切替(load(false))だけ ──
+   * poll や操作起点の再取得の失敗まで落とすと、ヘッダーも切替も無い画面から戻れなくなる。
    */
-  it('reload は自分で失敗を捕まえ、最新の要求のときだけ setError する', async () => {
-    const src = await appSource();
-    const body = src.match(/const reload = useCallback\([\s\S]*?\n {2}\}, \[[^\]]*\]\);/)?.[0];
+  it('setError は load の中だけ。非 silent(初回取得と切替)は 1 か所で、子へ渡す reload は silent', async () => {
+    const code = await appCode();
+    const body = code.match(/const load = useCallback\([\s\S]*?\n {2}\);/)?.[0];
     expect(body).toBeTruthy();
     expect(body).toContain("setError('')");
-    expect(body).toMatch(/if \(isLatest\(\)\) setError\(/);
+    expect(body).toMatch(/if \(!silent && isLatest\(\)\) setError\(/);
+    // setError を呼ぶのは load の 2 か所だけ(poll / 操作の失敗を全画面へ固定しない)
+    expect([...code.matchAll(/setError\(/g)]).toHaveLength(2);
+    expect([...(body?.matchAll(/setError\(/g) || [])]).toHaveLength(2);
+    // 非 silent は取得の effect(初回 + ?project= の切替)だけ
+    expect([...code.matchAll(/load\(false\)/g)]).toHaveLength(1);
+    expect(code).toContain('const reload = useCallback(() => load(true), [load]);');
     // 呼び出し側の .catch(setError) 頼み(世代を見ない)に戻っていないこと
-    expect(src).not.toMatch(/reload\(\)\.catch\(/);
+    expect(code).not.toMatch(/reload\(\)\.catch\(/);
+  });
+
+  /*
+   * トークン取得の失敗は取得エラーと別に持つ。同じ state だと /api/skills 成功時の
+   * setError('') が消してしまい、以後の mutation が 403 でも理由が画面に残らない。
+   */
+  it('initToken の失敗は tokenError(取得の成功で消えない)', async () => {
+    const src = await appSource();
+    expect(src).toMatch(/initToken\(\)\.catch\(\(e\) => setTokenError\(/);
+    expect(src).not.toMatch(/initToken\(\)\.catch\(\(e\) => setError\(/);
+  });
+
+  /* 予約済みの timeout にも世代を効かせる(cleanup 後に発火してもチェーンを継がない) */
+  it('poll の setTimeout は世代を確かめてから次を走らせる', async () => {
+    const src = await appSource();
+    expect(src).toMatch(/setTimeout\(\(\) => \{\s*\n\s*if \(isLatest\(\)\) void poll\(\);/);
+    expect(src).not.toMatch(/setTimeout\(poll,/);
   });
 });
 
@@ -1059,6 +1131,39 @@ describe('changeMarkOf / changeRows (① 増えた・変わった)', () => {
       },
     });
     expect(changeRows(onWt, null).map((r) => r.entry.path)).toEqual(['/w/alpha/CLAUDE.md']);
+  });
+
+  /*
+   * サブディレクトリを登録したプロジェクトでは親ディレクトリの CLAUDE.md も段として読まれる
+   * (サーバーは claudeMdLayers({ root: selectedPath }) で組む)。選択の配下(前方一致)だけで
+   * 絞ると、② にコストが出ている段が ① から落ちる ── ② が読んでいる実ファイル集合も見る。
+   */
+  it('親ディレクトリの CLAUDE.md も、② が段として読んでいるなら残る', () => {
+    const f = (p: string) => ({
+      path: p,
+      ownTokens: 1,
+      tokens: 1,
+      updatedAt: '',
+      headings: [],
+      imports: [],
+    });
+    const d = dataOf({
+      changes: {
+        added: [],
+        updated: [
+          // /w は選択(/w/alpha)の配下ではないが、親段として読まれている
+          { name: 'CLAUDE.md', kind: 'claude-md', path: '/w/CLAUDE.md', source: 'project' },
+          // 読まれていない別プロジェクトの段は落ちたまま
+          { name: 'CLAUDE.md', kind: 'claude-md', path: '/w/beta/CLAUDE.md', source: 'project' },
+        ],
+        removed: [],
+      },
+      claudeMd: {
+        tokens: 0,
+        layers: [{ kind: 'parent', label: '', files: [f('/w/CLAUDE.md')], tokens: 0 }],
+      },
+    });
+    expect(changeRows(d, projA).map((r) => r.entry.path)).toEqual(['/w/CLAUDE.md']);
   });
 
   it('memory の変化は MemorySection.projectPath 経由でプロジェクトを引く', () => {
@@ -1278,7 +1383,14 @@ describe('API クライアントが送る読み取りの起点', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  const body = () => JSON.parse(String(calls[0].init!.body));
+  /*
+   * calls[0] が undefined で 1 度だけ落ちたことがあるので、先に「呼び出しは 1 本」を確かめる
+   * (次に落ちたとき、fetch が呼ばれていないのか 2 本呼ばれているのかを切り分けられるように)。
+   */
+  const body = () => {
+    expect(calls).toHaveLength(1);
+    return JSON.parse(String(calls[0].init!.body));
+  };
 
   it('fetchSkills は ?project= を付ける / 空なら付けない / URL エンコードする', async () => {
     await fetchSkills('proj--w-beta');

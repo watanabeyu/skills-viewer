@@ -111,25 +111,47 @@ describe('worktreesOf (.git/worktrees を読むだけで列挙する)', () => {
     fs.rmSync(path.join(main, '.git', 'worktrees', 'claimed'), { recursive: true, force: true });
   });
 
-  it('gitdir / HEAD が数 KB を超えたら読まない(branch は先頭 1 行・128 文字まで)', () => {
-    // 巨大な gitdir はその 1 件を落とす
+  /*
+   * 上限まわりは 3 件に分ける(レビュー 2 周目)。1 件に同居していると、HEAD を差し替える
+   * 途中で落ちたときに書き戻されず、後続の期待値が壊れて原因が読めなくなる。
+   * HEAD を触るものは finally で必ず戻す。
+   */
+  it('数 KB を超える gitdir はその 1 件だけ落とす', () => {
     const big = path.join(root, 'repo-big');
     fs.mkdirSync(big, { recursive: true });
     writeAdminDir(main, 'repo-big', 'x'.repeat(5000));
-    expect(worktreesOf(main).map((w) => w.name)).not.toContain('repo-big');
-    fs.rmSync(path.join(main, '.git', 'worktrees', 'repo-big'), { recursive: true, force: true });
-    // HEAD が読めない・長すぎる場合も worktree 自体は残す(ブランチ不明)
+    try {
+      expect(worktreesOf(main).map((w) => w.name)).not.toContain('repo-big');
+      // 他の worktree は巻き込まれない
+      expect(worktreesOf(main).map((w) => w.name)).toContain('repo-feat-a');
+    } finally {
+      fs.rmSync(path.join(main, '.git', 'worktrees', 'repo-big'), { recursive: true, force: true });
+    }
+  });
+
+  it('HEAD が読めない・長すぎても worktree 自体は残す(ブランチ不明)', () => {
     const headFile = path.join(main, '.git', 'worktrees', 'repo-feat-a', 'HEAD');
     const orig = fs.readFileSync(headFile, 'utf8');
-    fs.writeFileSync(headFile, 'ref: refs/heads/' + 'b'.repeat(9000));
-    expect(worktreesOf(main).find((w) => w.name === 'repo-feat-a')).toEqual({
-      path: alive,
-      name: 'repo-feat-a',
-    });
-    // 長い(が上限内の)ブランチ名は 128 文字に切る
-    fs.writeFileSync(headFile, 'ref: refs/heads/' + 'c'.repeat(300) + '\nゴミ行\n');
-    expect(worktreesOf(main).find((w) => w.name === 'repo-feat-a')?.branch).toBe('c'.repeat(128));
-    fs.writeFileSync(headFile, orig);
+    try {
+      fs.writeFileSync(headFile, 'ref: refs/heads/' + 'b'.repeat(9000));
+      expect(worktreesOf(main).find((w) => w.name === 'repo-feat-a')).toEqual({
+        path: alive,
+        name: 'repo-feat-a',
+      });
+    } finally {
+      fs.writeFileSync(headFile, orig);
+    }
+  });
+
+  it('長い(が上限内の)ブランチ名は先頭 1 行・128 文字に切る', () => {
+    const headFile = path.join(main, '.git', 'worktrees', 'repo-feat-a', 'HEAD');
+    const orig = fs.readFileSync(headFile, 'utf8');
+    try {
+      fs.writeFileSync(headFile, 'ref: refs/heads/' + 'c'.repeat(300) + '\nゴミ行\n');
+      expect(worktreesOf(main).find((w) => w.name === 'repo-feat-a')?.branch).toBe('c'.repeat(128));
+    } finally {
+      fs.writeFileSync(headFile, orig);
+    }
   });
 
   it('worktreesForProjects は登録簿を本体に畳んでから 1 回だけ列挙する(重複なし)', () => {
@@ -137,6 +159,32 @@ describe('worktreesOf (.git/worktrees を読むだけで列挙する)', () => {
     const found = worktreesForProjects([main, alive, path.join(main, 'sub')]);
     expect(found.map((w) => w.path)).toEqual([detached, alive]);
     expect(new Set(found.map((w) => w.mainPath))).toEqual(new Set([main]));
+  });
+});
+
+/*
+ * 相対パスで書かれた gitdir(レビュー 2 周目)。`git worktree add --relative-paths`(git 2.48+)や
+ * worktree.useRelativePaths = true では、管理ディレクトリの gitdir も worktree 側の `.git` も
+ * 相対パスになる。git はどちらも**その ファイルが置かれたディレクトリ**を起点に解決するので、
+ * 本体(mainDir)起点で解決していると指す先が存在せず、その worktree が丸ごと落ちていた。
+ */
+describe('worktreesOf (相対パスで書かれた gitdir)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-worktrees-rel-'));
+  const main = path.join(root, 'repo');
+  const wt = path.join(root, 'wt-rel');
+
+  beforeAll(() => {
+    fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+    fs.mkdirSync(wt, { recursive: true });
+    // `<main>/.git/worktrees/wt-rel/gitdir` から見た相対パス(4 つ上が root)
+    writeAdminDir(main, 'wt-rel', '../../../../wt-rel/.git', 'ref: refs/heads/rel');
+    // worktree 側の `.git` も相対(こちらは worktree のルートが起点)
+    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ../repo/.git/worktrees/wt-rel\n');
+  });
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('管理ディレクトリを起点に解決する(本体起点だと 1 件も返らない)', () => {
+    expect(worktreesOf(main)).toEqual([{ path: wt, name: 'wt-rel', branch: 'rel' }]);
   });
 });
 
@@ -259,5 +307,68 @@ describe('読み取り許可が「選んだ」worktree の CLAUDE.md を通す',
     expect(() => mod.assertAiReadableMd(path.join(wt, 'CLAUDE.md'), main, wt)).toThrow(
       'not-readable-path',
     );
+  });
+});
+
+/*
+ * 未登録の worktree を選んだときの走査(レビュー 2 周目の指摘 C の抜け)。
+ * `?project=` の候補は「登録簿 ∪ 列挙した worktree」なのに、走査(scanSections)は登録簿しか
+ * 見ていなかったので、`.claude/` を git 追跡している worktree を選ぶと ③ が必ず 0 件になり、
+ * 「このプロジェクトには定義が無い」という嘘の理由まで出ていた。
+ * 走査対象を「登録簿 ∪ 選んだプロジェクト」にすることで塞ぐ(読み取り許可の母集団は
+ * 元から {cwd, 選択} なので広がらない)。
+ */
+describe('未登録の worktree を選ぶと、その .claude も走査される', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-worktree-scan-'));
+  const home = path.join(root, 'home');
+  const main = path.join(root, 'repo'); // cwd かつ唯一の登録済みプロジェクト
+  const wt = path.join(root, 'repo-feat-a'); // 登録簿に無い worktree
+  let mod: typeof import('../src/server/index');
+
+  const skill = (dir: string, name: string) => {
+    fs.mkdirSync(path.join(dir, '.claude', 'skills', name), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.claude', 'skills', name, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: ${name} を使うとき\n---\n本文\n`,
+    );
+  };
+
+  beforeAll(async () => {
+    for (const d of [home, path.join(main, '.git'), wt]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [main]: {} } }));
+    fs.writeFileSync(
+      path.join(wt, '.git'),
+      'gitdir: ' + path.join(main, '.git', 'worktrees', 'repo-feat-a') + '\n',
+    );
+    writeAdminDir(main, 'repo-feat-a', path.join(wt, '.git'), 'ref: refs/heads/feat/a');
+    skill(main, 'main-skill');
+    // worktree 側は 2 件。選択で ③ の件数が 1 件分ではなく 2 件分入れ替わることを見る
+    skill(wt, 'wt-skill');
+    skill(wt, 'wt-skill2');
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/index');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('選ぶと Section が出て、② の description 件数にも乗る', () => {
+    const onMain = mod.collect(main, 'en', null);
+    const onWt = mod.collect(main, 'en', projectSectionId(wt));
+    const sec = onWt.sections.find((s) => s.id === projectSectionId(wt));
+    expect(sec?.items.map((it) => it.name).sort()).toEqual(['wt-skill', 'wt-skill2']);
+    expect(sec?.isCurrent).toBeFalsy(); // 「現在」は cwd の印のまま(選択とは別)
+    // 母集団が本体(1 件)から worktree(2 件)に入れ替わるので、件数は 1 増える
+    expect(onWt.context.descriptions.count).toBe(onMain.context.descriptions.count + 1);
+    expect(onWt.context.descriptions.tok).toBeGreaterThan(0);
+  });
+
+  it('選んでいなければ Section は出ない(走査対象は登録簿のまま)', () => {
+    const onMain = mod.collect(main, 'en', null);
+    expect(onMain.sections.map((s) => s.id)).not.toContain(projectSectionId(wt));
+    expect(onMain.sections.find((s) => s.id === projectSectionId(main))?.items).toHaveLength(1);
   });
 });

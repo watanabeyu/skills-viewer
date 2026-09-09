@@ -437,10 +437,22 @@ function attachRefs(sections: Section[]): void {
 export const projectSectionId = (projectPath: string): string =>
   'proj-' + encodeProjectPath(path.resolve(projectPath));
 
-/* 並び順: current プロジェクト → 他プロジェクト → user → plugin → built-in */
-export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
+/*
+ * 並び順: current プロジェクト → 他プロジェクト → user → plugin → built-in
+ *
+ * 走査するのは登録簿(listProjects)∪ 選んだプロジェクト(selectedPath)。選択を足すのは
+ * レビュー 2 周目の指摘: worktree は「claude を起動して登録された」ものしか ~/.claude.json に
+ * 出ないので、`?project=` の候補(登録簿 ∪ 列挙した worktree)には入るのに走査されない
+ * ── `.claude/` を git 追跡している新しい worktree を選ぶと、中身があるのに ③ が 0 件になり、
+ * 「定義が無い」という嘘の理由まで出ていた。読み取り許可の母集団は元から {cwd, 選択} なので
+ * ここで広がるものは無い。isCurrent の意味(= cwd)も変えない。
+ */
+export function scanSections(cwd: string, lang: Lang = 'en', selectedPath?: string): Section[] {
   const cwdResolved = path.resolve(cwd);
-  const projects = listProjects(cwd)
+  const roots = [
+    ...new Set([...listProjects(cwd), ...(selectedPath ? [path.resolve(selectedPath)] : [])]),
+  ];
+  const projects = roots
     .map((p) => ({ path: p, items: scanClaudeDir(p), current: p === cwdResolved }))
     .filter((p) => p.items.length > 0)
     .sort(

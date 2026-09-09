@@ -1,12 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-  MemorySection,
-  MemoryTriage,
-  Section,
-  SelectedProject,
-  SkillItem,
-  SkillsData,
-} from '../src/shared/types';
+import type { MemorySection, MemoryTriage, SkillItem, SkillsData } from '../src/shared/types';
 /*
  * runTriage の結線だけを見るので、API クライアントは triageMemory だけ差し替える
  * (実際の fetch は起こさない)。他の export は util.ts などが実体を使うので残す。
@@ -174,12 +167,15 @@ describe('memoryRows / typeMatches (一覧の絞り込み)', () => {
 });
 
 /*
- * 一覧に出す置き場は「サーバーが計算した対象(SkillsData.selected)」に帰属するもの(計画 16 Phase A)。
- * サーバーは選んだプロジェクトを起点に置き場を解決するので、MemorySection.isCurrent は
- * 「cwd」ではなく「選んだプロジェクト(+ 本体)」の印になった。cwd 特別扱い(project.isCurrent &&
- * m.isCurrent)に戻すと、cwd 以外を選んだ環境で一覧だけが空になる ── ここで機械的に止める。
+ * 一覧に出す置き場は「サーバーが選んだプロジェクトのものとして印を付けたもの」= isCurrent
+ * (計画 16 Phase A / レビュー 2 周目)。サーバーは選んだプロジェクトを起点に置き場を走査する
+ * (memorySections(selectedPath))ので、isCurrent は「cwd」ではなく「選んだプロジェクト(+ 本体)」の印で、
+ * ホーム ②(session context)も同じ述語で数えている。
+ * web が selected.path / mainPath から組み直すと、逆引きの都合で projectPath が欠ける置き場が
+ * ② には出るのに一覧からだけ落ちる ── 述語が 1 本であることをここで機械的に止める。
  */
 describe('sectionsFor (選んだプロジェクトに帰属するセクション)', () => {
+  /* サーバーが選んだプロジェクトを起点に走査した応答なので、印が付くのは「選んだ側」 */
   const cur = section([item('a')], { id: 'cur', projectPath: '/repo', isCurrent: true });
   const other = section([item('b')], { id: 'oth', projectPath: '/other', projectName: 'other' });
   const orphan = section([item('c')], { id: 'orp', projectPath: null, orphan: true });
@@ -192,22 +188,11 @@ describe('sectionsFor (選んだプロジェクトに帰属するセクション
     sharedStore: true,
   });
   const memory = [cur, other, orphan, shared];
-  const proj = (note: string, isCurrent?: boolean): Section => ({
-    id: 'p',
-    source: 'project',
-    note,
-    items: [],
-    ...(isCurrent ? { isCurrent } : {}),
-  });
-  /* サーバーの応答。selected 以外は sectionsFor が見ないので最小限で作る */
-  const dataOf = (path: string, extra: Partial<SelectedProject> = {}): SkillsData =>
-    ({
-      memory,
-      selected: { id: 'p', path, name: path.slice(1), isCwd: path === '/repo', ...extra },
-    }) as unknown as SkillsData;
+  /* サーバーの応答。sectionsFor が見るのは memory だけなので最小限で作る */
+  const dataOf = (mem: MemorySection[]): SkillsData => ({ memory: mem }) as unknown as SkillsData;
 
-  it('all は全部(プロジェクト不明・共有ストアもここでだけ見える)', () => {
-    expect(sectionsFor(dataOf('/repo'), 'all').map((s) => s.id)).toEqual([
+  it('all(すべてのプロジェクト)は全部。プロジェクト不明・共有ストアもここでだけ見える', () => {
+    expect(sectionsFor(dataOf(memory), true).map((s) => s.id)).toEqual([
       'cur',
       'oth',
       'orp',
@@ -215,39 +200,44 @@ describe('sectionsFor (選んだプロジェクトに帰属するセクション
     ]);
   });
 
-  it('選んだプロジェクトの置き場 +(逆引きできない)共有ストアが出る', () => {
-    expect(sectionsFor(dataOf('/repo'), proj('/repo', true)).map((s) => s.id)).toEqual([
-      'cur',
-      'auto-x',
-    ]);
-    // Section が無い(定義 0 件の)プロジェクトでも selected 基準なので同じ
-    expect(sectionsFor(dataOf('/repo'), null).map((s) => s.id)).toEqual(['cur', 'auto-x']);
-  });
-
-  it('cwd 以外を選んでも空にならない(共有ストアがある環境でも他プロジェクトの置き場が出る)', () => {
-    expect(sectionsFor(dataOf('/other'), proj('/other')).map((s) => s.id)).toEqual([
-      'oth',
-      'auto-x',
-    ]);
-  });
-
-  it('worktree を選ぶと本体(mainPath)の置き場が出る(memory は本体に収束する)', () => {
-    const d = dataOf('/repo-wt', { mainPath: '/repo' });
-    expect(sectionsFor(d, proj('/repo-wt')).map((s) => s.id)).toEqual(['cur', 'auto-x']);
+  it('1 プロジェクトのときは isCurrent だけ(置き場 +(逆引きできない)共有ストア)', () => {
+    expect(sectionsFor(dataOf(memory), false).map((s) => s.id)).toEqual(['cur', 'auto-x']);
   });
 
   it('他プロジェクトの置き場と、逆引きできない孤児(選択の印なし)は出ない', () => {
-    expect(sectionsFor(dataOf('/nowhere'), proj('/nowhere')).map((s) => s.id)).toEqual(['auto-x']);
-    expect(sectionsFor(dataOf('/repo'), proj('/repo', true)).map((s) => s.id)).not.toContain('oth');
-    expect(sectionsFor(dataOf('/repo'), proj('/repo', true)).map((s) => s.id)).not.toContain('orp');
+    const ids = sectionsFor(dataOf(memory), false).map((s) => s.id);
+    expect(ids).not.toContain('oth');
+    expect(ids).not.toContain('orp');
   });
 
-  it('判定の基準は Section ではなく selected(取り直し中に param が先に変わっても応答に従う)', () => {
-    // 切替の途中で渡ってくる Section が古くても、出すのはサーバーが計算した対象の置き場
-    expect(sectionsFor(dataOf('/other'), proj('/repo', true)).map((s) => s.id)).toEqual([
-      'oth',
-      'auto-x',
-    ]);
+  /*
+   * cwd 以外(/other)を選んだ応答では、サーバーがその起点で走査するので印は /other 側に付く。
+   * projectPath ではなく isCurrent で見ていれば、cwd 特別扱いに戻らない限り一覧は空にならない。
+   */
+  it('cwd 以外を選んだ応答でも空にならない(印は選んだ側に付いている)', () => {
+    const onOther = [
+      { ...cur, isCurrent: undefined },
+      { ...other, isCurrent: true },
+      orphan,
+      shared,
+    ] as MemorySection[];
+    expect(sectionsFor(dataOf(onOther), false).map((s) => s.id)).toEqual(['oth', 'auto-x']);
+  });
+
+  /*
+   * worktree を選ぶと memory は本体(mainPath)へ収束し、サーバーは本体の置き場に印を付ける
+   * (scanMemory の currentPaths = 起点 + そのメインワークツリー)。
+   * web が worktrees 由来の mainPath から組み直すと、逆リンク検証に落ちた worktree で
+   * 本体が欠け、② は出るのに一覧が空に戻る ── projectPath を見ないことを固定する。
+   */
+  it('本体に印が付いた応答(worktree を選んだとき)はそのまま出す', () => {
+    const onWt = [{ ...cur, isCurrent: true }, other, orphan, shared] as MemorySection[];
+    expect(sectionsFor(dataOf(onWt), false).map((s) => s.id)).toEqual(['cur', 'auto-x']);
+  });
+
+  it('memory を返さない応答(未インストール環境)は空', () => {
+    expect(sectionsFor({} as SkillsData, false)).toEqual([]);
+    expect(sectionsFor({} as SkillsData, true)).toEqual([]);
   });
 });
 

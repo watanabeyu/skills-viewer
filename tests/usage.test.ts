@@ -284,6 +284,62 @@ describe('走査キャッシュは許可ルートごとに保持する(切替で
   });
 });
 
+/*
+ * 鍵を捨てる順は LRU(レビュー 2 周目)。ヒット時に順序を更新しない FIFO だと、5 つ目の鍵を
+ * 作った時点で「いちばん古く挿入された鍵」= 実環境では既定(空)の鍵が落ち、そこへ戻ったときに
+ * 全 transcript を読み直す(実測 705ms)。使ったばかりの鍵は残り、代わりに 2 番目に古い鍵が落ちる。
+ *
+ * 観測のしかたは上の describe と同じで、mtime を据え置いたまま中身を差し替える
+ * (キャッシュが残っていれば古い結果、捨てられていれば新しい結果)。
+ */
+describe('走査キャッシュの追い出しは LRU(使ったばかりの鍵は残る)', () => {
+  const root = path.join(tmp, 'lru-cache', '.claude', 'projects');
+  const store = path.join(tmp, 'lru-cache', 'store');
+  const other = (n: number) => path.join(tmp, 'lru-cache', 'x' + n);
+  const line = (fp: string, ts: string) =>
+    `{"timestamp":"${ts}","tool":{"name":"Read","input":{"file_path":"${fp}"}}}`;
+
+  it('6 鍵を回しても、間で使い直した鍵は残り、2 番目に古い鍵が落ちる', () => {
+    const dir = path.join(root, '-Users-x-lru');
+    fs.mkdirSync(dir, { recursive: true });
+    const jsonl = path.join(dir, 's1.jsonl');
+    const first = path.join(store, 'first.md');
+    const later = path.join(store, 'later.md');
+    fs.writeFileSync(jsonl, line(first, '2026-07-15T00:00:00.000Z'));
+    const fixed = new Date('2026-01-01T00:00:00.000Z');
+    fs.utimesSync(jsonl, fixed, fixed);
+
+    /*
+     * 上限は 4 鍵。他の describe が残した鍵を先に押し出して、この 1 件の中だけで順序が決まる
+     * ようにする(どの鍵が落ちるかを見るテストなので、前提の並びを固定する必要がある)。
+     * 鍵はどれも store を含める ── 置き場の外のパスは集計対象にならないので、
+     * 「同じ transcript を別の鍵で見る」状況を作るには全部の鍵から store が見えている必要がある。
+     */
+    for (let i = 1; i <= 4; i++) scanMemoryUsage(root, [store, other(100 + i)]);
+
+    const A = [store]; // 使い直す鍵(実環境では既定の空鍵に当たる)
+    const B = [store, other(1)]; // 2 番目に古い = 落ちる鍵
+    expect(scanMemoryUsage(root, A).byPath[first]).toMatchObject({ reads: 1 });
+    scanMemoryUsage(root, B);
+    scanMemoryUsage(root, [store, other(2)]);
+    scanMemoryUsage(root, A); // ここで A を使い直す(LRU なら末尾へ動く)
+
+    // 中身だけ差し替え、mtime は据え置く(読み直したかどうかだけを見る)
+    fs.writeFileSync(jsonl, line(later, '2026-07-15T01:00:00.000Z'));
+    fs.utimesSync(jsonl, fixed, fixed);
+
+    scanMemoryUsage(root, [store, other(3)]);
+    scanMemoryUsage(root, [store, other(4)]); // 5 鍵目 → 1 つ落ちる
+
+    // FIFO なら A(最初に入れた鍵)が落ちて later が見える。LRU なので A は残る
+    const back = scanMemoryUsage(root, A).byPath;
+    expect(back[first]).toMatchObject({ reads: 1 });
+    expect(back[later]).toBeUndefined();
+    // 落ちたのは 2 番目に古い B。読み直すので新しい中身が見える(据え置いた mtime のせいではない)
+    expect(scanMemoryUsage(root, B).byPath[later]).toMatchObject({ reads: 1 });
+  });
+});
+
 /* 入力は Set だけなので他 describe の fixture に依存させない(-t 指定の単独実行でも通す) */
 describe('hasTranscripts (usageAvailable の前方一致)', () => {
   const dirs = new Set(['-Users-x-repo', '-Users-x-repo-feat-a']);

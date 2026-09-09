@@ -68,7 +68,7 @@ export function MemoryList({
 }: MemoryListProps) {
   const all = data.memory || [];
   /* 一覧は選んだプロジェクト(サーバーが置き場を解決した起点)に帰属するものだけ(計画 16 Phase A) */
-  const sections = sectionsFor(data, project);
+  const sections = sectionsFor(data, project === 'all');
   const single = sections.length === 1 ? sections[0] : null;
   return (
     <div className="dv">

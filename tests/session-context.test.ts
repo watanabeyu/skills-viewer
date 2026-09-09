@@ -13,6 +13,25 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+/*
+ * transcript(.jsonl)を何回開いたかを数えるための素通しモック。ESM の node:fs は
+ * vi.spyOn できない(namespace が configurable でない)ので、モジュールごと差し替えて
+ * openSync だけを包む ── 実装は本物をそのまま呼ぶので、他の describe の挙動は変わらない。
+ * 使うのは最後の describe(collect が transcript を二度読みしないこと)だけ。
+ */
+const openedFiles = vi.hoisted(() => [] as string[]);
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    default: actual,
+    openSync: (...args: Parameters<typeof actual.openSync>) => {
+      openedFiles.push(String(args[0]));
+      return actual.openSync(...args);
+    },
+  };
+});
 import { descriptionBudget, sessionContext, sessionScope } from '../src/server/index';
 import { projectSectionId } from '../src/server/scan';
 import { encodeProjectPath } from '../src/server/usage';
@@ -295,6 +314,15 @@ describe('resolveSelectedProject (id が衝突したら cwd に落とす)', () =
 
   it('衝突が無ければ従来どおり解決する', () => {
     fs.rmSync(dashed, { recursive: true, force: true }); // 実在しない登録は候補から落ちる
+    /*
+     * 候補一式は ~/.claude.json の mtime を鍵にメモしている(レビュー 2 周目)ので、
+     * 登録簿を触らずにディレクトリだけ消しても組み直されない ── 実運用でも「登録済みの
+     * ディレクトリを消した」ことは登録簿が動くか再起動するまで反映されない、という限界。
+     * ここでは登録簿の mtime を進めて、メモが鍵どおりに捨てられることも同時に見る。
+     */
+    const registry = path.join(home, '.claude.json');
+    const later = new Date(Date.now() + 60_000);
+    fs.utimesSync(registry, later, later);
     expect(mod.resolveSelectedProject(cwd, projectSectionId(dotted))).toBe(dotted);
   });
 });
@@ -357,11 +385,19 @@ describe('triageTarget (棚卸しの対象は選んだプロジェクトを起�
 
 /*
  * collect の結線(レビュー 1 周目のテストの穴)。sessionScope / sessionContext の単体は
- * 純関数として固めてあったが、「走査の起点が本当に選んだプロジェクトか」はどこも見ていなかった
- * ── memory / CLAUDE.md / autoMemory / 予算のどれか 1 つを cwd に戻しても全テストが緑のままだった。
+ * 純関数として固めてあったが、「走査の起点が本当に選んだプロジェクトか」はどこも見ていなかった。
  *
  * alpha(cwd)と beta を登録し、beta だけに autoMemoryDirectory と MEMORY.md を置く。
- * beta を選んだ collect の結果が 4 点とも beta 由来になることを同時に固定する。
+ * ここで固定できるのは、選択を cwd に戻すと結果が変わる 3 点(レビュー 2 周目で言い直した):
+ *   - memory の走査起点(scanMemory / memorySections の引数)
+ *   - CLAUDE.md の走査起点(claudeMdLayers の root)
+ *   - description 予算 = ② の内訳(sessionScope に渡す id)
+ * 残る 2 つはここでは見えない ── 正直に書く:
+ *   - primeMemoryRoots(selectedPath): 許可ルートを揃えるだけで結果は変わらない
+ *     (cwd に戻すと transcript の二度読みが復活する)。下の「二度読みしない」テストで見る
+ *   - attachMemoryTriage の sharedEnv(resolveAutoMemoryDir(selectedPath)?.scope === 'user'):
+ *     結線を観測するには claude CLI の応答が要るので、値の効き方は
+ *     tests/memory-triage.test.ts 側で単体(sharedEnv: true / false)として固定している
  */
 describe('collect (走査の起点は選んだプロジェクト)', () => {
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sv-collect-')));
@@ -517,5 +553,68 @@ describe('changeInputs (collect と ack が同じ入力を見る)', () => {
     snapMod.ackChanges(i2.sections, i2.memory, i2.claudeMd, snap);
     const i3 = inputs();
     expect(snapMod.computeChanges(i3.sections, i3.memory, i3.claudeMd, snap)).toBeNull();
+  });
+});
+
+/*
+ * transcript を二度読みしないこと(レビュー 2 周目)。collect は
+ *   1. attributeUsage → scanUsageByDir(skill の実績)
+ *   2. memorySections → attributeMemoryUsage → scanMemoryUsage(memory の実績)
+ * の 2 回、同じ jsonl を走査する。走査結果のキャッシュ鍵は「自動メモリの許可ルート」なので、
+ * この 2 回の間で許可ルートがずれる(= primeMemoryRoots の起点が選択と食い違う)と、
+ * 同じファイルを 2 回読み直す ── 実環境の transcript は数百 MB あるので体感に出る。
+ * 結果の値には現れない性質なので、読み取り回数そのものを見る
+ * (jsonl はチャンク読みなので readFileSync ではなく openSync が 1 ファイル 1 回)。
+ */
+describe('collect (transcript を二度読みしない)', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sv-transcript-')));
+  const home = path.join(tmp, 'home');
+  const alpha = path.join(tmp, 'work', 'alpha'); // cwd
+  const beta = path.join(tmp, 'work', 'beta'); // 選ぶ方(置き場を設定している)
+  const store = path.join(tmp, 'beta-memory');
+  const transcripts = path.join(home, '.claude', 'projects');
+  let mod: typeof import('../src/server/index');
+
+  beforeAll(async () => {
+    for (const d of [home, alpha, path.join(beta, '.claude'), store])
+      fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ projects: { [alpha]: {}, [beta]: {} } }),
+    );
+    fs.writeFileSync(
+      path.join(beta, '.claude', 'settings.json'),
+      JSON.stringify({ autoMemoryDirectory: store }),
+    );
+    fs.writeFileSync(path.join(store, 'MEMORY.md'), '- [note](note.md) — beta の memory\n');
+    fs.writeFileSync(path.join(store, 'note.md'), '本文');
+    // 呼び出し元プロジェクトごとに 1 本ずつ(合計 2 本)
+    for (const p of [alpha, beta]) {
+      const dir = path.join(transcripts, encodeProjectPath(p));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, 's1.jsonl'),
+        [
+          '{"timestamp":"2026-07-20T00:00:00.000Z","tool":{"name":"Skill","input":{"skill":"x"}}}',
+          `{"timestamp":"2026-07-20T01:00:00.000Z","tool":{"name":"Read","input":{"file_path":"${path.join(store, 'note.md')}"}}}`,
+        ].join('\n'),
+      );
+    }
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/index');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('1 回の collect で開く jsonl は transcript の本数と同じ(skill 集計と memory 集計で共用)', () => {
+    openedFiles.length = 0; // 他の describe が開いた分は数えない
+    mod.collect(alpha, 'en', projectSectionId(beta));
+    const opened = openedFiles.filter((p) => p.endsWith('.jsonl'));
+    expect(opened).toHaveLength(2); // transcript 2 本 × 1 回
+    expect(new Set(opened).size).toBe(2); // 同じファイルを 2 度開いていない
   });
 });

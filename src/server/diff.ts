@@ -30,20 +30,22 @@ import { allowedPath } from './read-access';
 /* git show の出力上限。これを超える .md は差分表示の対象外(available: false に落ちる) */
 const MAX_BUFFER = 4 << 20;
 
-/*
- * 検証済みの (root, relPath)。rootOf はテスト注入用
- * (実在する git リポジトリを用意せずに `..` 脱出の防御を確かめられるように)。
- */
+/* 3 つ目以降は名前付きで受ける(レビュー 2 周目: 位置引数だと渡し忘れ・順の入れ替えに気づけない) */
+export interface DiffOptions {
+  /* リポジトリのルートを求める関数。テスト注入用(実在する git リポジトリを用意せずに `..` 脱出の防御を確かめる) */
+  rootOf?: (dir: string) => string | null;
+  /*
+   * 選んだプロジェクト(?project= の解決結果)。許可の母集団は cwd と選択の 2 つなので、
+   * /api/file と同じ答えを出すにはここにも渡す必要がある。
+   */
+  selectedPath?: string;
+}
+
+/* 検証済みの (root, relPath) */
 export function resolveDiffTarget(
   src: string,
   cwd: string = process.cwd(),
-  rootOf: (dir: string) => string | null = worktreeRootOf,
-  /*
-   * 選んだプロジェクト(?project= の解決結果)。許可の母集団は cwd と選択の 2 つなので、
-   * /api/file と同じ答えを出すにはここにも渡す必要がある。テスト注入の rootOf より後ろに
-   * 置いているのは、既存の呼び出し(src, cwd, rootOf)の位置を変えないため。
-   */
-  selectedPath?: string,
+  { rootOf = worktreeRootOf, selectedPath }: DiffOptions = {},
 ): { root: string; relPath: string } | { reason: DiffResponse['reason'] } {
   const raw = path.resolve(src);
   if (!raw.endsWith('.md')) throw new ApiError('not-md', raw);
@@ -110,10 +112,9 @@ function resolveExisting(abs: string): string {
 export function previousContent(
   src: string,
   cwd: string = process.cwd(),
-  rootOf: (dir: string) => string | null = worktreeRootOf,
-  selectedPath?: string,
+  opts: DiffOptions = {},
 ): DiffResponse {
-  const target = resolveDiffTarget(src, cwd, rootOf, selectedPath);
+  const target = resolveDiffTarget(src, cwd, opts);
   if ('reason' in target) return { available: false, reason: target.reason };
   try {
     const out = execFileSync('git', ['-C', target.root, 'show', `HEAD:${target.relPath}`], {
