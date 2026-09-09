@@ -468,9 +468,26 @@ export interface DescriptionBudget {
   source: 'default';
 }
 
+/*
+ * サーバーが「どのプロジェクトの文脈(claudeMd / context / budget / memory の isCurrent)を
+ * 計算したか」。?project=<id> の id はサーバー側で登録済みプロジェクトと照合され、
+ * 未知の id や省略時は cwd に落ちるので、web は要求ではなく結果のこれを見る(計画 16 判断 3)。
+ */
+export interface SelectedProject {
+  /* Section.id と同じ規則(projectSectionId)。0 件で Section が無いプロジェクトでも値は付く */
+  id: string;
+  path: string;
+  /* path の basename(表示用) */
+  name: string;
+  /* 起動ディレクトリそのものか。既定の選択がこれ */
+  isCwd: boolean;
+}
+
 export interface SkillsData {
   generatedAt: string;
   cwd: string;
+  /* この応答の ② を計算した対象。cwd は既定の選択にすぎない(計画 16) */
+  selected: SelectedProject;
   sections: Section[];
   aiStale: number;
   /*

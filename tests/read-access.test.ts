@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   allowedPath,
   assertAiReadableMd,
@@ -292,5 +292,89 @@ describe('assertOpenablePath (エディタで開ける範囲は拡張子を問�
     expect(() => assertOpenablePath(path.join(cwd, '.claude', 'no-such.json'), cwd)).toThrow(
       'not-found',
     );
+  });
+});
+
+/*
+ * 計画 16 判断 4: 許可範囲を「選べるプロジェクト全部」に広げる。
+ * ホーム ② が cwd 以外のプロジェクトの CLAUDE.md と自動メモリも見せるようになったので、
+ * 見せた本文が読めない(/api/file・エディタで開くが失敗する)状態を作らない。
+ * 広がる先は ~/.claude.json の登録簿に閉じており、未登録のパスは従来どおり拒む。
+ * scan.ts は HOME を import 時に固定するので、環境を差し替えてから動的 import する。
+ */
+describe('読み取り許可の母集団(登録済みプロジェクト全部)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-registry-'));
+  const home = path.join(root, 'home');
+  const cwd = path.join(root, 'alpha');
+  const other = path.join(root, 'beta');
+  const store = path.join(root, 'beta-memory'); // beta の autoMemoryDirectory
+  const unregistered = path.join(root, 'gamma');
+  let mod: typeof import('../src/server/read-access');
+
+  beforeAll(async () => {
+    for (const d of [home, cwd, other, store, unregistered]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ projects: { [cwd]: {}, [other]: {} } }),
+    );
+    fs.mkdirSync(path.join(other, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(other, '.claude', 'settings.json'),
+      JSON.stringify({ autoMemoryDirectory: store }),
+    );
+    fs.writeFileSync(path.join(other, 'CLAUDE.md'), '# beta');
+    fs.writeFileSync(path.join(other, 'CLAUDE.local.md'), '# beta local');
+    fs.writeFileSync(path.join(store, 'note.md'), '本文');
+    fs.writeFileSync(path.join(unregistered, 'CLAUDE.md'), '# gamma');
+    fs.writeFileSync(path.join(unregistered, 'free.md'), 'x');
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/read-access');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('別の登録済みプロジェクトの CLAUDE.md を cwd から読める', () => {
+    const fp = path.join(other, 'CLAUDE.md');
+    expect(mod.assertReadableMd(fp, cwd)).toBe(fs.realpathSync(fp));
+    expect(mod.allowedPath(fp, cwd)).toBe(true);
+    expect(mod.assertOpenablePath(fp, cwd)).toBe(fs.realpathSync(fp));
+  });
+
+  it('別の登録済みプロジェクトが設定した置き場の memory も読める', () => {
+    const fp = path.join(store, 'note.md');
+    expect(mod.assertReadableMd(fp, cwd)).toBe(fs.realpathSync(fp));
+  });
+
+  it('未登録のプロジェクトのパスは CLAUDE.md でも拒む(登録簿が範囲の上限)', () => {
+    expect(() => mod.assertReadableMd(path.join(unregistered, 'CLAUDE.md'), cwd)).toThrow(
+      'not-readable-path',
+    );
+    expect(() => mod.assertReadableMd(path.join(unregistered, 'free.md'), cwd)).toThrow(
+      'not-readable-path',
+    );
+    // 登録済みプロジェクトでも、走査に載らない名前は従来どおり通さない
+    fs.writeFileSync(path.join(other, 'README.md'), '# readme');
+    expect(() => mod.assertReadableMd(path.join(other, 'README.md'), cwd)).toThrow(
+      'not-readable-path',
+    );
+  });
+
+  /*
+   * AI 送信用の集合は広げ方が違う: 置き場だけを登録済みプロジェクトまで広げ、CLAUDE.md 群は
+   * 入れない(表示のみ。README Security の約束)。実装を表示用と同じ広さに戻すとここが落ちる。
+   */
+  it('assertAiReadableMd は置き場だけ広げ、CLAUDE.md 群は通さない', () => {
+    const mem = path.join(store, 'note.md');
+    expect(mod.assertAiReadableMd(mem, cwd)).toBe(fs.realpathSync(mem));
+    for (const name of ['CLAUDE.md', 'CLAUDE.local.md']) {
+      const fp = path.join(other, name);
+      // 表示は通るのに AI には渡らない、という非対称をここで固定する
+      expect(mod.assertReadableMd(fp, cwd)).toBe(fs.realpathSync(fp));
+      expect(() => mod.assertAiReadableMd(fp, cwd)).toThrow('not-readable-path');
+    }
   });
 });

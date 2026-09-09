@@ -11,7 +11,22 @@ import * as path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { isUnder, resolveAutoMemoryDir, samePath } from './memory';
 import { claudeMdPaths } from './claude-md';
+import { listProjects } from './scan';
 import { ApiError } from './errors';
+
+/*
+ * 許可範囲の母集団になるプロジェクト(計画 16 判断 4)。cwd だけでなく ~/.claude.json に
+ * 登録済みのプロジェクトまで広げる: ホーム ② が「選んだプロジェクトで claude を起動したら
+ * 何が入るか」を答えるようになり、cwd 以外のプロジェクトの CLAUDE.md と自動メモリも画面に出る
+ * ── 出しておいて本文が読めない(/api/file・エディタで開くが失敗する)のでは意味がない。
+ * 広がる先は利用者自身の登録簿に閉じていて、任意のパスは入らない。
+ * cwd を明示的に足すのは listProjects が HOME を落とすため(ホーム直下で起動したときに
+ * user scope の置き場が許可から外れるのを防ぐ)。
+ * scan.ts への import は memory.ts が listProjects を使うのと同じ向きで、循環しない。
+ */
+function accessRoots(cwd: string): string[] {
+  return [...new Set([path.resolve(cwd), ...listProjects(cwd)])];
+}
 
 /* realpath 解決(存在しないパスは not-found に正規化) */
 function realpathOrThrow(p: string): string {
@@ -28,8 +43,8 @@ function realpathOrThrow(p: string): string {
  * 一覧に出ている本文が読めない(fetchFile・棚卸しモーダル・エディタで開くが全滅する)。
  */
 const autoRealMemo = new Map<string, string>();
-function autoMemoryRoot(cwd: string): string | null {
-  const info = resolveAutoMemoryDir(cwd);
+function autoMemoryRoot(root: string): string | null {
+  const info = resolveAutoMemoryDir(root);
   if (!info) return null;
   const cached = autoRealMemo.get(info.dir);
   if (cached) return cached;
@@ -49,11 +64,16 @@ function autoMemoryRoot(cwd: string): string | null {
  * (symlink 経由のパスで一致が外れないように / `<dir>-other` のような兄弟を巻き込まないように)。
  * `.claude` のルールは緩めず、この許可を足すだけ。
  */
-function underAutoMemory(real: string, cwd: string): boolean {
-  const root = autoMemoryRoot(cwd);
-  // isUnder はケース非依存 FS で case-fold する(root が `/USERS/…` のとき
+function underAutoMemory(real: string, root: string): boolean {
+  const dir = autoMemoryRoot(root);
+  // isUnder はケース非依存 FS で case-fold する(dir が `/USERS/…` のとき
   // 実ファイルの realpath `/Users/…` と取り違えないように)
-  return !!root && real !== root && isUnder(real, root);
+  return !!dir && real !== dir && isUnder(real, dir);
+}
+
+/* 登録済みプロジェクトのどれかの置き場の配下か。解決は解決値ごとに memo 済みなので安い */
+function underAnyAutoMemory(real: string, cwd: string): boolean {
+  return accessRoots(cwd).some((root) => underAutoMemory(real, root));
 }
 
 const underDotClaude = (real: string) => real.includes(path.sep + '.claude' + path.sep);
@@ -65,8 +85,8 @@ const underDotClaude = (real: string) => real.includes(path.sep + '.claude' + pa
  * 管理ポリシーは本文を返さない段なので claudeMdPaths が含めない(許可の対象外)。
  * @import 先は展開位置の印だけを出す(本文は読まない)ので対象外。
  */
-function isClaudeMdLayerFile(target: string, cwd: string): boolean {
-  for (const fp of claudeMdPaths({ root: cwd })) {
+function isClaudeMdLayerFile(target: string, root: string): boolean {
+  for (const fp of claudeMdPaths({ root })) {
     // ケース非依存 FS では realpath もケースを畳まないので、比較側で畳む(v0.8.1 の判断)。
     // 生パスと realpath の両方で見るのは、呼び出し側が realpath を通しているかどちらもあり得るため
     if (samePath(fp, target)) return true;
@@ -99,7 +119,7 @@ export function allowedPath(abs: string, cwd: string = process.cwd()): boolean {
      * 全候補の realpath を無駄に走らせるだけ)。消えた CLAUDE.md の差分を出したいなら、
      * 走査側に「存在で絞らない列挙」を足す必要がある ── 許可の広がりを伴うので別途。
      */
-    return underDotClaude(abs) || underAutoMemory(abs, cwd);
+    return underDotClaude(abs) || underAnyAutoMemory(abs, cwd);
   }
   return allowed(real, cwd);
 }
@@ -108,17 +128,32 @@ export function allowedPath(abs: string, cwd: string = process.cwd()): boolean {
  * AI(claude -p)に本文を送ってよいか。表示のための読み取りより狭くする。
  * CLAUDE.local.md は通常 gitignore される私的なファイルで、.claude 配下の定義ファイルとは
  * 機微度が違う(README は memory 棚卸しについて「見出しだけを送る」と約束している)。
+ *
+ * 自動メモリの置き場だけは表示用と同じ「登録済みプロジェクト全部」に広げる(計画 16 判断 4):
+ * 選んだプロジェクトの memory 棚卸しは本文を CLI に送るため(cwd の分は従来から送っている)。
+ * CLAUDE.md 群はここに入れない ── 表示だけという README Security の約束を保つ。
  */
 export function assertAiReadableMd(p: string, cwd: string = process.cwd()): string {
   const real = realpathOrThrow(p);
   if (!real.endsWith('.md')) throw new ApiError('not-md', real);
-  if (!underDotClaude(real) && !underAutoMemory(real, cwd))
+  if (!underDotClaude(real) && !underAnyAutoMemory(real, cwd))
     throw new ApiError('not-readable-path', real);
   return real;
 }
 
-const allowed = (real: string, cwd: string) =>
-  underDotClaude(real) || underAutoMemory(real, cwd) || isClaudeMdLayerFile(real, cwd);
+/*
+ * 表示用の集合 = .claude 配下 ∪ 登録済みプロジェクトの置き場配下 ∪ 同じ集合の CLAUDE.md 群。
+ * 置き場を先に一巡してから CLAUDE.md 群を見るのは、置き場の解決が memo 済みで安いのに対し、
+ * CLAUDE.md 群はプロジェクトごとに existsSync + realpath を伴うため。
+ */
+const allowed = (real: string, cwd: string) => {
+  if (underDotClaude(real)) return true;
+  const roots = accessRoots(cwd);
+  return (
+    roots.some((root) => underAutoMemory(real, root)) ||
+    roots.some((root) => isClaudeMdLayerFile(real, root))
+  );
+};
 
 /* 読み取りは plugin 配下も許可(.claude 配下 + 自動メモリの置き場配下 + CLAUDE.md 群の .md のみ) */
 export function assertReadableMd(p: string, cwd: string = process.cwd()): string {

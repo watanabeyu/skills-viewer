@@ -19,7 +19,7 @@ import type {
   SessionContext,
   SkillsData,
 } from '../shared/types';
-import { scanSections } from './scan';
+import { listProjects, projectSectionId, scanSections } from './scan';
 import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
 import {
   publicMemory,
@@ -190,17 +190,22 @@ const DESCRIPTION_BUDGET = 2000;
 
 /*
  * そのセッションに注入される母集団。scanSections は登録済みの全プロジェクトを返すので、
- * 現在プロジェクト以外の project セクションを外さないと、複数プロジェクトを登録した環境で
+ * 選んだプロジェクト以外の project セクションを外さないと、複数プロジェクトを登録した環境で
  * description の合計が数倍になり、予算超過の警告が常時出る。
  * 起動時サマリ(printStartupSummary)と同じ式を 1 か所に寄せる。
+ *
+ * 絞り込みは isCurrent(= cwd)ではなく選んだプロジェクトの id で見る(計画 16 判断 1):
+ * 答えるのは「選んだプロジェクトで claude を起動したら何が注入されるか」で、cwd はその既定値。
+ * 選んだプロジェクトの定義が 0 件なら Section 自体が無いので、project 段は空になる。
  */
-export function sessionScope(sections: Section[]): Section[] {
-  return sections.filter((s) => s.source !== 'project' || s.isCurrent);
+export function sessionScope(sections: Section[], selectedId: string): Section[] {
+  return sections.filter((s) => s.source !== 'project' || s.id === selectedId);
 }
 
-export function descriptionBudget(sections: Section[]): DescriptionBudget {
+export function descriptionBudget(sections: Section[], selectedId: string): DescriptionBudget {
   let used = 0;
-  for (const s of sessionScope(sections)) for (const it of s.items) used += it.tokens || 0;
+  for (const s of sessionScope(sections, selectedId))
+    for (const it of s.items) used += it.tokens || 0;
   return { used, limit: DESCRIPTION_BUDGET, source: 'default' };
 }
 
@@ -212,10 +217,11 @@ export function sessionContext(
   sections: Section[],
   memory: MemorySection[],
   claudeMd: ClaudeMdScan,
+  selectedId: string,
 ): SessionContext {
   let count = 0;
   let hiddenCount = 0;
-  for (const s of sessionScope(sections)) {
+  for (const s of sessionScope(sections, selectedId)) {
     for (const it of s.items) {
       if (it.kind === 'hook') continue;
       if (it.hidden) hiddenCount++;
@@ -224,9 +230,11 @@ export function sessionContext(
   }
   /*
    * 索引のコストは memory 側が上限(200 行 / 25KB)の外を除いて計算済みなので、それを足す。
-   * 母集団は sessionScope と同じ「現在のプロジェクトだけ」。cwd が未登録なら 0 行になり、
-   * 画面はこの行を出さない。全プロジェクトを合算するフォールバックは置かない
-   * (description は user だけに縮むのに索引だけ全件になり、3 つの内訳の母集団がずれる)。
+   * 母集団は sessionScope と同じ「選んだプロジェクトだけ」── memory は選んだプロジェクトを
+   * 起点に走査しているので、その isCurrent がそのまま選択と一致する。選んだプロジェクトに
+   * memory が無ければ 0 行になり、画面はこの行を出さない。全プロジェクトを合算する
+   * フォールバックは置かない(description は user だけに縮むのに索引だけ全件になり、
+   * 3 つの内訳の母集団がずれる)。
    */
   const target = memory.filter((m) => m.isCurrent);
   return {
@@ -238,7 +246,7 @@ export function sessionContext(
       limitBytes: 25 * 1024,
     },
     descriptions: {
-      tok: descriptionBudget(sections).used,
+      tok: descriptionBudget(sections, selectedId).used,
       count,
       hiddenCount,
       limit: DESCRIPTION_BUDGET,
@@ -273,8 +281,52 @@ function primeMemoryRoots(cwd: string): void {
   setMemoryRoots(real !== auto.dir ? [auto.dir, real] : [auto.dir]);
 }
 
-function collect(cwd: string, lang: Lang): SkillsData {
-  primeMemoryRoots(cwd);
+/*
+ * ?project=<id> の解決候補。今は登録済みプロジェクト(+ cwd)そのままだが、
+ * 計画 16 Phase C で worktree を足すので、候補を組み立てる場所を 1 か所にしておく。
+ */
+export function projectCandidates(cwd: string): string[] {
+  return listProjects(cwd);
+}
+
+/*
+ * ?project=<id> → 文脈を計算するプロジェクトのパス。
+ * 受け取るのは id だけで、生のパスは解釈しない(計画 16 判断 2): 候補を projectSectionId で
+ * 突き合わせて一致したものだけを採り、'all'・未知の id・省略はすべて cwd に落とす。
+ * こうしておけば「?project= に任意のパスを渡して読ませる」経路が生まれない。
+ */
+export function resolveSelectedProject(cwd: string, id: string | null): string {
+  const fallback = path.resolve(cwd);
+  if (!id || id === 'all') return fallback;
+  for (const p of projectCandidates(cwd)) if (projectSectionId(p) === id) return path.resolve(p);
+  return fallback;
+}
+
+/*
+ * 棚卸し(POST /api/memory-triage)の対象セクションと、その走査に使った起点(計画 16)。
+ * 起点を選べるようにしたのは autoMemoryDirectory の置き場のため: そのセクションは置き場を
+ * 設定したプロジェクトを起点に走査したときだけ現れるので、cwd 固定だと一覧(/api/skills は
+ * 選んだプロジェクトで走査する)には出ているのに棚卸しだけ not-found になる。
+ * ハンドラから切り出しているのはテストのため(HTTP を起こさずに id の解決を確かめる。
+ * read-access.ts の assertOpenablePath と同じ理由)。
+ */
+export function triageTarget(
+  cwd: string,
+  selected: string | null,
+  sectionId: string,
+): { root: string; section: MemorySection | undefined } {
+  const root = resolveSelectedProject(cwd, selected);
+  return { root, section: memorySections(root).find((s) => s.id === sectionId) };
+}
+
+/*
+ * selectedPath は「選んだプロジェクト」= ② セッションの文脈を計算する対象(計画 16 判断 1)。
+ * cwd はその既定値でしかないが、①(changes)と起動時サマリは cwd 起点のまま(判断 8)。
+ */
+function collect(cwd: string, lang: Lang, selectedPath: string): SkillsData {
+  const selectedId = projectSectionId(selectedPath);
+  const isCwd = selectedPath === path.resolve(cwd);
+  primeMemoryRoots(selectedPath);
   const sections = scanSections(cwd, lang);
   const usageAvailable = attributeUsage(sections);
   const summaries = loadSummaries();
@@ -304,23 +356,37 @@ function collect(cwd: string, lang: Lang): SkillsData {
   const grp = attachGroups(sections, lang);
   const aiStale = staleItems(sections, lang).length;
   // memory は「呼び出す」ものではないので sections には混ぜず、別配列で同乗させる
-  const memory = memorySections(cwd);
-  // 共有ストア環境かどうかは cwd から解決した値で判定する(棚卸し側と同じ事実を見る)
+  const memory = memorySections(selectedPath);
+  // 共有ストア環境かどうかは選んだプロジェクトから解決した値で判定する(棚卸し側と同じ事実を見る)
   attachMemoryTriage(memory, lang, undefined, {
-    sharedEnv: resolveAutoMemoryDir(cwd)?.scope === 'user',
+    sharedEnv: resolveAutoMemoryDir(selectedPath)?.scope === 'user',
   });
-  const claudeMd = claudeMdLayers({ root: cwd });
+  const claudeMd = claudeMdLayers({ root: selectedPath });
+  /*
+   * ①(既読基準)は cwd 起点のまま(計画 16 判断 8)。選択に追随させると、別プロジェクトを
+   * 選んだだけで cwd の CLAUDE.md が「削除」に化け、しかも「既読にする」(/api/changes-ack は
+   * cwd 起点)を押しても消えない差分になる。cwd を選んでいる通常時は計算済みのものを使い回す。
+   * 差分に要るのはパスと内容ハッシュだけなので、cwd 側は実績付与(memorySections)を通さない。
+   */
+  const cwdMemory = isCwd ? memory : scanMemory(cwd);
+  const cwdClaudeMd = isCwd ? claudeMd : claudeMdLayers({ root: cwd });
   return {
     generatedAt: new Date().toISOString(),
     cwd,
+    selected: {
+      id: selectedId,
+      path: selectedPath,
+      name: path.basename(selectedPath),
+      isCwd,
+    },
     sections,
     aiStale,
     aiAvailable,
     usageAvailable,
     claudeMd,
-    budget: descriptionBudget(sections),
-    context: sessionContext(sections, memory, claudeMd),
-    changes: computeChanges(sections, memory, claudeMdRefs(claudeMd)),
+    budget: descriptionBudget(sections, selectedId),
+    context: sessionContext(sections, memory, claudeMd, selectedId),
+    changes: computeChanges(sections, cwdMemory, claudeMdRefs(cwdClaudeMd)),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
     ...(memory.length ? { memory: publicMemory(memory) } : {}),
@@ -363,7 +429,15 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
     try {
       if (url.pathname === '/api/token') return send(200, { token: TOKEN });
       if (url.pathname === '/api/skills')
-        return send(200, collect(cwd, langOf(url.searchParams.get('lang'))));
+        return send(
+          200,
+          collect(
+            cwd,
+            langOf(url.searchParams.get('lang')),
+            // 読み取りパラメータなのでトークンは要らない(GET / mutation の二分はそのまま)
+            resolveSelectedProject(cwd, url.searchParams.get('project')),
+          ),
+        );
       if (url.pathname === '/api/summary-status') return send(200, summaryStatus());
       if (url.pathname === '/api/file') {
         const real = assertReadableMd(url.searchParams.get('src') || '', cwd);
@@ -435,7 +509,20 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       if (url.pathname === '/api/memory-triage') {
         // 1 プロジェクト分をまとめて 1 回の claude 呼び出しで棚卸しする(結果は再取得で反映)
         const project = String(data.project || '');
-        const sec = memorySections(cwd).find((s) => s.id === project);
+        /*
+         * memory を走査する起点(計画 16)。/api/skills の ?project= と同じ Section.id を
+         * 受け、resolveSelectedProject に解決させる(候補との一致だけ。生のパスは解釈せず、
+         * 省略・未知は cwd に落ちるので従来と同じ経路)。body の `project` は
+         * MemorySection.id で埋まっている(意味が違う)ため、別のキーで受ける。
+         * 起点が要るのは autoMemoryDirectory の置き場: そのセクションは置き場を設定した
+         * プロジェクトを起点に走査したときだけ現れるので、cwd 固定のままだと画面には出るのに
+         * 棚卸しだけ not-found になる。sharedEnv(共有ストア環境か)も同じパスで解決する。
+         */
+        const { root: selectedPath, section: sec } = triageTarget(
+          cwd,
+          typeof data.selected === 'string' ? data.selected : null,
+          project,
+        );
         if (!sec) throw new ApiError('not-found', project);
         const files = Array.isArray(data.files)
           ? data.files.filter((f: unknown): f is string => typeof f === 'string')
@@ -446,9 +533,9 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
           force: !!data.force,
           files,
           sections: () => scanSections(cwd, lang),
-          // 置き場の解決は起動ディレクトリ基準。process.cwd() 任せにせず、この
-          // リクエストと同じ cwd で解決した値を渡す(スキャン・読み取り許可と同じ事実を見る)
-          autoMemory: resolveAutoMemoryDir(cwd),
+          // 置き場の解決は選んだプロジェクト基準。process.cwd() 任せにせず、走査に使ったのと
+          // 同じパスで解決した値を渡す(一覧・読み取り許可と同じ事実を見る)
+          autoMemory: resolveAutoMemoryDir(selectedPath),
         })
           .then((results) => send(200, { ok: true, results }))
           .catch((e) => send(400, toErrorBody(e)));
@@ -503,7 +590,8 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
  */
 function printStartupSummary(cwd: string): void {
   try {
-    const data = collect(cwd, serverLang);
+    // 起動時サマリは cwd の文脈(計画 16 判断 8)。CLI に選択という概念は無い
+    const data = collect(cwd, serverLang, path.resolve(cwd));
     const ch = data.changes;
     if (ch) {
       console.log(
