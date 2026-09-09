@@ -12,7 +12,6 @@ import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-
 import {
   fetchFile,
   fromId,
-  openSkill,
   toId,
   type MemorySection,
   type SkillItem,
@@ -30,15 +29,14 @@ import {
 } from '../util';
 import { allSignals, indexMatchOf, triageMeta } from '../memory';
 import { historyOf } from '../detail';
-import { editorUrl, loadEditorSetting } from '../settings';
 import { esc, mdRender, splitFrontmatter } from '../md';
 import { memoryVerdictLabel, t } from '../i18n';
 import { CopyButton, InlineError, InlineNote } from './Inline';
+import { EditorButton, useOpenEditor } from './EditorButton';
 import { FactCell, Sparkline } from './FactsBand';
 import { Instruction } from './InvokeBlock';
 import { KindPill, SourcePill } from './Rows';
 import {
-  EditorIcon,
   MemoryTypePill,
   SignalLine,
   StateDot,
@@ -127,21 +125,7 @@ export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () =>
 
 /* 名前とチップ(memory / type / プロジェクト)、右端に「エディタで開く」。下に description */
 function TitleBlock({ it, sec }: { it: SkillItem; sec: MemorySection }) {
-  const [openError, setOpenError] = useState('');
-  const onOpenEditor = async () => {
-    // 設定(⚙)の URL スキームで開く。OS デフォルト設定時のみサーバー側で開く
-    setOpenError('');
-    const url = editorUrl(loadEditorSetting(), it.path);
-    if (url) {
-      window.location.href = url;
-      return;
-    }
-    try {
-      await openSkill(it.path);
-    } catch (e) {
-      setOpenError(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
+  const { openError, onOpenEditor } = useOpenEditor(it.path);
   return (
     <div className="dv-title">
       <div className="dv-title-row">
@@ -162,10 +146,7 @@ function TitleBlock({ it, sec }: { it: SkillItem; sec: MemorySection }) {
         <span className="dv-title-r">
           <InlineError msg={openError} />
           {/* memory は読み取り専用: 削除・コピーは置かない(変更は指示文経由で Claude Code に委ねる) */}
-          <button className="btn" onClick={onOpenEditor}>
-            <EditorIcon />
-            {t('detail.openEditor')}
-          </button>
+          <EditorButton onClick={onOpenEditor} />
         </span>
       </div>
       {it.description && <p className="dv-desc">{it.description}</p>}

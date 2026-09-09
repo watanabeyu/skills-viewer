@@ -11,12 +11,12 @@
 
 import { useState } from 'react';
 import { Navigate, useParams, useSearchParams } from 'react-router-dom';
-import { fromId, openSkill, summarizeSkill, type SkillsData } from '../api';
+import { fromId, summarizeSkill, type SkillsData } from '../api';
 import { makeResolve } from '../detail';
 import { isUnused, type FlatItem } from '../util';
-import { editorUrl, loadEditorSetting } from '../settings';
 import { t } from '../i18n';
 import { InlineError, InlineNote } from './Inline';
+import { EditorButton, useOpenEditor } from './EditorButton';
 import { InvPill, KindPill, SourcePill, WarnBadge } from './Rows';
 import { FactsBand } from './FactsBand';
 import { InvokeBlock } from './InvokeBlock';
@@ -90,21 +90,6 @@ function SkillBody({
   );
 }
 
-function EditorIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-    >
-      <path d="M6 3H3v10h10v-3M9 3h4v4M13 3L7 9" />
-    </svg>
-  );
-}
-
 /*
  * 名前とチップ、右端に「エディタで開く」。その下に ✦ 一言要約と description 全文。
  * hook は description がコマンドそのもの(コマンドのブロックで出す)なので本文行を出さない
@@ -120,23 +105,9 @@ function TitleBlock({
 }) {
   const [summarizing, setSummarizing] = useState(false);
   // 操作起点の失敗はボタンの脇に 1 行で出す(alert は使わない)
-  const [openError, setOpenError] = useState('');
   const [summaryError, setSummaryError] = useState('');
+  const { openError, onOpenEditor } = useOpenEditor(it.path);
 
-  const onOpenEditor = async () => {
-    // 設定(⚙)の URL スキームで開く。OS デフォルト設定時のみサーバー側で開く
-    setOpenError('');
-    const url = editorUrl(loadEditorSetting(), it.path);
-    if (url) {
-      window.location.href = url;
-      return;
-    }
-    try {
-      await openSkill(it.path);
-    } catch (e) {
-      setOpenError(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
   const onSummarize = async () => {
     setSummarizing(true);
     setSummaryError('');
@@ -180,12 +151,7 @@ function TitleBlock({
               {summarizing ? t('detail.summarizing') : '✦ ' + t('detail.resummarize')}
             </button>
           )}
-          {!!it.path && (
-            <button className="btn" onClick={onOpenEditor}>
-              <EditorIcon />
-              {t('detail.openEditor')}
-            </button>
-          )}
+          {!!it.path && <EditorButton onClick={onOpenEditor} />}
         </span>
       </div>
       {it.aiSummary && (

@@ -71,18 +71,3 @@ export const runTriage = (sec: MemorySection, it?: SkillItem) =>
         undefined,
         sec.items.every((x) => !!x.aiTriage),
       );
-
-export function EditorIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-    >
-      <path d="M6 3H3v10h10v-3M9 3h4v4M13 3L7 9" />
-    </svg>
-  );
-}

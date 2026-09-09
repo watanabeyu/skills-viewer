@@ -13,7 +13,6 @@ import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-
 import {
   fetchDiff,
   fromId,
-  openSkill,
   toId,
   type ClaudeMdFile,
   type ClaudeMdLayer,
@@ -42,9 +41,9 @@ import {
 } from '../claudemd';
 import { changeMarkOf, currentSection, fileName, fmtDate, relTimeLabel } from '../util';
 import { mdRender, splitFrontmatter, splitPreview } from '../md';
-import { editorUrl, loadEditorSetting } from '../settings';
 import { t, type MsgKey } from '../i18n';
 import { InlineError } from './Inline';
+import { EditorButton, useOpenEditor } from './EditorButton';
 import { FactCell } from './FactsBand';
 import { DiffBlock, useMdText } from './FullText';
 import { KindPill, Mark, SourcePill } from './Rows';
@@ -54,21 +53,6 @@ const kindLabel = (kind: ClaudeMdLayer['kind']) => t(('cmd.kind.' + kind) as Msg
 /* 存在する段の並び(重複する project は 1 つに寄せる。「user · project · rules」) */
 function presentList(data: SkillsData): string {
   return [...new Set(presentKinds(data.claudeMd).map(kindLabel))].join(' · ');
-}
-
-function EditorIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-    >
-      <path d="M6 3H3v10h10v-3M9 3h4v4M13 3L7 9" />
-    </svg>
-  );
 }
 
 export function ClaudeMdView({ data }: { data: SkillsData }) {
@@ -109,24 +93,10 @@ export function ClaudeMdView({ data }: { data: SkillsData }) {
 
 /* 名前とチップ、右端に「エディタで開く」(選択中のファイル。管理ポリシーは開けない)。下に要約文 */
 function TitleBlock({ data, file }: { data: SkillsData; file?: ClaudeMdFile }) {
-  const [openError, setOpenError] = useState('');
   const project = currentSection(data.sections);
   const projectLabel = project?.projectName || fileName(data.cwd);
   const kinds = presentKinds(data.claudeMd);
-  const onOpenEditor = async () => {
-    if (!file) return;
-    setOpenError('');
-    const url = editorUrl(loadEditorSetting(), file.path);
-    if (url) {
-      window.location.href = url;
-      return;
-    }
-    try {
-      await openSkill(file.path);
-    } catch (e) {
-      setOpenError(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
+  const { openError, onOpenEditor } = useOpenEditor(file?.path || '');
   return (
     <div className="dv-title">
       <div className="dv-title-row">
@@ -135,12 +105,7 @@ function TitleBlock({ data, file }: { data: SkillsData; file?: ClaudeMdFile }) {
         <SourcePill source="project" label={projectLabel} />
         <span className="dv-title-r">
           <InlineError msg={openError} />
-          {file && !file.bodyWithheld && (
-            <button className="btn" onClick={onOpenEditor}>
-              <EditorIcon />
-              {t('detail.openEditor')}
-            </button>
-          )}
+          {file && !file.bodyWithheld && <EditorButton onClick={onOpenEditor} />}
         </span>
       </div>
       <p className="dv-desc">

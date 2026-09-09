@@ -10,7 +10,6 @@
 
 import { useState } from 'react';
 import type { MemorySection, Section, SkillItem, SkillsData } from '../api';
-import { openSkill } from '../api';
 import {
   changeMarkOf,
   fileName,
@@ -19,7 +18,6 @@ import {
   type MemorySortKey,
   type RefFilter,
 } from '../util';
-import { editorUrl, loadEditorSetting } from '../settings';
 import {
   TYPE_FILTERS,
   costOf,
@@ -31,14 +29,8 @@ import {
 import { memoryVerdictLabel, t, type MsgKey } from '../i18n';
 import { Bar, KindPill, Mark, SourcePill, useNarrow } from './Rows';
 import { InlineError, InlineNote } from './Inline';
-import {
-  EditorIcon,
-  MemoryTypePill,
-  StateDot,
-  VerdictWordCell,
-  runTriage,
-  usageTitle,
-} from './MemoryBits';
+import { EditorButton, useOpenEditor } from './EditorButton';
+import { MemoryTypePill, StateDot, VerdictWordCell, runTriage, usageTitle } from './MemoryBits';
 
 /*
  * memory 軸の並び順。URL パラメータは skill 軸の sort と分けて msort に置く
@@ -119,26 +111,12 @@ function TitleBlock({
   project: Section | 'all' | null;
   sec: MemorySection | null;
 }) {
-  const [openError, setOpenError] = useState('');
   const isAll = project === 'all';
   const name = isAll
     ? ''
     : sec?.projectName || (project ? project.projectName || '' : fileName(data.cwd));
   const indexPath = sec ? sec.note.replace(/[\\/]+$/, '') + '/MEMORY.md' : '';
-  const onOpenEditor = async () => {
-    if (!indexPath) return;
-    setOpenError('');
-    const url = editorUrl(loadEditorSetting(), indexPath);
-    if (url) {
-      window.location.href = url;
-      return;
-    }
-    try {
-      await openSkill(indexPath);
-    } catch (e) {
-      setOpenError(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
+  const { openError, onOpenEditor } = useOpenEditor(indexPath);
   return (
     <div className="dv-title">
       <div className="dv-title-row">
@@ -157,12 +135,7 @@ function TitleBlock({
         )}
         <span className="dv-title-r">
           <InlineError msg={openError} />
-          {indexPath && (
-            <button className="btn" onClick={onOpenEditor}>
-              <EditorIcon />
-              {t('detail.openEditor')}
-            </button>
-          )}
+          {indexPath && <EditorButton onClick={onOpenEditor} />}
         </span>
       </div>
       <p className="dv-desc">{t(isAll ? 'memory.list.leadAll' : 'memory.list.lead')}</p>
