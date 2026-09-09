@@ -11,8 +11,6 @@ import {
 } from './api';
 import {
   asViewMode,
-  currentSection,
-  fileName,
   flatten,
   migrateLegacyParams,
   resolveProject,
@@ -89,10 +87,19 @@ export default function App() {
     setParams(next, { replace: true });
   };
 
+  /*
+   * 取得の世代番号。切替を連続で押すと応答が前後し得るので、直近の要求でない応答は捨てる。
+   * 要求した id と応答の selected.id の比較にはしない ── 未知の id をサーバーが cwd に
+   * 落とした正当な応答まで「不一致」で捨ててしまう(計画 16 Phase B)。
+   */
+  const gen = useRef(0);
   const reload = useCallback(async () => {
     clearMdCache();
-    setData(await fetchSkills());
-  }, []);
+    const mine = ++gen.current;
+    const next = await fetchSkills(projectParam);
+    if (mine !== gen.current) return;
+    setData(next);
+  }, [projectParam]);
 
   /* 言語切替: 全体が再レンダーされ、builtin 説明・AI要約の言語も変わるので再取得する */
   const changeLang = (l: Lang) => {
@@ -102,25 +109,32 @@ export default function App() {
     reload().catch(() => {});
   };
 
+  /* トークンは mutation にしか要らないので初回だけ(GET /api/skills には不要) */
   useEffect(() => {
-    (async () => {
-      try {
-        await initToken();
-        await reload();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    })();
+    initToken().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  /*
+   * 取得は ?project= が変わるたびにやり直す(切替 = /api/skills を取り直す。計画 16 Phase B)。
+   * ② だけ返す別エンドポイントは作らない: payload の形を 1 つに保ち、2 つの応答を
+   * 突き合わせずに済ませる。前例は言語切替(changeLang → reload)
+   */
+  useEffect(() => {
+    reload().catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [reload]);
 
   const all: FlatItem[] = useMemo(() => (data ? flatten(data.sections) : []), [data]);
   /* 理解画面ではプロジェクト切替の位置がパンくず(プロジェクト / 名前)になる(design-system 1.1) */
   const detailId = location.pathname.match(/^\/skills\/([^/]+)/)?.[1];
   const detailItem = detailId ? all.find((x) => x.key === fromId(detailId)) : undefined;
-  /* CLAUDE.md 画面(E2)もパンくず(cwd のプロジェクト / CLAUDE.md)。② はサーバーが cwd で計算した値なので常に cwd */
+  /* CLAUDE.md 画面(E2)もパンくず(プロジェクト / CLAUDE.md)。段はサーバーが選んだプロジェクトで計算する */
   const claudeMdRoute = location.pathname.startsWith('/claude-md');
+  /*
+   * 選択はサーバーが計算した対象(data.selected)に従う。未知の id はサーバーが cwd に落とすが、
+   * URL は書き換えない ── 共有 URL をこちらで壊さず、表示だけ応答に合わせる(計画 16 判断 3)
+   */
   const project = useMemo(
-    () => (data ? resolveProject(projectParam, data.sections) : null),
+    () => (data ? resolveProject(projectParam, data) : null),
     [data, projectParam],
   );
   /*
@@ -138,7 +152,8 @@ export default function App() {
     ? { project: detailItem.scopeLabel, name: detailItem.name }
     : claudeMdRoute && data
       ? {
-          project: currentSection(data.sections)?.projectName || fileName(data.cwd),
+          /* 選んだプロジェクト(サーバーが計算した対象)の名前。0 件で Section が無くても付く */
+          project: data.selected.name,
           name: t('cmd.crumb'),
         }
       : memoryRoute && data
@@ -147,21 +162,12 @@ export default function App() {
               ? memoryItem.sec.projectName
               : project === 'all'
                 ? t('proj.all')
-                : project?.projectName || fileName(data.cwd),
+                : data.selected.name,
             /* 詳細では「memory」を一覧へのリンクにし、名前を末尾に置く(「← 一覧」の代わり) */
             name: memoryItem ? memoryItem.it.name : t('crumb.memory'),
             list: memoryItem ? t('crumb.memory') : '',
           }
         : null;
-  /* 未知の id(登録から消えた・アイテム 0 件になったプロジェクト)は cwd に落とし、URL からも消す */
-  useEffect(() => {
-    if (!data || !projectParam || projectParam === 'all') return;
-    if (project === 'all' || project?.id === projectParam) return;
-    setParam('project', null);
-    // setParam は params から都度作る関数なので依存に入れない(入れると毎レンダー再登録される)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, projectParam, project]);
-
   const openSkill = (key: string) => {
     navigate({ pathname: '/skills/' + toId(key), search: params.toString() });
   };

@@ -50,7 +50,14 @@ export async function initToken(): Promise<void> {
   token = (await req<{ token: string }>('/api/token')).token;
 }
 
-export const fetchSkills = () => req<SkillsData>('/api/skills?lang=' + getLang());
+/*
+ * ?project= は URL のパラメータをそのまま渡す(計画 16 判断 1: ② は選んだプロジェクトで計算する)。
+ * 'all' も未知の id もサーバーが cwd に落とすので、web は解釈せず応答の selected に従う。
+ */
+export const fetchSkills = (project?: string | null) =>
+  req<SkillsData>(
+    '/api/skills?lang=' + getLang() + (project ? '&project=' + encodeURIComponent(project) : ''),
+  );
 export const fetchFile = (src: string) =>
   req<{ content: string }>('/api/file?src=' + encodeURIComponent(src)).then((r) => r.content);
 export const fetchSummaryStatus = () => req<SummaryJob>('/api/summary-status');
@@ -85,9 +92,11 @@ export const generateGroups = () => mutate<{ ok: true }>('/api/group-generate', 
  * memory の棚卸し診断(project = MemorySection.id)。未診断の件だけをまとめて 1 回の
  * claude 呼び出しで診断する(files 指定で 1 件だけ / force で全件再診断)。
  * 結果はサーバー側の件単位キャッシュに載るので、呼び出し側は再取得して aiTriage を読む。
+ * selected(= ?project= と同じ id)は走査の起点。一覧に出ている置き場は選んだプロジェクトを
+ * 起点に解決されたものなので、同じ起点を渡さないと棚卸しだけが not-found になる(計画 16)。
  */
-export const triageMemory = (project: string, files?: string[], force = false) =>
-  mutate<{ ok: true }>('/api/memory-triage', { project, files, force });
+export const triageMemory = (project: string, selected: string, files?: string[], force = false) =>
+  mutate<{ ok: true }>('/api/memory-triage', { project, selected, files, force });
 /* What's Changed の「既読にする」: 現在の状態を次回比較の基準として保存 */
 export const ackChanges = () => mutate<{ ok: true }>('/api/changes-ack', {});
 export const diagnoseSkill = (src: string, name: string) =>

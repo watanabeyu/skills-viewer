@@ -63,8 +63,8 @@ export const asViewMode = (v: string | null): ViewMode =>
 
 /*
  * ?project= の解決結果。'all' は全プロジェクト、Section は選ばれた project セクション、
- * null は「cwd のプロジェクトにアイテムが無い」(セクション自体が無いので id も無い。
- * 省略時の既定なので URL には何も書かない)。
+ * null は「選んだプロジェクトにアイテムが無い」(セクション自体が無い。名前とパスは
+ * SkillsData.selected にあるので、0 件でも何を選んでいるかは描ける)。
  */
 export type ProjectSel = 'all' | Section | null;
 
@@ -73,17 +73,15 @@ export const currentSection = (sections: Section[]): Section | null =>
   sections.find((s) => s.source === 'project' && s.isCurrent) || null;
 
 /*
- * ?project= の読み取り。未知の id(登録から消えた・アイテム 0 件になったプロジェクト)は
- * cwd に落とす(設計判断 13: id は安定だが、指す先が無くなることはある)。
- * 'user' は「プロジェクトを持たないホーム」で、cwd にセクションが無いときと同じ扱い。
+ * 選択の解決。サーバーが「何を計算したか」(SkillsData.selected)を正として Section を引く
+ * (計画 16 判断 3)。?project= を web で再解釈しないので、未知の id・生のパス・'user' を
+ * サーバーが cwd に落としたときも、画面はサーバーが計算した対象と必ず一致する。
+ * 'all' だけは URL 側の軸(サーバーは 1 プロジェクトしか計算しない)なので param で見る。
+ * 選んだプロジェクトの定義が 0 件なら Section 自体が無いので null。
  */
-export function resolveProject(param: string | null, sections: Section[]): ProjectSel {
+export function resolveProject(param: string | null, data: SkillsData): ProjectSel {
   if (param === 'all') return 'all';
-  if (param && param !== 'user') {
-    const hit = sections.find((s) => s.source === 'project' && s.id === param);
-    if (hit) return hit;
-  }
-  return currentSection(sections);
+  return data.sections.find((s) => s.source === 'project' && s.id === data.selected.id) || null;
 }
 
 /*
@@ -690,8 +688,11 @@ export interface ContextRow {
 /*
  * ② の内訳。memory が無い(索引の行が 0)なら MEMORY.md の行を出さない(README 6.3)。
  * 合計は 3 内訳の和で、viewer から見えないもの(システムプロンプト・MCP・hook の出力)は含まない。
+ * data.context は選んだプロジェクトの値(計画 16 判断 1)なので、どのプロジェクトを選んでいても
+ * 出す。「すべてのプロジェクト」だけは 1 つのセッションの文脈ではないので内訳を持たない。
  */
-export function contextRows(data: SkillsData): ContextRow[] {
+export function contextRows(data: SkillsData, project: ProjectSel): ContextRow[] {
+  if (project === 'all') return [];
   const c = data.context;
   const rows: ContextRow[] = [{ key: 'claudeMd', tok: c.claudeMd.tok, ratio: null, over: false }];
   if (c.memoryIndex.lines > 0) {

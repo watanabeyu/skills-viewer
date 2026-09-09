@@ -5,8 +5,9 @@
  *   ③ 効いているもの: このプロジェクト + user + plugin + built-in。このプロジェクトだけ開く
  * 寸法は docs/design/0.9.0/{Ledger,Console}Home.dc.html の実測(style.css のトークン)。
  *
- * ② はサーバーが cwd で計算した値(SkillsData.context)なので、切替で別プロジェクトを選んだときは
- * 出さない(その値はそのプロジェクトのセッションの文脈ではない)。「すべてのプロジェクト」も同様。
+ * 3 ブロックの対象は「選んだプロジェクト」(SkillsData.selected)。② もサーバーがその起点で
+ * 計算した値なので、cwd 以外を選んでいても出す(計画 16 判断 1)。cwd は「現在」の印で区別する。
+ * 内訳を持たないのは「すべてのプロジェクト」だけで、そのときは App が GridView を出す。
  */
 
 import { useState } from 'react';
@@ -16,7 +17,6 @@ import {
   claudeMdCounts,
   contextRows,
   contextTotal,
-  fileName,
   flatten,
   KIND_FILTERS,
   kindMatches,
@@ -51,15 +51,17 @@ export interface SummaryAction {
 
 function ContextBlock({
   data,
+  project,
   onOpenMemoryList,
   onOpenClaudeMd,
 }: {
   data: SkillsData;
+  project: Section | null;
   onOpenMemoryList: () => void;
   onOpenClaudeMd: (path?: string) => void;
 }) {
   const narrow = useNarrow();
-  const rows = contextRows(data);
+  const rows = contextRows(data, project);
   const total = contextTotal(rows);
   const c = data.context;
   const md = claudeMdCounts(data.claudeMd);
@@ -232,16 +234,22 @@ export function ActiveBlock({
         />
       </div>
       <div className="blk-body list">
-        {/* cwd のプロジェクトにアイテムが無いときも「このプロジェクト · 0 件」の見出しは残す */}
+        {/* 選んだプロジェクトにアイテムが無いときも「このプロジェクト · 0 件」の見出しは残す */}
         {!project && (
-          <GroupHead
-            open={false}
-            onToggle={() => {}}
-            source="project"
-            name={t('act.thisProject')}
-            meta={`${fileName(data.cwd)} · ${t('act.count', { n: 0 })} · ${t('proj.empty')}`}
-            tok={0}
-          />
+          <div className="grp">
+            <GroupHead
+              open={false}
+              onToggle={() => {}}
+              source="project"
+              name={t('act.thisProject')}
+              meta={`${data.selected.name} · ${t('act.count', { n: 0 })} · ${t('proj.empty')}`}
+              tok={0}
+            />
+            {/* 0 件の理由。切替で別プロジェクトを選んだときも「なぜ空か」がその場で分かるように */}
+            <div className="trow-empty meta">
+              {t('proj.emptyReason', { path: data.selected.path })}
+            </div>
+          </div>
         )}
         {sections.map((s) => {
           const items = isOpen(s.id) ? sortItems(flatten([s]).filter(pass), sort) : [];
@@ -311,7 +319,6 @@ export function Home({
   setParam: (key: string, value: string | null) => void;
   reload: () => Promise<void>;
 }) {
-  const isCwd = !project || !!project.isCurrent;
   return (
     <div className="home">
       <ChangesBlock
@@ -322,13 +329,12 @@ export function Home({
         onOpenClaudeMd={onOpenClaudeMd}
         reload={reload}
       />
-      {isCwd && (
-        <ContextBlock
-          data={data}
-          onOpenMemoryList={onOpenMemoryList}
-          onOpenClaudeMd={onOpenClaudeMd}
-        />
-      )}
+      <ContextBlock
+        data={data}
+        project={project}
+        onOpenMemoryList={onOpenMemoryList}
+        onOpenClaudeMd={onOpenClaudeMd}
+      />
       <ActiveBlock
         data={data}
         project={project}

@@ -62,12 +62,15 @@ export function usageTitle(sec: MemorySection, base?: string): string | undefine
 /*
  * 棚卸しの実行。プロジェクト単位(it 省略)は未診断が残っていれば差分診断、全件診断済みなら force で診断し直す。
  * 1 件(詳細)は診断済みなら force。どちらも既存 POST /api/memory-triage で、結果は再取得で aiTriage に載る。
+ * selected はこの画面が見ている応答の起点(SkillsData.selected.id)。一覧はその起点で解決された
+ * 置き場を出しているので、同じ起点を渡さないと棚卸しだけ別の走査になる(計画 16)。
  */
-export const runTriage = (sec: MemorySection, it?: SkillItem) =>
+export const runTriage = (sec: MemorySection, selected: string, it?: SkillItem) =>
   it
-    ? triageMemory(sec.id, [fileName(it.path)], !!it.aiTriage)
+    ? triageMemory(sec.id, selected, [fileName(it.path)], !!it.aiTriage)
     : triageMemory(
         sec.id,
+        selected,
         undefined,
         sec.items.every((x) => !!x.aiTriage),
       );

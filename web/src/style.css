@@ -623,8 +623,12 @@ select,
   text-transform: none;
   letter-spacing: 0.02em;
 }
-/* 手動グループの印。押せないラベルなので罫線は付けない(design-system 0.4) */
-.g-manual {
+/*
+ * 手動グループの印と、プロジェクト切替の「現在」(= cwd)の印。どちらも押せないラベルなので
+ * 罫線は付けない(design-system 0.4)。同じ見た目を 2 通りに定義しないよう規則を共有する
+ */
+.g-manual,
+.proj-cur {
   font-size: 10px;
   padding: 1px 7px;
   border-radius: var(--radius-chip);

@@ -39,7 +39,7 @@ import {
   splitImports,
   type ImportTree,
 } from '../claudemd';
-import { changeMarkOf, currentSection, fileName, fmtDate, relTimeLabel } from '../util';
+import { changeMarkOf, fmtDate, relTimeLabel } from '../util';
 import { mdRender, splitFrontmatter, splitPreview } from '../md';
 import { t, type MsgKey } from '../i18n';
 import { InlineError } from './Inline';
@@ -93,8 +93,8 @@ export function ClaudeMdView({ data }: { data: SkillsData }) {
 
 /* 名前とチップ、右端に「エディタで開く」(選択中のファイル。管理ポリシーは開けない)。下に要約文 */
 function TitleBlock({ data, file }: { data: SkillsData; file?: ClaudeMdFile }) {
-  const project = currentSection(data.sections);
-  const projectLabel = project?.projectName || fileName(data.cwd);
+  /* 段はサーバーが選んだプロジェクトで計算したものなので、チップもその名前を出す(計画 16 判断 3) */
+  const projectLabel = data.selected.name;
   const kinds = presentKinds(data.claudeMd);
   const { openError, onOpenEditor } = useOpenEditor(file?.path || '');
   return (

@@ -117,7 +117,13 @@ export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () =>
       <TitleBlock it={it} sec={sec} />
       <Facts it={it} sec={sec} data={data} resolve={resolve} onOpen={openMemory} />
       <IndexPanel it={it} />
-      <TriagePanel it={it} sec={sec} aiAvailable={data.aiAvailable} reload={reload} />
+      <TriagePanel
+        it={it}
+        sec={sec}
+        selected={data.selected.id}
+        aiAvailable={data.aiAvailable}
+        reload={reload}
+      />
       <BodyPanel it={it} raw={raw} error={error} resolve={resolve} onOpen={openMemory} />
     </div>
   );
@@ -300,11 +306,14 @@ function IndexPanel({ it }: { it: SkillItem }) {
 function TriagePanel({
   it,
   sec,
+  selected,
   aiAvailable,
   reload,
 }: {
   it: SkillItem;
   sec: MemorySection;
+  /* 走査の起点(SkillsData.selected.id)。一覧と同じ起点で棚卸しする(計画 16) */
+  selected: string;
   aiAvailable: boolean;
   reload: () => Promise<void>;
 }) {
@@ -322,7 +331,7 @@ function TriagePanel({
     setBusy(true);
     setError('');
     try {
-      await runTriage(sec, it);
+      await runTriage(sec, selected, it);
       await reload();
     } catch (e) {
       setError(t('alert.triageFailed', { msg: e instanceof Error ? e.message : String(e) }));

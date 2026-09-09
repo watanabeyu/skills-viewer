@@ -12,7 +12,6 @@ import { useState } from 'react';
 import type { MemorySection, Section, SkillItem, SkillsData } from '../api';
 import {
   changeMarkOf,
-  fileName,
   relTimeLabel,
   skewedVerdict,
   type MemorySortKey,
@@ -112,9 +111,8 @@ function TitleBlock({
   sec: MemorySection | null;
 }) {
   const isAll = project === 'all';
-  const name = isAll
-    ? ''
-    : sec?.projectName || (project ? project.projectName || '' : fileName(data.cwd));
+  /* 選んでいるのがどのプロジェクトかはサーバーの応答(selected)が正。0 件のプロジェクトでも名前が出る */
+  const name = isAll ? '' : sec?.projectName || data.selected.name;
   const indexPath = sec ? sec.note.replace(/[\\/]+$/, '') + '/MEMORY.md' : '';
   const { openError, onOpenEditor } = useOpenEditor(indexPath);
   return (
@@ -170,7 +168,7 @@ function MemoryProject({
     setBusy(true);
     setError('');
     try {
-      await runTriage(sec);
+      await runTriage(sec, data.selected.id);
       await reload();
     } catch (e) {
       setError(t('alert.triageFailed', { msg: e instanceof Error ? e.message : String(e) }));

@@ -72,11 +72,19 @@ export function ProjectSwitcher({
     setOpenMenu(false);
     onSelect(id);
   };
-  const row = (s: Section | null, label: string, path: string, id: string | null) => (
+  const row = (
+    s: Section | null,
+    label: string,
+    path: string,
+    id: string | null,
+    /* 起動ディレクトリの行。cwd は既定の選択にすぎないので、特別扱いはこの印だけ(計画 16 判断 7) */
+    cwd = false,
+  ) => (
     <button key={id ?? 'cwd'} className="di" onClick={() => pick(id)}>
       <span className="l1">
         <SourceDot source="project" />
         {label}
+        {cwd && <span className="proj-cur">{t('proj.current')}</span>}
         {s === null && id === null && <span className="meta"> · {t('proj.empty')}</span>}
       </span>
       <span className="l2">{path}</span>
@@ -92,16 +100,21 @@ export function ProjectSwitcher({
           </>
         ) : (
           <>
+            {/*
+             * ラベルはサーバーが計算した対象(selected)を出す。0 件で Section が無いプロジェクトを
+             * 選んでいても名前とパスが出る。cwd かどうかは印だけで区別する(計画 16 判断 3・7)
+             */}
             <SourceDot source="project" />
-            <span>{project ? project.projectName : cwdName}</span>
-            <span className="meta proj-path">{project ? project.note : data.cwd}</span>
+            <span>{data.selected.name}</span>
+            <span className="meta proj-path">{data.selected.path}</span>
+            {data.selected.isCwd && <span className="proj-cur">{t('proj.current')}</span>}
           </>
         )}
         <Chevron />
       </button>
       {openMenu && (
         <div className="drop proj-drop">
-          {row(current, cwdName, current?.note || data.cwd, null)}
+          {row(current, cwdName, current?.note || data.cwd, null, true)}
           {others.length > 0 && <div className="dh">{t('proj.others')}</div>}
           {others.map((s) => row(s, s.projectName || '', s.note, s.id))}
           <div className="dsep" />

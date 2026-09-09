@@ -292,6 +292,10 @@ const en = {
   'proj.allSub': '{n} projects · user · plugin · built-in',
   'proj.others': 'Other projects',
   'proj.empty': 'no items in this project',
+  /* 起動ディレクトリの印(計画 16 判断 7)。cwd は既定の選択にすぎず、区別はこのラベルだけ */
+  'proj.current': 'current',
+  /* 0 件の理由。選んでいるのに何も出ない理由をその場に置く */
+  'proj.emptyReason': 'no {path}/.claude',
   /* ① 増えた・変わった(diff 文法: + / ~ / −。design-system 0.3) */
   'chg.title': 'Changed',
   'chg.count': '{n} changes',
@@ -865,6 +869,8 @@ const ja: Record<MsgKey, string> = {
   'proj.allSub': '{n} プロジェクト · user · plugin · built-in',
   'proj.others': '他のプロジェクト',
   'proj.empty': 'このプロジェクトにはアイテムがありません',
+  'proj.current': '現在',
+  'proj.emptyReason': '{path}/.claude が無い',
   'chg.title': '増えた・変わった',
   'chg.count': '{n} 件',
   'chg.since': '{d}に既読にしてから',

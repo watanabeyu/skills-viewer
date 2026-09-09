@@ -620,19 +620,55 @@ const dataOf = (over: Partial<SkillsData> = {}): SkillsData => ({
   ...over,
 });
 
-describe('resolveProject (?project= の解決。設計判断 13)', () => {
-  it('all はそのまま、既知の id はそのセクション', () => {
-    expect(resolveProject('all', sections)).toBe('all');
-    expect(resolveProject('proj--w-beta', sections)).toBe(projB);
+describe('resolveProject (選択の解決。計画 16 判断 3: サーバーの selected が正)', () => {
+  /* ?project=proj--w-beta を受けたサーバーが beta で計算して返した応答 */
+  const onBeta = dataOf({
+    selected: { id: projB.id, path: '/w/beta', name: 'beta', isCwd: false },
   });
-  it('省略・user・未知の id は cwd のプロジェクトに落とす', () => {
-    expect(resolveProject(null, sections)).toBe(projA);
-    expect(resolveProject('user', sections)).toBe(projA);
-    expect(resolveProject('proj-0', sections)).toBe(projA);
-    expect(resolveProject('proj--w-gone', sections)).toBe(projA);
+
+  it('all は URL 側の軸なので param で見る(サーバーは 1 プロジェクトしか計算しない)', () => {
+    expect(resolveProject('all', dataOf())).toBe('all');
+    expect(resolveProject('all', onBeta)).toBe('all');
   });
-  it('cwd のプロジェクトにアイテムが無ければ null(セクション自体が無い)', () => {
-    expect(resolveProject(null, [userSec, pluginSec, builtinSec])).toBeNull();
+
+  it('選ばれた Section は param ではなく selected.id で引く', () => {
+    expect(resolveProject('proj--w-beta', onBeta)).toBe(projB);
+    // 取り直しの途中で param が先に変わっても、描くのは応答が計算した対象のまま
+    expect(resolveProject('proj--w-alpha', onBeta)).toBe(projB);
+  });
+
+  it('未知の id・user・省略はサーバーが cwd に落とすので、web は再解釈せず cwd のセクションになる', () => {
+    // selected は cwd(= projA)のままの応答。param は解釈に使われない
+    expect(resolveProject('proj--w-gone', dataOf())).toBe(projA);
+    expect(resolveProject('user', dataOf())).toBe(projA);
+    expect(resolveProject(null, dataOf())).toBe(projA);
+  });
+
+  it('選んだプロジェクトにアイテムが無ければ null(Section 自体が無い。名前とパスは selected 側)', () => {
+    const empty = dataOf({
+      sections: [userSec, pluginSec, builtinSec],
+      selected: { id: 'proj--w-gamma', path: '/w/gamma', name: 'gamma', isCwd: false },
+    });
+    expect(resolveProject('proj--w-gamma', empty)).toBeNull();
+  });
+});
+
+/*
+ * 未知の ?project= を受けてもサーバーが cwd に落とした応答は正当なので、web は URL を
+ * 書き換えない(共有 URL を壊さない。計画 16 判断 3)。書き換えは App の effect が
+ * setParam('project', null) で行っていたため、消えたことをソースで見張る
+ * (i18n.test.ts の未使用キー検査と同じ、機械で落とすための検査)。
+ */
+describe('?project= を web が書き換えないこと(計画 16 判断 3)', () => {
+  it('App が project パラメータを消す経路を持たない', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(
+      path.join(import.meta.dirname, '..', 'web', 'src', 'App.tsx'),
+      'utf8',
+    );
+    // setParam は必ず replace で URL を書き戻す。project を渡す呼び出しがあってはならない
+    expect(src).not.toMatch(/setParam\(\s*'project'/);
   });
 });
 
@@ -770,7 +806,7 @@ describe('changeMarkOf / changeRows (① 増えた・変わった)', () => {
 
 describe('contextRows (② セッションの文脈の分岐。README 6.3)', () => {
   it('3 内訳。CLAUDE.md 群には上限(バー)が無く、description は 1% 予算との比で超過を判定', () => {
-    const rows = contextRows(dataOf());
+    const rows = contextRows(dataOf(), projA);
     expect(rows.map((r) => r.key)).toEqual(['claudeMd', 'memory', 'descriptions']);
     expect(rows[0].ratio).toBeNull();
     expect(rows[1].ratio).toBeCloseTo(2 / 200);
@@ -782,9 +818,25 @@ describe('contextRows (② セッションの文脈の分岐。README 6.3)', () 
   it('memory が無ければ MEMORY.md の行を出さない', () => {
     const d = dataOf();
     d.context.memoryIndex = { tok: 0, lines: 0, limitLines: 200, limitBytes: 25 * 1024 };
-    const rows = contextRows(d);
+    const rows = contextRows(d, projA);
     expect(rows.map((r) => r.key)).toEqual(['claudeMd', 'descriptions']);
     expect(contextTotal(rows)).toBe(1180 + 3370);
+  });
+  /*
+   * cwd 以外を選んでも ② は出す(サーバーがその起点で計算しているため。計画 16 判断 1)。
+   * 内訳を持たないのは「すべてのプロジェクト」だけ ── 1 つのセッションの文脈ではないので。
+   */
+  it('cwd 以外のプロジェクトでも内訳を出し、all だけ空になる', () => {
+    const onBeta = dataOf({
+      selected: { id: projB.id, path: '/w/beta', name: 'beta', isCwd: false },
+    });
+    expect(contextRows(onBeta, projB).map((r) => r.key)).toEqual([
+      'claudeMd',
+      'memory',
+      'descriptions',
+    ]);
+    expect(contextRows(dataOf(), 'all')).toEqual([]);
+    expect(contextTotal(contextRows(dataOf(), 'all'))).toBe(0);
   });
   it('claudeMdCounts は段ごとの件数(project は project / project-dot / local の和)', () => {
     const f = (p: string) => ({
