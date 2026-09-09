@@ -47,9 +47,11 @@ const SORT_KEYS: [SortKey, MsgKey][] = [
 function ContextBlock({
   data,
   onOpenMemoryList,
+  onOpenClaudeMd,
 }: {
   data: SkillsData;
   onOpenMemoryList: () => void;
+  onOpenClaudeMd: () => void;
 }) {
   const narrow = useNarrow();
   const rows = contextRows(data);
@@ -65,6 +67,7 @@ function ContextBlock({
         ' · ',
       ),
       limit: t('ctx.noLimit'),
+      title: t('ctx.claudeMdTitle'),
     },
     memory: {
       name: t('ctx.memory'),
@@ -105,13 +108,19 @@ function ContextBlock({
           </div>
           {rows.map((r) => {
             const l = label[r.key];
-            // memory の行だけ一覧へ繋ぐ(CLAUDE.md 画面は E2、description の未使用・lint 一覧は E1)
-            const Tag = r.key === 'memory' ? 'button' : 'div';
+            // memory は一覧、CLAUDE.md は階層と本文の画面(E2)へ。description の未使用・lint 一覧は F 以降
+            const open =
+              r.key === 'memory'
+                ? onOpenMemoryList
+                : r.key === 'claudeMd'
+                  ? onOpenClaudeMd
+                  : undefined;
+            const Tag = open ? 'button' : 'div';
             return (
               <Tag
                 key={r.key}
                 className={'ctx-row' + (r.over ? ' over' : '')}
-                onClick={r.key === 'memory' ? onOpenMemoryList : undefined}
+                onClick={open}
                 title={l.title}
               >
                 <span className="cell">
@@ -307,6 +316,7 @@ export function Home({
   onOpen,
   onOpenMemory,
   onOpenMemoryList,
+  onOpenClaudeMd,
   setParam,
   reload,
 }: {
@@ -319,6 +329,7 @@ export function Home({
   onOpen: (key: string) => void;
   onOpenMemory: (path: string) => void;
   onOpenMemoryList: () => void;
+  onOpenClaudeMd: () => void;
   setParam: (key: string, value: string | null) => void;
   reload: () => Promise<void>;
 }) {
@@ -332,7 +343,13 @@ export function Home({
         onOpenMemory={onOpenMemory}
         reload={reload}
       />
-      {isCwd && <ContextBlock data={data} onOpenMemoryList={onOpenMemoryList} />}
+      {isCwd && (
+        <ContextBlock
+          data={data}
+          onOpenMemoryList={onOpenMemoryList}
+          onOpenClaudeMd={onOpenClaudeMd}
+        />
+      )}
       <ActiveBlock
         data={data}
         project={project}

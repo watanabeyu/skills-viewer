@@ -10,6 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { isUnder, resolveAutoMemoryDir } from './memory';
+import { claudeMdPaths } from './claude-md';
 import { ApiError } from './errors';
 
 /* realpath 解決(存在しないパスは not-found に正規化) */
@@ -57,20 +58,39 @@ function underAutoMemory(real: string, cwd: string): boolean {
 
 const underDotClaude = (real: string) => real.includes(path.sep + '.claude' + path.sep);
 
-/* 読み取りは plugin 配下も許可(.claude 配下 + 自動メモリの置き場配下の .md のみ) */
+/*
+ * CLAUDE.md 群(計画 15 Phase E2)。<project>/CLAUDE.md・CLAUDE.local.md・親ディレクトリの CLAUDE.md は
+ * .claude の外にあるので、走査(claude-md.ts)が実際に列挙したファイルに限って許可する。
+ * 名前も場所も走査側で固定されているため、任意の .md が開くことはない。
+ * 管理ポリシーは本文を返さない段なので claudeMdPaths が含めない(許可の対象外)。
+ * @import 先は展開位置の印だけを出す(本文は読まない)ので対象外。
+ */
+function isClaudeMdLayerFile(real: string, cwd: string): boolean {
+  for (const fp of claudeMdPaths({ root: cwd })) {
+    try {
+      if (fs.realpathSync(fp) === real) return true;
+    } catch {
+      /* 列挙後に消えた等。次のファイルへ */
+    }
+  }
+  return false;
+}
+
+const allowed = (real: string, cwd: string) =>
+  underDotClaude(real) || underAutoMemory(real, cwd) || isClaudeMdLayerFile(real, cwd);
+
+/* 読み取りは plugin 配下も許可(.claude 配下 + 自動メモリの置き場配下 + CLAUDE.md 群の .md のみ) */
 export function assertReadableMd(p: string, cwd: string = process.cwd()): string {
   const real = realpathOrThrow(p);
   if (!real.endsWith('.md')) throw new ApiError('not-md', real);
-  if (!underDotClaude(real) && !underAutoMemory(real, cwd))
-    throw new ApiError('not-readable-path', real);
+  if (!allowed(real, cwd)) throw new ApiError('not-readable-path', real);
   return real;
 }
 
-/* エディタで開くのは .claude 配下(settings.json 等も含む)と自動メモリの置き場配下 */
+/* エディタで開くのは .claude 配下(settings.json 等も含む)と自動メモリの置き場配下、CLAUDE.md 群 */
 function assertOpenablePath(p: string, cwd: string): string {
   const real = realpathOrThrow(p);
-  if (!underDotClaude(real) && !underAutoMemory(real, cwd))
-    throw new ApiError('not-openable-path', real);
+  if (!allowed(real, cwd)) throw new ApiError('not-openable-path', real);
   return real;
 }
 

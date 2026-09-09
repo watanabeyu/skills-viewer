@@ -12,6 +12,8 @@ import {
 } from './api';
 import {
   asViewMode,
+  currentSection,
+  fileName,
   flatten,
   migrateLegacyParams,
   resolveProject,
@@ -26,6 +28,7 @@ import { GridView } from './components/GridView';
 import { Home } from './components/Home';
 import { MemoryGrid } from './components/MemoryGrid';
 import { DetailView, clearMdCache } from './components/DetailView';
+import { ClaudeMdView } from './components/ClaudeMdView';
 import { MemoryDetail } from './components/MemoryDetail';
 import { MemoryTriageView } from './components/MemoryTriageView';
 import { ProjectSwitcher } from './components/ProjectSwitcher';
@@ -33,6 +36,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AiMenu } from './components/AiMenu';
 import { InlineError, InlineNote } from './components/Inline';
 import { getLang, setLang, t, type Lang, type MsgKey } from './i18n';
+import { defaultFile } from './claudemd';
 
 /* ラベルは言語切替に追従させるため、キーだけ持ってレンダー時に t() で引く */
 const SORT_KEYS: SortKey[] = ['name', 'uses', 'recent', 'updated', 'tokens'];
@@ -125,6 +129,16 @@ export default function App() {
   /* 理解画面ではプロジェクト切替の位置がパンくず(プロジェクト / 名前)になる(design-system 1.1) */
   const detailId = location.pathname.match(/^\/skills\/([^/]+)/)?.[1];
   const detailItem = detailId ? all.find((x) => x.key === fromId(detailId)) : undefined;
+  /* CLAUDE.md 画面(E2)もパンくず(cwd のプロジェクト / CLAUDE.md)。② はサーバーが cwd で計算した値なので常に cwd */
+  const claudeMdRoute = location.pathname.startsWith('/claude-md');
+  const crumb = detailItem
+    ? { project: detailItem.scopeLabel, name: detailItem.name }
+    : claudeMdRoute && data
+      ? {
+          project: currentSection(data.sections)?.projectName || fileName(data.cwd),
+          name: t('cmd.crumb'),
+        }
+      : null;
   const project = useMemo(
     () => (data ? resolveProject(projectParam, data.sections) : null),
     [data, projectParam],
@@ -147,6 +161,11 @@ export default function App() {
   };
   const openMemoryList = () => {
     navigate({ pathname: '/memory', search: params.toString() });
+  };
+  /* CLAUDE.md 画面(E2)。:id は toId(パス)で、既定は読まれる順で最初に存在する段。1 枚も無ければ /claude-md */
+  const openClaudeMd = () => {
+    const f = data ? defaultFile(data.claudeMd) : null;
+    navigate({ pathname: '/claude-md' + (f ? '/' + toId(f.path) : ''), search: params.toString() });
   };
   /* 棚卸し診断はプロジェクト単位(id = MemorySection.id = エンコード済みディレクトリ名) */
   const openTriage = (id: string) => {
@@ -294,13 +313,13 @@ export default function App() {
         <h1>
           <Link to={{ pathname: '/', search: params.toString() }}>Skills Viewer</Link>
         </h1>
-        {data && detailItem ? (
+        {data && crumb ? (
           <span className="crumb">
             <Link className="crumb-p" to={{ pathname: '/', search: params.toString() }}>
-              {detailItem.scopeLabel}
+              {crumb.project}
             </Link>
             <span className="meta">/</span>
-            <span className="crumb-cur">{detailItem.name}</span>
+            <span className="crumb-cur">{crumb.name}</span>
           </span>
         ) : (
           data && (
@@ -317,7 +336,7 @@ export default function App() {
             />
           )
         )}
-        {data && !detailItem && project === 'all' && (
+        {data && !crumb && project === 'all' && (
           <span className="meta">
             {t('proj.allSub', {
               n: data.sections.filter((s) => s.source === 'project').length,
@@ -395,12 +414,16 @@ export default function App() {
                     onOpen={openSkill}
                     onOpenMemory={openMemory}
                     onOpenMemoryList={openMemoryList}
+                    onOpenClaudeMd={openClaudeMd}
                     setParam={setParam}
                     reload={reload}
                   />
                 )
               }
             />
+            {/* CLAUDE.md 画面(E2)。:id 無しは既定の段へ、1 枚も無ければ 7 段の「なし」だけ */}
+            <Route path="/claude-md" element={<ClaudeMdView data={data} />} />
+            <Route path="/claude-md/:id" element={<ClaudeMdView data={data} />} />
             <Route
               path="/skills/:id"
               element={<DetailView data={data} all={all} onOpen={openSkill} reload={reload} />}

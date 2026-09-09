@@ -80,3 +80,38 @@ describe('assertReadableMd (autoMemoryDirectory の置き場)', () => {
     fs.rmSync(otherDir, { recursive: true, force: true });
   });
 });
+
+/*
+ * 計画 15 Phase E2: CLAUDE.md 画面は <project>/CLAUDE.md・CLAUDE.local.md・親ディレクトリの CLAUDE.md の
+ * 本文も /api/file で読む。これらは .claude の外にあるので、走査(claude-md.ts)が列挙したファイルに限って
+ * 許可する。同じディレクトリの他の .md や、走査に載らない名前は従来どおり拒否する。
+ */
+describe('assertReadableMd (CLAUDE.md 群)', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-claudemd-'));
+  afterAll(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const make2 = (rel: string, content = 'x') => {
+    const fp = path.join(cwd, rel);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, content);
+    return fp;
+  };
+
+  it('走査に載る <project>/CLAUDE.md と CLAUDE.local.md は読める', () => {
+    const root = make2('CLAUDE.md', '# root');
+    const local = make2('CLAUDE.local.md', '# local');
+    expect(assertReadableMd(root, cwd)).toBe(fs.realpathSync(root));
+    expect(assertReadableMd(local, cwd)).toBe(fs.realpathSync(local));
+  });
+
+  it('同じディレクトリでも走査に載らない .md は拒否する', () => {
+    expect(() => assertReadableMd(make2('README.md'), cwd)).toThrow('not-readable-path');
+    expect(() => assertReadableMd(make2('docs/CLAUDE.md'), cwd)).toThrow('not-readable-path');
+  });
+
+  it('別の cwd から見た <project>/CLAUDE.md は拒否する(許可は走査結果に紐づく)', () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-claudemd-other-'));
+    const fp = path.join(cwd, 'CLAUDE.md');
+    expect(() => assertReadableMd(fp, other)).toThrow('not-readable-path');
+    fs.rmSync(other, { recursive: true, force: true });
+  });
+});

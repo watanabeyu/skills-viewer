@@ -260,6 +260,16 @@
   --md-size: 14px;
   /* hook 一覧の行 40px */
   --hook-row-h: 40px;
+  /* CLAUDE.md 画面(E2): 7 段表の行 40 / ヘッダ 30、列 28 / 110 / 1fr / 80 / 80 / 110、見出し一覧 300 + 20、その行 30 */
+  --cmd-row-h: 40px;
+  --cmd-thead-h: 30px;
+  --cmd-cols: 28px 110px minmax(0, 1fr) 80px 80px 110px;
+  --cmd-outline-w: 300px;
+  --cmd-gap: 20px;
+  --cmd-orow-h: 30px;
+  --cmd-hd-h: 40px;
+  --cmd-hd-bg: var(--panel);
+  --cmd-fv-size: 18px;
 }
 
 /*
@@ -480,6 +490,10 @@
   --md-pad: 8px 16px 14px;
   --md-size: 13px;
   --hook-row-h: 32px;
+  /* CLAUDE.md 画面: 行 32、パネル見出し 36(docs/design/0.9.0/ConsoleClaudeMd.dc.html) */
+  --cmd-row-h: 32px;
+  --cmd-hd-h: 36px;
+  --cmd-hd-bg: transparent;
 }
 
 /*
@@ -3724,4 +3738,210 @@ button.ctx-row:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * ---- CLAUDE.md 画面(計画 15 Phase E2)。寸法はトークン(--cmd-*)、色はトークンのみ ----
+ * 名前と要約 → 事実の帯 → 読まれる順の 7 段表 → 見出しと tok(左 300)+ 本文(右)。
+ * 押せる行 = 存在するファイル(<button>)。無い段は div で罫線だけ残す(0.4)。
+ */
+
+/* 帯の主値はこの画面だけ 18px(モック実測。E1 の 16px より 1 段大きい) */
+.fv.lg {
+  font-size: var(--cmd-fv-size);
+}
+
+/* 7 段表の行: # / scope / 場所 / 状態 / tok / 更新 */
+.crow {
+  display: grid;
+  grid-template-columns: var(--cmd-cols);
+  align-items: center;
+  justify-items: start;
+  gap: 12px;
+  width: 100%;
+  min-height: var(--cmd-row-h);
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+.cgrp:last-child .crow:last-child {
+  border-bottom: none;
+}
+.crow > span {
+  min-width: 0;
+  max-width: 100%;
+}
+.crow.thead {
+  min-height: var(--cmd-thead-h);
+  background: var(--thead-bg);
+  border-bottom: 1px solid var(--thead-border);
+  color: var(--thead-color);
+  font-family: var(--thead-font);
+  font-size: var(--thead-size);
+  font-weight: 500;
+  text-transform: var(--thead-transform);
+  letter-spacing: var(--thead-tracking);
+}
+button.crow {
+  cursor: pointer;
+}
+button.crow:hover {
+  background: var(--row-hover);
+}
+/* 場所: 等幅 12.5px。存在する段は本文色、無い段は補足色。選択中は太字。長いパスは省略(…) */
+.ccell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+.cpath {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.cpath .mark {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+/* 注記(rules の paths: の説明・遅延ロード)は場所の下に 1 行。列幅は崩さない(数字の列が揃う) */
+.cnote {
+  font-size: 12px;
+  color: var(--meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 注記付きの行は 2 行分の高さになるので上下に余白を足す */
+.crow.noted {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.crow.absent .cpath,
+.crow.absent .pill {
+  color: var(--meta);
+}
+.crow.absent .pill {
+  opacity: 0.7;
+}
+.crow.cur .cpath {
+  font-weight: 600;
+}
+/* 配下のファイル(rules / 親ディレクトリが複数のとき)は場所を 1 段下げる */
+.crow.sub .ccell {
+  padding-left: 16px;
+}
+.cstate {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.crow .num {
+  font-size: 13px;
+}
+.crow .nowrap {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 見出しと tok(左)+ 本文(右)。幅 900 でも 2 列のまま(理解画面と同じ 1 列の骨格の中の内訳) */
+.cmd-body {
+  display: grid;
+  grid-template-columns: var(--cmd-outline-w) minmax(0, 1fr);
+  gap: var(--cmd-gap);
+  align-items: start;
+}
+.cmd-body .dblk-hd {
+  min-height: var(--cmd-hd-h);
+  background: var(--cmd-hd-bg);
+}
+.orow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--cmd-orow-h);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text);
+}
+.orow:last-child {
+  border-bottom: none;
+}
+.orow.thead {
+  background: var(--thead-bg);
+  border-bottom: 1px solid var(--thead-border);
+  color: var(--thead-color);
+  font-family: var(--thead-font);
+  font-size: var(--thead-size);
+  font-weight: 500;
+  text-transform: var(--thead-transform);
+  letter-spacing: var(--thead-tracking);
+}
+.orow > span {
+  min-width: 0;
+}
+.oname {
+  font-family: var(--name-font);
+  font-size: 13px;
+  font-weight: 500;
+}
+.orow.imp .mono {
+  font-size: 12px;
+  font-weight: 500;
+}
+.orow.imp.nested .mono {
+  padding-left: 14px;
+  font-weight: 400;
+}
+.orow .num {
+  font-size: 13px;
+}
+
+/* 本文パネルの見出し: 左にパス(等幅)、注記、右端に前版との diff */
+.cmd-file-name {
+  font-family: var(--font-mono) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* @import の展開位置の印: 破線の枠(罫線・強)、補足色 12px。打ち切り・欠落は警告色の文字を伴う */
+.cmd-import {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--meta);
+}
+.cmd-import.issue {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.cmd-import .nested {
+  color: var(--meta);
+}
+.cmd-import.issue .nested {
+  color: var(--warn);
+}
+.md-full .md-body + .md-body {
+  margin-top: 0;
 }

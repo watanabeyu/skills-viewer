@@ -6,6 +6,10 @@ import { loadAiModel } from './settings';
 
 export type {
   ChangeEntry,
+  ClaudeMdFile,
+  ClaudeMdImport,
+  ClaudeMdLayer,
+  ClaudeMdLayerKind,
   ClaudeMdScan,
   DiffResponse,
   FeedbackBodyPlan,

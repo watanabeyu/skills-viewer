@@ -221,16 +221,11 @@ function rulesLayer(root: string, home: string): ClaudeMdLayer {
 }
 
 /*
- * 親ディレクトリの CLAUDE.md。git root まで遡り、ホームやファイルシステムのルートには出ない。
- * git 管理外なら 1 つ上だけ見る(どこまでも遡ると無関係な親の CLAUDE.md を拾う)。
+ * 親ディレクトリの探索範囲。git root まで遡り、ホームとその祖先・ファイルシステムのルートには出ない。
+ * git 管理外なら 1 つ上だけ(どこまでも遡ると無関係な親の CLAUDE.md を拾う)。
+ * 本文の読み取り(parentLayer)とパスの列挙(claudeMdPaths)で同じ範囲を使う。
  */
-function parentLayer(root: string, home: string): ClaudeMdLayer {
-  const layer: ClaudeMdLayer = {
-    kind: 'parent',
-    label: path.join(path.dirname(root), 'CLAUDE.md'),
-    files: [],
-    tokens: 0,
-  };
+function parentDirs(root: string, home: string): string[] {
   const gitRoot = worktreeRootOf(root);
   const dirs: string[] = [];
   let cur = path.dirname(path.resolve(root));
@@ -242,7 +237,21 @@ function parentLayer(root: string, home: string): ClaudeMdLayer {
     if (cur === gitRoot || !isUnder(cur, gitRoot)) break;
     cur = path.dirname(cur);
   }
-  for (const dir of dirs) {
+  return dirs;
+}
+
+/*
+ * 親ディレクトリの CLAUDE.md。git root まで遡り、ホームやファイルシステムのルートには出ない。
+ * git 管理外なら 1 つ上だけ見る(どこまでも遡ると無関係な親の CLAUDE.md を拾う)。
+ */
+function parentLayer(root: string, home: string): ClaudeMdLayer {
+  const layer: ClaudeMdLayer = {
+    kind: 'parent',
+    label: path.join(path.dirname(root), 'CLAUDE.md'),
+    files: [],
+    tokens: 0,
+  };
+  for (const dir of parentDirs(root, home)) {
     const fp = path.join(dir, 'CLAUDE.md');
     if (!fs.existsSync(fp)) continue;
     const f = readFile(fp, home);
@@ -277,6 +286,34 @@ export function claudeMdLayers(
     );
   }
   return { layers, tokens: layers.reduce((n, l) => n + l.tokens, 0) };
+}
+
+/*
+ * 走査が見るファイルのパスだけを列挙する(本文を読まず、トークンも数えない)。
+ * 読み取り・エディタ起動の許可判定(read-access.ts)は「このパスか」だけを知りたいので、
+ * claudeMdLayers を呼ぶと 1 リクエストごとに全文の読み取りと @import の展開が走ってしまう。
+ * 管理ポリシーは本文を返さない段なので含めない(許可の対象外)。
+ */
+export function claudeMdPaths(opts: { root?: string | null; home?: string } = {}): string[] {
+  const home = opts.home ?? os.homedir();
+  const root = opts.root ? path.resolve(opts.root) : null;
+  const out = [path.join(home, '.claude', 'CLAUDE.md')];
+  if (root) {
+    out.push(
+      path.join(root, 'CLAUDE.md'),
+      path.join(root, '.claude', 'CLAUDE.md'),
+      path.join(root, 'CLAUDE.local.md'),
+    );
+    const rulesDir = path.join(root, '.claude', 'rules');
+    try {
+      for (const e of fs.readdirSync(rulesDir, { withFileTypes: true }))
+        if (e.isFile() && e.name.endsWith('.md')) out.push(path.join(rulesDir, e.name));
+    } catch {
+      /* rules ディレクトリが無い環境 */
+    }
+    for (const dir of parentDirs(root, home)) out.push(path.join(dir, 'CLAUDE.md'));
+  }
+  return out.filter((fp) => fs.existsSync(fp));
 }
 
 /* 差分追跡(snapshot)へ渡す参照。遅延ロードの rules も「変わったら知りたい」ので含める */

@@ -7,7 +7,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { claudeMdLayers, claudeMdRefs } from '../src/server/claude-md';
+import { claudeMdLayers, claudeMdPaths, claudeMdRefs } from '../src/server/claude-md';
 import type { ClaudeMdLayerKind } from '../src/shared/types';
 
 let dir: string;
@@ -219,5 +219,56 @@ describe('claudeMdRefs — 差分追跡へ渡す参照', () => {
     write(path.join(root, '.claude', 'rules', 'lazy.md'), '---\npaths:\n  - "x"\n---\n本文');
     const refs = claudeMdRefs(claudeMdLayers({ home, root, managedPath }), home);
     expect(refs.map((r) => path.basename(r.path))).toEqual(['lazy.md']);
+  });
+});
+
+/*
+ * 読み取り許可の判定(read-access.ts)が使う軽い列挙。claudeMdLayers を呼ぶと
+ * 1 リクエストごとに全文の読み取りと @import の展開が走るので、パスだけを返す道を持つ。
+ */
+describe('claudeMdPaths — 許可判定用のパス列挙', () => {
+  it('存在するものだけを返し、管理ポリシーは含めない', () => {
+    const managed = path.join(dir, 'managed', 'CLAUDE.md');
+    write(managed, '# managed');
+    write(path.join(home, '.claude', 'CLAUDE.md'), '# user');
+    write(path.join(root, 'CLAUDE.md'), '# project');
+    write(path.join(root, 'CLAUDE.local.md'), '# local');
+    write(path.join(root, '.claude', 'rules', 'a.md'), '# rule');
+    const got = claudeMdPaths({ home, root });
+    expect(got).toEqual([
+      path.join(home, '.claude', 'CLAUDE.md'),
+      path.join(root, 'CLAUDE.md'),
+      path.join(root, 'CLAUDE.local.md'),
+      path.join(root, '.claude', 'rules', 'a.md'),
+    ]);
+    expect(got).not.toContain(managed);
+  });
+
+  it('1 枚も無ければ空', () => {
+    expect(claudeMdPaths({ home, root })).toEqual([]);
+  });
+
+  it('claudeMdLayers が列挙したファイルと一致する(許可漏れ・過剰許可を防ぐ)', () => {
+    write(path.join(home, '.claude', 'CLAUDE.md'), '# user');
+    write(path.join(root, 'CLAUDE.md'), '# project');
+    write(path.join(root, '.claude', 'CLAUDE.md'), '# project-dot');
+    write(path.join(root, '.claude', 'rules', 'a.md'), '# rule');
+    write(path.join(root, '.claude', 'rules', 'b.md'), '---\npaths:\n  - "x"\n---\n# lazy');
+    const fromLayers = claudeMdLayers({ home, root, managedPath })
+      .layers.filter((l) => l.kind !== 'managed')
+      .flatMap((l) => l.files.map((f) => f.path));
+    expect(claudeMdPaths({ home, root }).sort()).toEqual(fromLayers.sort());
+  });
+
+  it('親ディレクトリの探索範囲も layers と揃う(git root まで)', () => {
+    const repo = path.join(dir, 'repo');
+    const sub = path.join(repo, 'packages', 'app');
+    fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+    fs.mkdirSync(sub, { recursive: true });
+    write(path.join(repo, 'CLAUDE.md'), '# repo');
+    write(path.join(dir, 'CLAUDE.md'), '# too far');
+    const got = claudeMdPaths({ home, root: sub });
+    expect(got).toContain(path.join(repo, 'CLAUDE.md'));
+    expect(got).not.toContain(path.join(dir, 'CLAUDE.md'));
   });
 });
