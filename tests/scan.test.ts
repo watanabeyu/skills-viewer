@@ -14,12 +14,12 @@ const home = path.join(tmp, 'home');
 const projA = path.join(tmp, 'work', 'alpha');
 const projB = path.join(tmp, 'work', 'beta');
 
-function writeSkill(project: string, name: string): void {
+function writeSkill(project: string, name: string, extraMeta = ''): void {
   const dir = path.join(project, '.claude', 'skills', name);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     path.join(dir, 'SKILL.md'),
-    `---\nname: ${name}\ndescription: ${name} desc\n---\n`,
+    `---\nname: ${name}\ndescription: ${name} desc\n${extraMeta}---\n`,
   );
 }
 function registerProjects(projects: string[]): void {
@@ -36,6 +36,8 @@ beforeAll(async () => {
   fs.mkdirSync(home, { recursive: true });
   writeSkill(projA, 'alpha-skill');
   writeSkill(projB, 'beta-skill');
+  writeSkill(projB, 'hidden-skill', 'disable-model-invocation: True\n');
+  writeSkill(projB, 'tools-skill', 'allowed-tools: Read, Write, Bash(git *)\n');
   vi.stubEnv('HOME', home);
   ({ scanSections, projectSectionId } = await import('../src/server/scan'));
 });
@@ -79,5 +81,41 @@ describe('scanSections の Section.id(設計判断 13)', () => {
   it('projectSectionId はパスを resolve してから符号化する(末尾スラッシュ等の揺れを吸収)', () => {
     expect(projectSectionId(projA + '/')).toBe(projectSectionId(projA));
     expect(projectSectionId(projA)).toBe('proj-' + encodeProjectPath(projA));
+  });
+});
+
+/*
+ * frontmatter からスキャンの出口(SkillItem)へ渡る 2 つ。計画 15 C2 のテスト項目で、
+ * hidden はモデルの一覧に載らないので毎セッションのコスト(tokens)を持たない。
+ */
+describe('hidden / allowedTools(計画 15 C2)', () => {
+  const itemsOf = (cwd: string) => {
+    registerProjects([projA, projB]);
+    const sec = scanSections(cwd).find((x) => x.id === projectSectionId(projB))!;
+    return new Map(sec.items.map((it) => [it.name, it]));
+  };
+
+  it('disable-model-invocation は大文字混じり(True)でも hidden になり、tokens を持たない', () => {
+    const it = itemsOf(projB).get('hidden-skill')!;
+    expect(it.hidden).toBe(true);
+    expect(it.tokens).toBeUndefined();
+  });
+
+  it('hidden でない skill は tokens を持つ', () => {
+    const it = itemsOf(projB).get('beta-skill')!;
+    expect(it.hidden).toBeUndefined();
+    expect(it.tokens).toBeGreaterThan(0);
+  });
+
+  it('allowed-tools はカンマ区切りの配列になる(括弧付きもそのまま残す)', () => {
+    expect(itemsOf(projB).get('tools-skill')!.allowedTools).toEqual([
+      'Read',
+      'Write',
+      'Bash(git *)',
+    ]);
+  });
+
+  it('allowed-tools が無ければ undefined', () => {
+    expect(itemsOf(projB).get('beta-skill')!.allowedTools).toBeUndefined();
   });
 });

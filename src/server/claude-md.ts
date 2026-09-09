@@ -24,8 +24,42 @@ import { estimateTokens } from './lint';
 import { parseFrontmatter } from './scan';
 import { isUnder, worktreeRootOf } from './memory';
 
+/*
+ * user scope の設定ディレクトリ。HOME/.claude の参照はこのファイルに集約する
+ * (計画 11 の CLAUDE_CONFIG_DIR 対応で claudeDir() に差し替える箇所を 1 つに保つため)。
+ */
+export const userClaudeDir = (home: string = os.homedir()) => path.join(home, '.claude');
+
 /* @import の展開上限(公式仕様: 4 段) */
 const MAX_IMPORT_DEPTH = 4;
+
+/*
+ * @import 先の読み取り上限。MEMORY.md に 200 行 / 25KB の上限があるのと同じ趣旨で、
+ * 巨大なファイルを指されたときに毎リクエストの全読みと概算(文字単位のループ)が効かないようにする。
+ */
+const MAX_IMPORT_BYTES = 256 * 1024;
+
+/*
+ * @import 先を開いてよい範囲。root はプロジェクト、home は user scope の設定ディレクトリの親。
+ * 比較相手(@import 先)は realpath 済みなので、境界の側も realpath で持つ
+ * (macOS の /var → /private/var のように、解決前と後で前方一致が外れる)。
+ */
+interface ImportScope {
+  root: string | null;
+  home: string;
+}
+
+function realOrSelf(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+function importScopeOf(root: string | null, home: string): ImportScope {
+  return { root: root ? realOrSelf(root) : null, home: realOrSelf(home) };
+}
 
 /* 管理ポリシーの置き場(OS ごとの固定パス)。本文は返さず存在と概算だけ扱う */
 function managedPolicyPath(): string {
@@ -74,6 +108,10 @@ function headingsOf(body: string): { text: string; tokens: number }[] {
 /*
  * @import の解決。公式は `@README` のように相対・絶対・~ 始まりを受ける。
  * コードブロック内の @ は拾わないよう、``` で囲まれた範囲は除外する。
+ *
+ * 参照は「パスに見えるもの」だけを拾う: ./ ../ / ~/ で始まるか、区切りか拡張子を含むもの。
+ * 散文の「@alice に聞く」「@claude」を参照として数えると、存在しないファイルの行が並ぶだけでなく、
+ * 解決先の存在有無をブラウザに返してしまう(ディレクトリの有無を覗く材料になる)。
  */
 function importRefs(body: string): string[] {
   const refs: string[] = [];
@@ -86,7 +124,10 @@ function importRefs(body: string): string[] {
     if (inFence) continue;
     for (const m of line.matchAll(/(^|\s)@(\S+)/g)) {
       const ref = m[2].replace(/[.,;:)\]]+$/, ''); // 文末の句読点は取り込まない
-      if (ref) refs.push(ref);
+      if (!ref) continue;
+      const looksLikePath =
+        /^([.~]?\/|\.\.\/)/.test(ref) || /[/\\]/.test(ref) || /\.[A-Za-z0-9]+$/.test(ref);
+      if (looksLikePath) refs.push(ref);
     }
   }
   return refs;
@@ -99,8 +140,10 @@ function resolveImport(ref: string, fromDir: string, home: string): string {
 }
 
 /*
- * @import を深さ優先で展開する。同じ実パスは 2 度展開しない(循環はそこで打ち切って印を残す)。
- * seen は 1 ファイルの走査で共有するので、a → b → a も a → b, a → b の再掲も 1 回だけ数える。
+ * @import を深さ優先で展開する。
+ * - stack は展開の経路(自分の先祖)。ここに居れば本当の循環
+ * - seen は 1 ファイルの走査で数えた実パス。経路が違うのに再登場したのはダイヤモンド参照で、
+ *   二重計上を避けるために展開しないが循環ではない(表示の文言を分ける)
  */
 function expandImports(
   body: string,
@@ -108,15 +151,20 @@ function expandImports(
   home: string,
   depth: number,
   seen: Set<string>,
+  stack: Set<string>,
+  scope: ImportScope,
   out: ClaudeMdImport[],
 ): void {
   for (const ref of importRefs(body)) {
     const abs = resolveImport(ref, fromDir, home);
     let real = abs;
+    let size = 0;
     let exists: boolean;
     try {
       real = fs.realpathSync(abs);
-      exists = fs.statSync(real).isFile();
+      const st = fs.statSync(real);
+      exists = st.isFile();
+      size = st.size;
     } catch {
       exists = false;
     }
@@ -124,12 +172,29 @@ function expandImports(
       out.push({ ref, path: abs, exists: false, depth, tokens: 0 });
       continue;
     }
-    if (seen.has(real)) {
+    /*
+     * 読み取りの境界(プロジェクト配下か ~/.claude 配下)の外は開かない。
+     * CLAUDE.md は clone したリポジトリから来るファイルなので、@/etc/hosts のような参照を
+     * 素直に読むと境界の外を読んだうえに、存在とサイズをブラウザへ返してしまう。
+     */
+    if (!inImportScope(real, scope)) {
+      out.push({ ref, path: real, exists: true, depth, tokens: 0, skipped: 'out-of-scope' });
+      continue;
+    }
+    if (stack.has(real)) {
       out.push({ ref, path: real, exists: true, depth, tokens: 0, skipped: 'cycle' });
+      continue;
+    }
+    if (seen.has(real)) {
+      out.push({ ref, path: real, exists: true, depth, tokens: 0, skipped: 'duplicate' });
       continue;
     }
     if (depth > MAX_IMPORT_DEPTH) {
       out.push({ ref, path: real, exists: true, depth, tokens: 0, skipped: 'depth' });
+      continue;
+    }
+    if (size > MAX_IMPORT_BYTES) {
+      out.push({ ref, path: real, exists: true, depth, tokens: 0, skipped: 'too-large' });
       continue;
     }
     seen.add(real);
@@ -139,14 +204,26 @@ function expandImports(
       continue;
     }
     out.push({ ref, path: real, exists: true, depth, tokens: estimateTokens(raw) });
-    expandImports(raw, path.dirname(real), home, depth + 1, seen, out);
+    stack.add(real);
+    expandImports(raw, path.dirname(real), home, depth + 1, seen, stack, scope, out);
+    stack.delete(real);
   }
+}
+
+/*
+ * @import 先として開いてよい範囲。Claude Code 自身が読むのはプロジェクト配下のファイル
+ * (@README など)と user scope の設定なので、その 2 つに限る。
+ */
+function inImportScope(real: string, scope: ImportScope): boolean {
+  if (isUnder(real, userClaudeDir(scope.home))) return true;
+  return !!scope.root && isUnder(real, scope.root);
 }
 
 /* 1 ファイル分の読み取り。本文を返さない段(管理ポリシー)は withhold で切り替える */
 function readFile(
   fp: string,
   home: string,
+  scope: ImportScope,
   opts: { withhold?: boolean } = {},
 ): ClaudeMdFile | null {
   const raw = readText(fp);
@@ -154,12 +231,16 @@ function readFile(
   const ownTokens = estimateTokens(raw);
   const imports: ClaudeMdImport[] = [];
   const seen = new Set<string>();
+  const stack = new Set<string>();
   try {
-    seen.add(fs.realpathSync(fp));
+    const self = fs.realpathSync(fp);
+    seen.add(self);
+    stack.add(self);
   } catch {
     seen.add(fp);
+    stack.add(fp);
   }
-  expandImports(raw, path.dirname(fp), home, 1, seen, imports);
+  expandImports(raw, path.dirname(fp), home, 1, seen, stack, scope, imports);
   const importTokens = imports.reduce((n, im) => n + im.tokens, 0);
   return {
     path: fp,
@@ -177,9 +258,10 @@ function singleLayer(
   kind: ClaudeMdLayer['kind'],
   fp: string,
   home: string,
+  scope: ImportScope,
   opts: { withhold?: boolean } = {},
 ): ClaudeMdLayer {
-  const f = fs.existsSync(fp) ? readFile(fp, home, opts) : null;
+  const f = fs.existsSync(fp) ? readFile(fp, home, scope, opts) : null;
   return { kind, label: fp, files: f ? [f] : [], tokens: f ? f.tokens : 0 };
 }
 
@@ -189,7 +271,7 @@ function singleLayer(
  * paths: の値は YAML リストで、既存の parseFrontmatter では中身を取れない。
  * ここで要るのは有無だけなので、キーの存在で判定する(真偽値で見ると空文字列に負ける)。
  */
-function rulesLayer(root: string, home: string): ClaudeMdLayer {
+function rulesLayer(root: string, home: string, scope: ImportScope): ClaudeMdLayer {
   const dir = path.join(root, '.claude', 'rules');
   const layer: ClaudeMdLayer = {
     kind: 'rules',
@@ -211,7 +293,7 @@ function rulesLayer(root: string, home: string): ClaudeMdLayer {
     const fp = path.join(dir, name);
     const raw = readText(fp);
     if (raw === null) continue;
-    const f = readFile(fp, home);
+    const f = readFile(fp, home, scope);
     if (!f) continue;
     const lazy = 'paths' in parseFrontmatter(raw).meta;
     layer.files.push(lazy ? { ...f, lazy: true } : f);
@@ -232,9 +314,15 @@ function parentDirs(root: string, home: string): string[] {
   for (;;) {
     if (cur === path.dirname(cur)) break; // ファイルシステムのルート
     if (cur === home || isUnder(home, cur)) break; // ホームとその祖先には出ない
+    if (!gitRoot) {
+      dirs.push(cur); // git 管理外は 1 つ上だけ
+      break;
+    }
+    // git 配下は境界の判定を先に置く。root 自身が git root(普通のリポジトリを開いた場合)なら
+    // 親は範囲外なので 1 件も拾わない
+    if (!isUnder(cur, gitRoot)) break;
     dirs.push(cur);
-    if (!gitRoot) break; // git 管理外は 1 つ上だけ
-    if (cur === gitRoot || !isUnder(cur, gitRoot)) break;
+    if (cur === gitRoot) break;
     cur = path.dirname(cur);
   }
   return dirs;
@@ -244,7 +332,7 @@ function parentDirs(root: string, home: string): string[] {
  * 親ディレクトリの CLAUDE.md。git root まで遡り、ホームやファイルシステムのルートには出ない。
  * git 管理外なら 1 つ上だけ見る(どこまでも遡ると無関係な親の CLAUDE.md を拾う)。
  */
-function parentLayer(root: string, home: string): ClaudeMdLayer {
+function parentLayer(root: string, home: string, scope: ImportScope): ClaudeMdLayer {
   const layer: ClaudeMdLayer = {
     kind: 'parent',
     label: path.join(path.dirname(root), 'CLAUDE.md'),
@@ -254,7 +342,7 @@ function parentLayer(root: string, home: string): ClaudeMdLayer {
   for (const dir of parentDirs(root, home)) {
     const fp = path.join(dir, 'CLAUDE.md');
     if (!fs.existsSync(fp)) continue;
-    const f = readFile(fp, home);
+    const f = readFile(fp, home, scope);
     if (!f) continue;
     layer.files.push(f);
     layer.tokens += f.tokens;
@@ -272,17 +360,20 @@ export function claudeMdLayers(
 ): ClaudeMdScan {
   const home = opts.home ?? os.homedir();
   const root = opts.root ? path.resolve(opts.root) : null;
+  const scope = importScopeOf(root, home);
   const layers: ClaudeMdLayer[] = [
-    singleLayer('managed', opts.managedPath ?? managedPolicyPath(), home, { withhold: true }),
-    singleLayer('user', path.join(home, '.claude', 'CLAUDE.md'), home),
+    singleLayer('managed', opts.managedPath ?? managedPolicyPath(), home, scope, {
+      withhold: true,
+    }),
+    singleLayer('user', path.join(userClaudeDir(home), 'CLAUDE.md'), home, scope),
   ];
   if (root) {
     layers.push(
-      singleLayer('project', path.join(root, 'CLAUDE.md'), home),
-      singleLayer('project-dot', path.join(root, '.claude', 'CLAUDE.md'), home),
-      singleLayer('local', path.join(root, 'CLAUDE.local.md'), home),
-      rulesLayer(root, home),
-      parentLayer(root, home),
+      singleLayer('project', path.join(root, 'CLAUDE.md'), home, scope),
+      singleLayer('project-dot', path.join(root, '.claude', 'CLAUDE.md'), home, scope),
+      singleLayer('local', path.join(root, 'CLAUDE.local.md'), home, scope),
+      rulesLayer(root, home, scope),
+      parentLayer(root, home, scope),
     );
   }
   return { layers, tokens: layers.reduce((n, l) => n + l.tokens, 0) };
@@ -297,7 +388,7 @@ export function claudeMdLayers(
 export function claudeMdPaths(opts: { root?: string | null; home?: string } = {}): string[] {
   const home = opts.home ?? os.homedir();
   const root = opts.root ? path.resolve(opts.root) : null;
-  const out = [path.join(home, '.claude', 'CLAUDE.md')];
+  const out = [path.join(userClaudeDir(home), 'CLAUDE.md')];
   if (root) {
     out.push(
       path.join(root, 'CLAUDE.md'),
@@ -326,7 +417,7 @@ export function claudeMdRefs(
   name?: string;
   source?: 'user' | 'project';
 }[] {
-  const userDir = path.join(home, '.claude');
+  const userDir = userClaudeDir(home);
   const out: { path: string; exists: boolean; name?: string; source?: 'user' | 'project' }[] = [];
   for (const layer of scan.layers) {
     // 管理ポリシーは OS が配るもので、利用者の変更対象ではないので追跡しない

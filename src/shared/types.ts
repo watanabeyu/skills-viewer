@@ -349,7 +349,12 @@ export interface DiffResponse {
   available: boolean;
   /* HEAD 時点の内容(available: true のときだけ)。現在の内容は /api/file 側で取る */
   previous?: string;
-  reason?: 'not-git' | 'no-history' | 'user-scope';
+  /*
+   * not-git = git 管理下でない / no-history = HEAD に無い(新規ファイル等)
+   * user-scope = ~/.claude 配下(全プロジェクト共有で git 履歴を持たない)
+   * out-of-scope = 読み取りの境界の外 / too-large = 上限を超えて取得できなかった
+   */
+  reason?: 'not-git' | 'no-history' | 'user-scope' | 'out-of-scope' | 'too-large';
 }
 
 /* 前回起動からの差分。hook(識別子が不安定)と built-in(実ファイル無し)は対象外 */
@@ -390,8 +395,13 @@ export interface ClaudeMdImport {
   /* 1 が直接の @import。公式仕様の上限は 4 段 */
   depth: number;
   tokens: number;
-  /* cycle = 同じ実パスを既に展開済み / depth = 4 段を超えた */
-  skipped?: 'cycle' | 'depth';
+  /*
+   * cycle = 展開の経路に自分が居る(本当の循環)
+   * duplicate = 経路は違うが既に数えた(ダイヤモンド参照。二重計上を避けただけ)
+   * depth = 4 段を超えた / too-large = 読み取り上限を超えた
+   * out-of-scope = 読み取りの境界(プロジェクト配下・~/.claude 配下)の外
+   */
+  skipped?: 'cycle' | 'duplicate' | 'depth' | 'too-large' | 'out-of-scope';
 }
 
 export interface ClaudeMdFile {

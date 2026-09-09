@@ -128,7 +128,7 @@ describe('@import の展開', () => {
     expect(f.tokens).toBe(f.ownTokens + f.imports[0].tokens);
   });
 
-  it('循環は 2 度目で打ち切り、印を残す', () => {
+  it('循環(経路に自分が居る)は cycle で打ち切る', () => {
     write(path.join(root, 'a.md'), '@./b.md');
     write(path.join(root, 'b.md'), '@./a.md');
     write(path.join(root, 'CLAUDE.md'), '@./a.md');
@@ -138,12 +138,44 @@ describe('@import の展開', () => {
     expect(cyclic[0].tokens).toBe(0);
   });
 
-  it('4 段を超えたら打ち切る', () => {
+  /*
+   * 経路が違うのに同じファイルが再登場する形(ダイヤモンド参照)。二重計上はしないが
+   * 循環ではないので、画面に「循環参照」と出さないよう別の印にする。
+   */
+  it('ダイヤモンド参照は duplicate で、cycle と言い分ける', () => {
+    write(path.join(root, 'shared.md'), 'shared body');
+    write(path.join(root, 'a.md'), '@./shared.md');
+    write(path.join(root, 'b.md'), '@./shared.md');
+    write(path.join(root, 'CLAUDE.md'), '@./a.md\n@./b.md');
+    const f = layer('project').files[0];
+    expect(f.imports.filter((im) => im.skipped === 'cycle')).toHaveLength(0);
+    const dup = f.imports.filter((im) => im.skipped === 'duplicate');
+    expect(dup).toHaveLength(1);
+    expect(dup[0].tokens).toBe(0);
+    // shared.md は 1 回だけ数える
+    const counted = f.imports.filter((im) => im.tokens > 0 && im.path.endsWith('shared.md'));
+    expect(counted).toHaveLength(1);
+  });
+
+  it('同じ参照を 2 行書いても 1 回だけ数える', () => {
+    write(path.join(root, 'common.md'), 'body');
+    write(path.join(root, 'CLAUDE.md'), '@./common.md\n@./common.md');
+    const f = layer('project').files[0];
+    expect(f.imports.filter((im) => im.tokens > 0)).toHaveLength(1);
+    expect(f.imports.filter((im) => im.skipped === 'duplicate')).toHaveLength(1);
+  });
+
+  /* 公式仕様の 4 段。数値そのものを固定する(上限を減らしても落ちるように) */
+  it('4 段まで展開し、5 段目で打ち切る', () => {
     for (let i = 1; i <= 6; i++) write(path.join(root, `l${i}.md`), `body ${i}\n@./l${i + 1}.md`);
     write(path.join(root, 'CLAUDE.md'), '@./l1.md');
     const f = layer('project').files[0];
-    expect(f.imports.some((im) => im.skipped === 'depth')).toBe(true);
-    expect(Math.max(...f.imports.map((im) => im.depth))).toBeLessThanOrEqual(5);
+    expect(f.imports.filter((im) => im.tokens > 0)).toHaveLength(4);
+    const cut = f.imports.find((im) => im.skipped === 'depth')!;
+    expect(cut.depth).toBe(5);
+    // 打ち切った分はコストに混ざらない
+    const sum = f.imports.reduce((n, im) => n + im.tokens, 0);
+    expect(f.tokens).toBe(f.ownTokens + sum);
   });
 
   it('存在しない参照は exists: false で残す(コストは 0)', () => {
@@ -157,6 +189,32 @@ describe('@import の展開', () => {
     write(path.join(root, 'other.md'), 'x');
     write(path.join(root, 'CLAUDE.md'), '```\n@./other.md\n```\n');
     expect(layer('project').files[0].imports).toEqual([]);
+  });
+
+  /*
+   * CLAUDE.md は clone したリポジトリから来るファイルなので、@/etc/hosts のような参照を
+   * 素直に読むと境界の外を読んだうえに存在とサイズをブラウザへ返してしまう。
+   */
+  it('プロジェクト配下と ~/.claude 配下の外は out-of-scope で読まない', () => {
+    const outside = path.join(dir, 'elsewhere', 'secret.md');
+    write(outside, 'private');
+    write(path.join(root, 'CLAUDE.md'), `@${outside}`);
+    const im = layer('project').files[0].imports[0];
+    expect(im.skipped).toBe('out-of-scope');
+    expect(im.tokens).toBe(0);
+  });
+
+  it('散文の @名前 は参照として拾わない(パスに見えるものだけ)', () => {
+    write(path.join(root, 'CLAUDE.md'), '@alice に聞く。@claude も見る。');
+    expect(layer('project').files[0].imports).toEqual([]);
+  });
+
+  it('上限を超える大きさは too-large で読まない', () => {
+    write(path.join(root, 'big.md'), 'x'.repeat(300 * 1024));
+    write(path.join(root, 'CLAUDE.md'), '@./big.md');
+    const im = layer('project').files[0].imports[0];
+    expect(im.skipped).toBe('too-large');
+    expect(im.tokens).toBe(0);
   });
 
   it('~ 始まりは home から解決する', () => {
@@ -178,6 +236,21 @@ describe('親ディレクトリの段', () => {
     write(path.join(repo, 'packages', 'CLAUDE.md'), '# packages');
     const l = layer('parent', { root: sub });
     expect(l.files.map((f) => path.dirname(f.path))).toEqual([path.join(repo, 'packages'), repo]);
+  });
+
+  /*
+   * 最も普通の形(プロジェクトルート = git root)。以前はここで親を 1 件拾ってしまい、
+   * 読み取り許可がリポジトリの外へ広がっていた(レビュー 2026-09-09 の指摘)。
+   */
+  it('root 自身が git root なら親は 1 件も拾わない', () => {
+    const outside = path.join(dir, 'outside');
+    const repo = path.join(outside, 'repo');
+    fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+    write(path.join(outside, 'CLAUDE.md'), '# 親(git root の外)');
+    write(path.join(repo, 'CLAUDE.md'), '# repo');
+    expect(layer('parent', { root: repo }).files).toEqual([]);
+    // 許可リストにも入らない
+    expect(claudeMdPaths({ home, root: repo })).toEqual([path.join(repo, 'CLAUDE.md')]);
   });
 
   it('git 管理外なら 1 つ上だけ見る', () => {

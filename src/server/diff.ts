@@ -19,11 +19,12 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import type { DiffResponse } from '../shared/types';
 import { ApiError } from './errors';
-import { isUnder, worktreeRootOf } from './memory';
+import { worktreeRootOf } from './memory';
+import { userClaudeDir } from './claude-md';
+import { allowedPath } from './read-access';
 
 /* git show の出力上限。これを超える .md は差分表示の対象外(available: false に落ちる) */
 const MAX_BUFFER = 4 << 20;
@@ -34,13 +35,22 @@ const MAX_BUFFER = 4 << 20;
  */
 export function resolveDiffTarget(
   src: string,
+  cwd: string = process.cwd(),
   rootOf: (dir: string) => string | null = worktreeRootOf,
 ): { root: string; relPath: string } | { reason: DiffResponse['reason'] } {
   const abs = path.resolve(src);
   if (!abs.endsWith('.md')) throw new ApiError('not-md', abs);
   // .git 配下は git show で読めてしまうので、リポジトリ判定より前に明示的に拒否する
   if (abs.split(path.sep).includes('.git')) throw new ApiError('not-readable-path', abs);
-  if (isUnder(abs, path.join(os.homedir(), '.claude'))) return { reason: 'user-scope' };
+  /*
+   * 読み取りの境界の外は返さない。ここが無いと「git 管理下ならどこの .md でも HEAD が読める」
+   * ことになり、同じファイルに対して /api/file(assertReadableMd)と許可範囲が食い違う。
+   * realpath は使えない(削除済みファイルの過去の内容を出すのがこの API の目的)ので、
+   * path.resolve 後の前方一致で判定する。
+   */
+  if (!allowedPath(abs, cwd)) return { reason: 'out-of-scope' };
+  // user scope(~/.claude)は全プロジェクトで共有され git 履歴を持たないので差分の対象外
+  if (abs.startsWith(userClaudeDir() + path.sep)) return { reason: 'user-scope' };
   const root = rootOf(path.dirname(abs));
   if (!root) return { reason: 'not-git' };
   const rel = path.relative(root, abs);
@@ -54,9 +64,10 @@ export function resolveDiffTarget(
 /* HEAD 時点の内容。非 git・履歴なし・user scope・git 失敗は available: false */
 export function previousContent(
   src: string,
+  cwd: string = process.cwd(),
   rootOf: (dir: string) => string | null = worktreeRootOf,
 ): DiffResponse {
-  const target = resolveDiffTarget(src, rootOf);
+  const target = resolveDiffTarget(src, cwd, rootOf);
   if ('reason' in target) return { available: false, reason: target.reason };
   try {
     const out = execFileSync('git', ['-C', target.root, 'show', `HEAD:${target.relPath}`], {
@@ -66,8 +77,11 @@ export function previousContent(
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     return { available: true, previous: out };
-  } catch {
-    // HEAD に無い(新規ファイル)・コミットが 1 つも無い・git が無い・大きすぎる
+  } catch (e) {
+    // 上限超えは「履歴が無い」と切り分けたいので別の理由にする
+    const code = (e as { code?: string }).code;
+    if (code === 'ENOBUFS') return { available: false, reason: 'too-large' };
+    // HEAD に無い(新規ファイル)・コミットが 1 つも無い・git が無い
     return { available: false, reason: 'no-history' };
   }
 }

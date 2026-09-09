@@ -23,7 +23,8 @@ import type {
   SnapshotChanges,
   Source,
 } from '../shared/types';
-import { worktreeRootOf } from './memory';
+import { isUnder, worktreeRootOf } from './memory';
+import { userClaudeDir } from './claude-md';
 import { contentHash } from './summary';
 
 interface SnapEntry {
@@ -73,8 +74,8 @@ const key = (kind: ItemKind, fp: string) => `${kind}:${fp}`;
 /* memory の出所: 共有ストア(user scope の autoMemoryDirectory)だけ user、他はプロジェクトのもの */
 const memorySource = (sec: MemorySection): Source => (sec.sharedStore ? 'user' : 'project');
 
-const claudeMdSource = (fp: string): Source =>
-  fp.startsWith(path.join(os.homedir(), '.claude') + path.sep) ? 'user' : 'project';
+/* 出所の判定は isUnder に揃える(ケース非依存 FS で case-fold する。v0.8.1 の判断) */
+const claudeMdSource = (fp: string): Source => (isUnder(fp, userClaudeDir()) ? 'user' : 'project');
 
 export function buildSnapshot(
   sections: Section[],
@@ -172,8 +173,21 @@ export function diffSnapshot(prev: Snapshot, cur: Snapshot): SnapshotChanges {
  * ワークツリー側の履歴を見たい(メインワークツリーを root にすると相対パスが外へ出てしまう)。
  * 非 git・リポジトリ外・履歴なし・git 失敗はすべて「付けない」に倒す(差分表示を止めない)。
  */
+/*
+ * worktreeRootOf は existsSync でディレクトリを遡るので、同じディレクトリの項目が並ぶ差分では
+ * 何度も同じ探索を繰り返す。1 回の差分計算の中でメモ化する。
+ */
+const rootMemo = new Map<string, string | null>();
+function rootOfDir(dir: string): string | null {
+  const hit = rootMemo.get(dir);
+  if (hit !== undefined) return hit;
+  const root = worktreeRootOf(dir);
+  rootMemo.set(dir, root);
+  return root;
+}
+
 function gitAuthor(fp: string): { author: string; authoredAt: string } | null {
-  const root = worktreeRootOf(path.dirname(fp));
+  const root = rootOfDir(path.dirname(fp));
   if (!root) return null;
   const rel = path.relative(root, fp);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
@@ -192,11 +206,26 @@ function gitAuthor(fp: string): { author: string; authoredAt: string } | null {
   }
 }
 
+/*
+ * git 履歴を引く上限。1 件 20ms 前後の同期実行(execFileSync)なので、件数が増えると
+ * GET /api/skills がその分ブロックする。差分は既読にするまで消えないため、大きな pull の直後は
+ * リロードごとに同じコストが乗る ── そこが一番速くあってほしい場面なので上限を置く。
+ * 超えた分は author を付けない(README 6.3 の「無ければ更新日だけ」に自然に縮退する)。
+ */
+const GIT_AUTHOR_MAX = 40;
+/* 全体の時間上限。巨大リポジトリやネットワーク FS で 1 件が遅いときに待受を止めないため */
+const GIT_AUTHOR_BUDGET_MS = 600;
+
 /* project 出所の変化項目にだけ git 履歴を付ける(user / plugin / built-in は共有の履歴を持たない) */
 function attachGitAuthors(changes: SnapshotChanges): void {
+  rootMemo.clear();
+  const started = Date.now();
+  let calls = 0;
   for (const list of [changes.added, changes.updated, changes.removed]) {
     for (const e of list) {
       if (e.source !== 'project') continue;
+      if (calls >= GIT_AUTHOR_MAX || Date.now() - started > GIT_AUTHOR_BUDGET_MS) return;
+      calls++;
       const info = gitAuthor(e.path);
       if (!info) continue;
       e.author = info.author;

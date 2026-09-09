@@ -9,6 +9,7 @@ import { useState } from 'react';
 import type { Section, SkillsData, Source } from '../api';
 import { generateGroups } from '../api';
 import {
+  KIND_FILTERS,
   changeMarkOf,
   duplicateNames,
   flatten,
@@ -31,7 +32,6 @@ import { InlineError, InlineNote } from './Inline';
 import { ChangesBlock } from './ChangesBlock';
 import { GroupHeading, ItemRow, GroupHead, TableHead, useNarrow } from './Rows';
 
-const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
 const SORT_KEYS: [SortKey, MsgKey][] = [
   ['name', 'sort.name'],
   ['uses', 'sort.uses'],
@@ -163,6 +163,7 @@ export function GridView({
   use,
   onOpen,
   onOpenMemory,
+  onOpenClaudeMd,
   setParam,
   reload,
 }: {
@@ -174,6 +175,7 @@ export function GridView({
   use: UseFilter;
   onOpen: (key: string) => void;
   onOpenMemory: (path: string) => void;
+  onOpenClaudeMd: (path?: string) => void;
   setParam: (key: string, value: string | null) => void;
   reload: () => Promise<void>;
 }) {
@@ -286,6 +288,7 @@ export function GridView({
         project="all"
         onOpen={onOpen}
         onOpenMemory={onOpenMemory}
+        onOpenClaudeMd={onOpenClaudeMd}
         reload={reload}
       />
       <section className="blk">

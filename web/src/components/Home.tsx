@@ -12,6 +12,7 @@
 import { useState } from 'react';
 import type { Section, SkillsData, Source } from '../api';
 import {
+  KIND_FILTERS,
   changeMarkOf,
   claudeMdCounts,
   contextRows,
@@ -45,7 +46,6 @@ export interface SummaryAction {
   onRun: () => void;
 }
 
-const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
 const SORT_KEYS: [SortKey, MsgKey][] = [
   ['name', 'sort.name'],
   ['uses', 'sort.uses'],
@@ -63,7 +63,7 @@ function ContextBlock({
 }: {
   data: SkillsData;
   onOpenMemoryList: () => void;
-  onOpenClaudeMd: () => void;
+  onOpenClaudeMd: (path?: string) => void;
 }) {
   const narrow = useNarrow();
   const rows = contextRows(data);
@@ -125,7 +125,7 @@ function ContextBlock({
               r.key === 'memory'
                 ? onOpenMemoryList
                 : r.key === 'claudeMd'
-                  ? onOpenClaudeMd
+                  ? () => onOpenClaudeMd()
                   : undefined;
             const Tag = open ? 'button' : 'div';
             return (
@@ -355,7 +355,7 @@ export function Home({
   onOpen: (key: string) => void;
   onOpenMemory: (path: string) => void;
   onOpenMemoryList: () => void;
-  onOpenClaudeMd: () => void;
+  onOpenClaudeMd: (path?: string) => void;
   summary: SummaryAction;
   setParam: (key: string, value: string | null) => void;
   reload: () => Promise<void>;
@@ -368,6 +368,7 @@ export function Home({
         project={project}
         onOpen={onOpen}
         onOpenMemory={onOpenMemory}
+        onOpenClaudeMd={onOpenClaudeMd}
         reload={reload}
       />
       {isCwd && (

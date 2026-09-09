@@ -35,20 +35,29 @@ function ChangeRow({
   r,
   onOpen,
   onOpenMemory,
+  onOpenClaudeMd,
 }: {
   r: Row;
   onOpen: (key: string) => void;
   onOpenMemory: (path: string) => void;
+  onOpenClaudeMd: (path: string) => void;
 }) {
   const e = r.entry;
   const del = r.mark === 'del';
-  // 消えたものと CLAUDE.md(E2 で画面が付く)は開けない
-  const open =
-    !del && r.item
-      ? e.kind === 'memory'
-        ? () => onOpenMemory(e.path)
-        : () => onOpen(itemKey(r.item!))
-      : undefined;
+  /*
+   * 消えたものは開けない。CLAUDE.md は走査結果に item を持たないが画面(/claude-md/:id)が
+   * あるのでパスから直接開く ── ① は「変化が入口」の中心なので、変わったと出しておいて
+   * 中身に行けない行を作らない。
+   */
+  const open = del
+    ? undefined
+    : e.kind === 'claude-md'
+      ? () => onOpenClaudeMd(e.path)
+      : r.item
+        ? e.kind === 'memory'
+          ? () => onOpenMemory(e.path)
+          : () => onOpen(itemKey(r.item!))
+        : undefined;
   const Tag = open ? 'button' : 'div';
   const who = <WhoWhen r={r} />;
   return (
@@ -86,12 +95,14 @@ export function ChangesBlock({
   project,
   onOpen,
   onOpenMemory,
+  onOpenClaudeMd,
   reload,
 }: {
   data: SkillsData;
   project: ProjectSel;
   onOpen: (key: string) => void;
   onOpenMemory: (path: string) => void;
+  onOpenClaudeMd: (path: string) => void;
   reload: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -143,6 +154,7 @@ export function ChangesBlock({
               r={r}
               onOpen={onOpen}
               onOpenMemory={onOpenMemory}
+              onOpenClaudeMd={onOpenClaudeMd}
             />
           ))
         )}

@@ -30,6 +30,18 @@ export const SRC_TINT: Record<Source, string> = {
   plugin: 'var(--src-plugin-tint)',
 };
 
+/*
+ * 一覧のフィルタと並び順。ホーム ③ と「すべてのプロジェクト」が同じ値を使うので 1 か所に置く。
+ * 未知の値(他軸の並び順が混ざった共有 URL 等)は select が空欄になるのを避けて既定に落とす。
+ */
+export const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
+export const USE_FILTERS: UseFilter[] = ['all', 'used', 'unused'];
+
+export const asKindFilter = (v: string | null): KindFilter =>
+  KIND_FILTERS.includes(v as KindFilter) ? (v as KindFilter) : 'all';
+export const asUseFilter = (v: string | null): UseFilter =>
+  USE_FILTERS.includes(v as UseFilter) ? (v as UseFilter) : 'all';
+
 export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
 
 /*

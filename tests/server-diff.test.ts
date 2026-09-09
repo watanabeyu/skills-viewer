@@ -1,7 +1,7 @@
 /*
  * GET /api/diff の実体(src/server/diff.ts)。web 側の行 diff(tests/diff.test.ts)とは別物。
  * 主眼はパス検証: ユーザー入力のクエリを受けて git show を走らせるため、
- * .git 配下・`..` 脱出・リポジトリ外を必ず落とすこと。
+ * .git 配下・`..` 脱出・リポジトリ外・そして読み取りの境界の外を必ず落とすこと。
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -23,12 +23,16 @@ afterAll(() => {
 
 describe('resolveDiffTarget(パス検証)', () => {
   const root = '/repo';
+  const cwd = '/repo';
   const rootOf = () => root;
+  /* 境界の中(プロジェクトの .claude 配下)のパス。ここを通るものだけが検証の対象になる */
+  const inScope = (rel: string) => path.join(root, '.claude', rel);
 
   it('.md 以外は not-md', () => {
-    expect(() => resolveDiffTarget('/repo/settings.json', rootOf)).toThrow(ApiError);
+    const p = inScope('settings.json');
+    expect(() => resolveDiffTarget(p, cwd, rootOf)).toThrow(ApiError);
     try {
-      resolveDiffTarget('/repo/settings.json', rootOf);
+      resolveDiffTarget(p, cwd, rootOf);
     } catch (e) {
       expect((e as ApiError).code).toBe('not-md');
     }
@@ -37,7 +41,7 @@ describe('resolveDiffTarget(パス検証)', () => {
   it('.git 配下は拒否(リポジトリ判定より前)', () => {
     for (const p of ['/repo/.git/config.md', '/repo/.git/hooks/x.md', '/repo/a/.git/b.md']) {
       try {
-        resolveDiffTarget(p, rootOf);
+        resolveDiffTarget(p, cwd, rootOf);
         throw new Error('should have thrown: ' + p);
       } catch (e) {
         expect((e as ApiError).code).toBe('not-readable-path');
@@ -45,29 +49,43 @@ describe('resolveDiffTarget(パス検証)', () => {
     }
   });
 
-  it('root の外へ出る相対パスは拒否', () => {
-    try {
-      resolveDiffTarget('/repo/../outside/a.md', rootOf);
-      throw new Error('should have thrown');
-    } catch (e) {
-      expect((e as ApiError).code).toBe('not-readable-path');
-    }
-  });
-
-  it('`..` を含んでいても root 内に収まるものは通り、正規化された相対パスになる', () => {
-    expect(resolveDiffTarget('/repo/a/../b/c.md', rootOf)).toEqual({
-      root,
-      relPath: 'b/c.md',
+  it('root の外へ出る相対パスは境界の外なので out-of-scope', () => {
+    expect(resolveDiffTarget('/repo/../outside/a.md', cwd, rootOf)).toEqual({
+      reason: 'out-of-scope',
     });
   });
 
-  it('git 管理外(repoRootOf が null)は not-git', () => {
-    expect(resolveDiffTarget('/anywhere/a.md', () => null)).toEqual({ reason: 'not-git' });
+  it('`..` を含んでいても境界内に収まるものは通り、正規化された相対パスになる', () => {
+    expect(resolveDiffTarget(inScope('skills/../commands/c.md'), cwd, rootOf)).toEqual({
+      root,
+      relPath: '.claude/commands/c.md',
+    });
+  });
+
+  it('git 管理外(worktreeRootOf が null)は not-git', () => {
+    expect(resolveDiffTarget(inScope('a.md'), cwd, () => null)).toEqual({ reason: 'not-git' });
   });
 
   it('~/.claude 配下(user scope)は履歴を出さない', () => {
     const p = path.join(os.homedir(), '.claude', 'skills', 'x', 'SKILL.md');
-    expect(resolveDiffTarget(p, rootOf)).toEqual({ reason: 'user-scope' });
+    expect(resolveDiffTarget(p, cwd, rootOf)).toEqual({ reason: 'user-scope' });
+  });
+
+  /*
+   * 読み取りの境界の外。ここが無いと「git 管理下ならどこの .md でも HEAD が読める」ことになり、
+   * 同じファイルに対して /api/file と許可範囲が食い違う(レビュー 2026-09-09 の指摘)。
+   */
+  it('境界の外(.claude / autoMemoryDirectory / CLAUDE.md 群のどれでもない)は out-of-scope', () => {
+    for (const p of ['/repo/README.md', '/repo/docs/notes.md', '/other/private.md']) {
+      expect(resolveDiffTarget(p, cwd, rootOf)).toEqual({ reason: 'out-of-scope' });
+    }
+  });
+
+  it('プロジェクトの .claude 配下は通る', () => {
+    expect(resolveDiffTarget(inScope('skills/x/SKILL.md'), cwd, rootOf)).toEqual({
+      root,
+      relPath: '.claude/skills/x/SKILL.md',
+    });
   });
 });
 
@@ -75,10 +93,10 @@ describe('resolveDiffTarget(root の決め方)', () => {
   it('通常のリポジトリは .git を持つ最も近い祖先が root', () => {
     const dir = mkTmp('sv-diff-root-');
     fs.mkdirSync(path.join(dir, '.git'));
-    fs.mkdirSync(path.join(dir, 'docs'));
-    expect(resolveDiffTarget(path.join(dir, 'docs', 'a.md'))).toEqual({
+    fs.mkdirSync(path.join(dir, '.claude', 'commands'), { recursive: true });
+    expect(resolveDiffTarget(path.join(dir, '.claude', 'commands', 'a.md'), dir)).toEqual({
       root: dir,
-      relPath: 'docs/a.md',
+      relPath: '.claude/commands/a.md',
     });
   });
 
@@ -92,10 +110,11 @@ describe('resolveDiffTarget(root の決め方)', () => {
       path.join(wt, '.git'),
       'gitdir: ' + path.join(main, '.git', 'worktrees', 'x') + '\n',
     );
+    fs.mkdirSync(path.join(wt, '.claude'), { recursive: true });
     // repoRootOf を使うと root が main になり、wt のファイルが root の外(`..`)に出てしまう
-    expect(resolveDiffTarget(path.join(wt, 'README.md'))).toEqual({
+    expect(resolveDiffTarget(path.join(wt, '.claude', 'CLAUDE.md'), wt)).toEqual({
       root: wt,
-      relPath: 'README.md',
+      relPath: '.claude/CLAUDE.md',
     });
   });
 });
@@ -122,22 +141,24 @@ describe.skipIf(!hasGit)('previousContent(git show)', () => {
     git('config', 'user.email', 'tester@example.com');
     git('config', 'user.name', 'Test Person');
     git('config', 'commit.gpgsign', 'false');
-    fs.writeFileSync(path.join(dir, 'A.md'), 'committed body\n');
-    git('add', 'A.md');
+    // 読み取りの境界の中(プロジェクトの .claude 配下)に置く。境界の外は out-of-scope で弾かれる
+    fs.mkdirSync(path.join(dir, '.claude', 'skills', 'a'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude', 'skills', 'a', 'SKILL.md'), 'committed body\n');
+    git('add', '.claude');
     git('commit', '-q', '-m', 'init');
     return dir;
   })();
 
   it('HEAD 時点の内容を返す(ワーキングツリーの変更は反映しない)', () => {
-    fs.writeFileSync(path.join(repo, 'A.md'), 'edited body\n');
-    expect(previousContent(path.join(repo, 'A.md'))).toEqual({
+    fs.writeFileSync(path.join(repo, '.claude', 'skills', 'a', 'SKILL.md'), 'edited body\n');
+    expect(previousContent(path.join(repo, '.claude', 'skills', 'a', 'SKILL.md'))).toEqual({
       available: true,
       previous: 'committed body\n',
     });
   });
 
   it('削除済みのファイルでも過去の内容が取れる', () => {
-    const fp = path.join(repo, 'A.md');
+    const fp = path.join(repo, '.claude', 'skills', 'a', 'SKILL.md');
     const kept = fs.readFileSync(fp, 'utf8');
     fs.rmSync(fp);
     expect(previousContent(fp)).toEqual({ available: true, previous: 'committed body\n' });
@@ -145,7 +166,7 @@ describe.skipIf(!hasGit)('previousContent(git show)', () => {
   });
 
   it('HEAD に無い新規ファイルは no-history', () => {
-    const fp = path.join(repo, 'new.md');
+    const fp = path.join(repo, '.claude', 'skills', 'a', 'new.md');
     fs.writeFileSync(fp, 'x');
     expect(previousContent(fp)).toEqual({ available: false, reason: 'no-history' });
   });

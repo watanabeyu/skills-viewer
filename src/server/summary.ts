@@ -38,6 +38,22 @@ for (const legacy of ['claude-code-my-skills', 'claude-skills-browser']) {
   }
 }
 
+/*
+ * v0.8 までのインライン編集が作った 1 世代バックアップの掃除。v0.9.0 で書き込みを廃止したので
+ * 誰も参照せず、README にも説明が無いまま利用者のファイルのコピーがディスクに残る
+ * (README は「viewer は自分の状態しか書かない」と約束している)。一度だけ消す。
+ */
+{
+  const backups = path.join(CACHE_DIR, 'backups');
+  if (fs.existsSync(backups)) {
+    try {
+      fs.rmSync(backups, { recursive: true, force: true });
+    } catch {
+      /* 消せなくても本体機能には影響させない */
+    }
+  }
+}
+
 interface CacheEntry extends Partial<SkillAnalysis> {
   hash: string | null;
   name: string;

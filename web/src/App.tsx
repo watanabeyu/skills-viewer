@@ -17,11 +17,11 @@ import {
   migrateLegacyParams,
   resolveProject,
   type FlatItem,
-  type KindFilter,
+  asKindFilter,
+  asUseFilter,
   type MemorySortKey,
   type RefFilter,
   type SortKey,
-  type UseFilter,
 } from './util';
 import { asTypeFilter } from './memory';
 import { GridView } from './components/GridView';
@@ -58,8 +58,8 @@ export default function App() {
   const refFilter: RefFilter = refParam === 'read' || refParam === 'unread' ? refParam : 'all';
   /* memory 一覧の種類(frontmatter type)の絞り込み。未知の値は all */
   const memType = asTypeFilter(params.get('mtype'));
-  const kind = (params.get('kind') || 'all') as KindFilter;
-  const use = (params.get('use') || 'all') as UseFilter;
+  const kind = asKindFilter(params.get('kind'));
+  const use = asUseFilter(params.get('use'));
   /* ?project=<Section.id | all>。省略時は cwd のプロジェクト(設計判断 13) */
   const projectParam = params.get('project');
   /* 「すべてのプロジェクト」の並び(出所別 / 用途別 / 1 列)。v0.8 の view の後継 */
@@ -172,10 +172,13 @@ export default function App() {
   const openMemoryList = () => {
     navigate({ pathname: '/memory', search: params.toString() });
   };
-  /* CLAUDE.md 画面(E2)。:id は toId(パス)で、既定は読まれる順で最初に存在する段。1 枚も無ければ /claude-md */
-  const openClaudeMd = () => {
-    const f = data ? defaultFile(data.claudeMd) : null;
-    navigate({ pathname: '/claude-md' + (f ? '/' + toId(f.path) : ''), search: params.toString() });
+  /*
+   * CLAUDE.md 画面(E2)。:id は toId(パス)。パスを渡せばその段(ホーム ① の変化行から)、
+   * 省略すれば読まれる順で最初に存在する段。1 枚も無ければ /claude-md のまま
+   */
+  const openClaudeMd = (path?: string) => {
+    const fp = path || (data ? defaultFile(data.claudeMd)?.path : undefined);
+    navigate({ pathname: '/claude-md' + (fp ? '/' + toId(fp) : ''), search: params.toString() });
   };
 
   /* ---- AI summarize-all(ボタンはホーム ③ の見出し行。ジョブの状態はここで持つ) ---- */
@@ -330,6 +333,7 @@ export default function App() {
                     use={use}
                     onOpen={openSkill}
                     onOpenMemory={openMemory}
+                    onOpenClaudeMd={openClaudeMd}
                     setParam={setParam}
                     reload={reload}
                   />

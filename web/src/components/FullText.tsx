@@ -27,12 +27,14 @@ export function useMdText(path: string): { raw: string | null; error: string } {
   useEffect(() => {
     if (!path) return;
     let alive = true;
+    // 直前のファイルの失敗メッセージを次のファイルに持ち込まない(本文は出ているのに
+    // 「読み込みに失敗」が併記される)。キャッシュヒットの経路でも消す
+    setError('');
     if (mdCache.has(path)) {
       setRaw(mdCache.get(path)!);
       return;
     }
     setRaw(null);
-    setError('');
     fetchFile(path)
       .then((content) => {
         mdCache.set(path, content);

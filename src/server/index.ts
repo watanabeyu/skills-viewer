@@ -38,7 +38,7 @@ import {
   startSummarizeAll,
   summaryStatus,
 } from './summary';
-import { assertReadableMd, openInEditor } from './read-access';
+import { assertAiReadableMd, assertReadableMd, openInEditor } from './read-access';
 import { attachDiagnoses, diagnoseOne } from './diagnose';
 import { attachFlows, flowOne } from './flow';
 import { attachGroups, generateGroups } from './groups';
@@ -187,9 +187,19 @@ function attributeMemoryUsage(memory: MemorySection[]): void {
  */
 const DESCRIPTION_BUDGET = 2000;
 
-function descriptionBudget(sections: Section[]): DescriptionBudget {
+/*
+ * そのセッションに注入される母集団。scanSections は登録済みの全プロジェクトを返すので、
+ * 現在プロジェクト以外の project セクションを外さないと、複数プロジェクトを登録した環境で
+ * description の合計が数倍になり、予算超過の警告が常時出る。
+ * 起動時サマリ(printStartupSummary)と同じ式を 1 か所に寄せる。
+ */
+export function sessionScope(sections: Section[]): Section[] {
+  return sections.filter((s) => s.source !== 'project' || s.isCurrent);
+}
+
+export function descriptionBudget(sections: Section[]): DescriptionBudget {
   let used = 0;
-  for (const s of sections) for (const it of s.items) used += it.tokens || 0;
+  for (const s of sessionScope(sections)) for (const it of s.items) used += it.tokens || 0;
   return { used, limit: DESCRIPTION_BUDGET, source: 'default' };
 }
 
@@ -197,14 +207,14 @@ function descriptionBudget(sections: Section[]): DescriptionBudget {
  * 毎セッションの最初に読まれるものの内訳。viewer から見えないもの
  * (システムプロンプト・MCP・hook の出力)は含まない ── 画面にもそう明記する。
  */
-function sessionContext(
+export function sessionContext(
   sections: Section[],
   memory: MemorySection[],
   claudeMd: ClaudeMdScan,
 ): SessionContext {
   let count = 0;
   let hiddenCount = 0;
-  for (const s of sections) {
+  for (const s of sessionScope(sections)) {
     for (const it of s.items) {
       if (it.kind === 'hook') continue;
       if (it.hidden) hiddenCount++;
@@ -356,7 +366,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       }
       // 前版(HEAD)の内容。削除済みファイルも対象なので assertReadableMd は通さない(diff.ts に専用の検証)
       if (url.pathname === '/api/diff')
-        return send(200, previousContent(url.searchParams.get('src') || ''));
+        return send(200, previousContent(url.searchParams.get('src') || '', cwd));
       throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
       return send(
@@ -384,7 +394,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
     const model = modelOf(data.model);
     try {
       if (url.pathname === '/api/diagnose') {
-        const real = assertReadableMd(data.src, cwd);
+        const real = assertAiReadableMd(data.src, cwd);
         const name = data.name || path.basename(path.dirname(real));
         diagnoseOne(real, name, lang, model)
           .then((d) => send(200, { ok: true, ...d }))
@@ -392,7 +402,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/flow') {
-        const real = assertReadableMd(data.src, cwd);
+        const real = assertAiReadableMd(data.src, cwd);
         const name = data.name || path.basename(path.dirname(real));
         flowOne(real, name, lang, model)
           .then((f) => send(200, { ok: true, ...f }))
@@ -440,7 +450,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/summarize') {
-        const real = assertReadableMd(data.src, cwd);
+        const real = assertAiReadableMd(data.src, cwd);
         // refs(関係候補)はスキャン結果から復元する
         const sections = scanSections(cwd, lang);
         const item = sections.flatMap((s) => s.items).find((x) => x.path === real);
@@ -499,7 +509,8 @@ function printStartupSummary(cwd: string): void {
       );
     }
     const sessionTokens = data.sections
-      .filter((s) => s.source !== 'project' || s.isCurrent)
+      // sessionScope と同じ母集団(そのセッションに注入されるものだけ)
+      .filter((s) => sessionScope([s]).length > 0)
       .flatMap((s) => s.items)
       .reduce((sum, it) => sum + (it.tokens || 0), 0);
     const unused = data.usageAvailable

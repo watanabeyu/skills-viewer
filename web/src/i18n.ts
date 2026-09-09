@@ -19,9 +19,6 @@ import type { VerdictWord } from './memory';
 export type { Lang };
 
 const en = {
-  'app.subtitle': 'skills · commands · agents · hooks · memory — installed on this machine',
-  'app.count': '{shown} / {total} items',
-  'app.searchPlaceholder': 'Search by name or description…',
   'app.settings': 'Settings',
   'app.loadFailed': 'Failed to load: {msg}',
 
@@ -36,8 +33,6 @@ const en = {
   'sort.memStale': 'Oldest update first',
   'kind.all': 'All',
   'filter.used': 'Recent use',
-  'filter.usedTitle':
-    'Show only items with recorded use in the transcript retention window (default 30 days)',
   'filter.unused': 'No recent use',
   'filter.unusedTitle':
     'Show only items with no recorded use in the transcript retention window (default 30 days)',
@@ -82,19 +77,12 @@ const en = {
   'alert.groupFailed': 'Classification failed: {msg}',
 
   'list.empty': 'No skills match the filters',
-  'card.uses': 'Used {n}× · last {date}',
-  'card.noUses': 'No recorded use',
-  'card.updated': 'Updated {date}',
-  'card.tokens': '~{n} tok',
   'badge.unused': 'no recent use',
   /* 一覧の名前脇に置く短い形(design-system 0.4b の「未使用」) */
   'badge.unusedShort': 'unused',
   'badge.unusedTitle':
     'No recorded use within the transcript retention window (default 30 days). Older use is not visible.',
   'badge.warnTitle': 'Description issues:',
-  'app.tokens': '≈{n} tokens/session',
-  'app.tokensTitle':
-    'Approx. tokens injected into every session in the current project (name + description of built-ins, plugins, user scope and the current project)',
 
   'memory.searchPlaceholder': 'Search memory…',
   'memory.orphan': 'unknown project',
@@ -218,7 +206,6 @@ const en = {
   'memory.cost.indexBeyond': '{n} beyond the limit (not read every session)',
   'memory.cost.unit': 'tok',
 
-  'memory.triage.run': 'Run triage',
   'memory.triage.running': 'Triaging…',
   'memory.triage.rerun': 'Re-run triage',
   'memory.triage.runTitle':
@@ -290,26 +277,11 @@ const en = {
     'Before doing any of the above, verify in this order. (1) Check that your working directory matches the project in the header above — if it does not (e.g. this session was started from the home directory), say so and confirm with me before continuing, because relative paths (especially under .claude/) would resolve against the wrong place. (2) Inspect the current state read-only and present the exact work you would do. (3) Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. (4) Execute only after I approve.',
   'alert.triageFailed': 'Triage failed: {msg}',
 
-  'detail.back': '← Back to list',
-  'detail.lastUpdated': 'Last updated {date}',
   'detail.openEditor': 'Open in editor',
   'detail.resummarize': 'Refresh AI summary',
   'detail.summarizing': 'Summarizing…',
-  'tab.overview': 'Overview',
-  'detail.aiSummary': 'AI summary',
-  'detail.description': 'Description',
-  'detail.usage': 'Usage',
-  'detail.usageStats': 'Usage stats',
-  'detail.usageDetail': 'Typed by human {typed}× · invoked by agent {auto}×',
-  'detail.usageLast': ' · last {date}',
-  'detail.relations': 'Related skills',
   'detail.notInstalled': 'not installed',
-  'detail.files': 'Bundled files',
-  'detail.path': 'Path',
-  'detail.location': 'Location',
   'detail.builtinLocation': 'Bundled with Claude Code',
-  'detail.sameName': 'Same-name definitions ({n})',
-  'detail.open': 'Open',
   'detail.diff': 'diff',
   'detail.diffClose': 'Close diff',
   'alert.ackFailed': 'Failed to mark as read: {msg}',
@@ -385,7 +357,6 @@ const en = {
   'kind.claudeMd': 'CLAUDE.md',
 
   'detail.spark': 'Last 30 days',
-  'detail.diagnostics': 'Diagnostics',
   'diag.run': 'AI trigger diagnosis',
   'diag.rerun': 'Re-diagnose',
   'diag.running': 'Diagnosing…',
@@ -393,10 +364,8 @@ const en = {
     'Analyze via claude CLI whether the description is likely to trigger auto-invocation, and propose an improved version',
   'diag.verdict.good': '✓ Trigger condition looks clear',
   'diag.verdict.weak': '△ Auto-invocation unlikely as written',
-  'diag.improved': 'Suggested description',
   'alert.diagnoseFailed': 'Diagnosis failed: {msg}',
   /* 発動診断の指示文(memory 棚卸しと同じ形: 事実ヘッダ + 本文 + 末尾の確認手順) */
-  'diag.instruction': 'Instruction to paste into Claude Code',
   'diag.instr.hdr': 'Target: {dir} (source: {scope})',
   'diag.instr.file': 'Target file: {path}',
   'diag.instr.replace':
@@ -409,9 +378,6 @@ const en = {
   'diag.instr.scope':
     '- Change only the description. Leave the name ({name}), the rest of the frontmatter and the file location as they are',
 
-  'detail.flow': 'Flow',
-  'flow.emptyHint':
-    'No diagram yet. Extract the processing flow (steps, branches, delegations, human gates) from the definition body via claude CLI.',
   'flow.run': 'extract flow',
   'flow.rerun': 're-extract',
   'flow.running': 'Extracting…',
@@ -420,11 +386,8 @@ const en = {
   'flow.gateHuman': 'human gate',
   'flow.yes': 'yes',
   'flow.no': 'no',
-  'flow.done': 'done',
   'alert.flowFailed': 'Flow extraction failed: {msg}',
 
-  'detail.tokenCost':
-    'Session overhead: ~{n} tokens (name + description are injected into every session; approx.)',
   'lint.no-description':
     'No description in frontmatter — the model has no basis to decide when to use this',
   'lint.short-description':
@@ -585,7 +548,6 @@ const en = {
   'cmd.crumb': 'CLAUDE.md',
   'common.loading': 'Loading…',
   'common.cancel': 'Cancel',
-  'common.close': 'Close',
 
   'alert.copyFailed': 'Copy failed: {msg}',
   'alert.openFailed': 'Could not open in editor: {msg}',
@@ -598,7 +560,7 @@ const en = {
   'settings.aiModelNote.sonnet': 'Higher quality; slower and costlier',
   'settings.aiModelNote.opus': 'Highest quality; slowest and most expensive',
   'settings.aiModelHint':
-    'Aliases resolved by your claude CLI. Applies to new generations only — cached results stay until regenerated (force-rerun from ✦ AI to replace them)',
+    'Aliases resolved by your claude CLI. Applies to new generations only — cached results stay until regenerated (use AI summaries on the home list to replace them)',
   'settings.theme': 'Theme',
   'settings.themeAuto': 'Auto',
   'settings.themeAutoNote': 'Follows the OS setting (dark → Console, light → Ledger)',
@@ -643,9 +605,6 @@ const en = {
 export type MsgKey = keyof typeof en;
 
 const ja: Record<MsgKey, string> = {
-  'app.subtitle': 'skills · commands · agents · hooks · memory — このPCにインストール済み',
-  'app.count': '{shown} / {total} 件',
-  'app.searchPlaceholder': 'スキル名や説明で検索…',
   'app.settings': '設定',
   'app.loadFailed': '読み込みに失敗しました: {msg}',
 
@@ -660,7 +619,6 @@ const ja: Record<MsgKey, string> = {
   'sort.memStale': '更新が古い順',
   'kind.all': 'すべて',
   'filter.used': '直近使用あり',
-  'filter.usedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録があるものだけ表示',
   'filter.unused': '直近使用なし',
   'filter.unusedTitle': '保持期間内(既定30日)のトランスクリプトに使用記録がないものだけ表示',
 
@@ -702,18 +660,11 @@ const ja: Record<MsgKey, string> = {
   'alert.groupFailed': '分類に失敗: {msg}',
 
   'list.empty': '条件に一致するスキルがありません',
-  'card.uses': '使用 {n}回 · 最終 {date}',
-  'card.noUses': '使用記録なし',
-  'card.updated': '{date} 更新',
-  'card.tokens': '約{n}tok',
   'badge.unused': '直近未使用',
   'badge.unusedShort': '未使用',
   'badge.unusedTitle':
     'トランスクリプト保持期間内(既定30日)に使用記録がありません。それ以前の使用は集計できません',
   'badge.warnTitle': 'description の問題:',
-  'app.tokens': '≈{n}トークン/セッション',
-  'app.tokensTitle':
-    '現在のプロジェクトでのセッションごとに注入されるトークンの概算(built-in・plugin・user・現在プロジェクトの name + description)',
 
   'memory.searchPlaceholder': 'memory を検索…',
   'memory.orphan': 'プロジェクト不明',
@@ -829,7 +780,6 @@ const ja: Record<MsgKey, string> = {
   'memory.cost.indexBeyond': '上限外 {n} 件(毎セッション読まれていない)',
   'memory.cost.unit': 'tok',
 
-  'memory.triage.run': '診断を実行',
   'memory.triage.running': '診断中…',
   'memory.triage.rerun': '再診断',
   'memory.triage.runTitle':
@@ -890,26 +840,11 @@ const ja: Record<MsgKey, string> = {
     '上の作業を実行する前に、次の順で確認してください。(1) このセッションの作業ディレクトリが上のヘッダのプロジェクトと一致するか確認する。一致しない場合(ホームディレクトリから起動したセッション等)は、相対パス(特に .claude/ 配下)の解決を誤るため、その旨を指摘して続行の可否を私に確認する。(2) 読み取りだけで現状を確認し、実行する作業内容を提示する。(3) 判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認する。(4) 実行は私の承認を得てから行う。',
   'alert.triageFailed': '棚卸し診断に失敗: {msg}',
 
-  'detail.back': '← 一覧に戻る',
-  'detail.lastUpdated': '最終更新 {date}',
   'detail.openEditor': 'エディタで開く',
   'detail.resummarize': 'AI要約更新',
   'detail.summarizing': '要約中…',
-  'tab.overview': '概要',
-  'detail.aiSummary': 'AI 要約',
-  'detail.description': '説明',
-  'detail.usage': '使い方',
-  'detail.usageStats': '使用実績',
-  'detail.usageDetail': '手動(人間がタイプ) {typed}回 · 自動(エージェント呼び出し) {auto}回',
-  'detail.usageLast': ' · 最終 {date}',
-  'detail.relations': '関連スキル',
   'detail.notInstalled': '未インストール',
-  'detail.files': '含まれるファイル',
-  'detail.path': 'パス',
-  'detail.location': '場所',
   'detail.builtinLocation': 'Claude Code 本体に同梱',
-  'detail.sameName': '同名の定義 ({n})',
-  'detail.open': '開く',
   'detail.diff': 'diff',
   'detail.diffClose': 'diff を閉じる',
 
@@ -980,16 +915,13 @@ const ja: Record<MsgKey, string> = {
   'alert.ackFailed': '既読化に失敗: {msg}',
 
   'detail.spark': '直近30日',
-  'detail.diagnostics': '診断',
   'diag.run': 'AI 発動診断',
   'diag.rerun': '再診断',
   'diag.running': '診断中…',
   'diag.runTitle': 'description が自動発動につながるかを claude CLI で分析し、改善案を提案します',
   'diag.verdict.good': '✓ 発動条件は明確です',
   'diag.verdict.weak': '△ このままでは自動発動されにくい可能性',
-  'diag.improved': '改善案',
   'alert.diagnoseFailed': '診断に失敗: {msg}',
-  'diag.instruction': 'Claude Code への指示文',
   'diag.instr.hdr': '対象: {dir}(出所: {scope})',
   'diag.instr.file': '対象ファイル: {path}',
   'diag.instr.replace': '- {file} の frontmatter の description を次の文に置き換える: 「{text}」',
@@ -1001,9 +933,6 @@ const ja: Record<MsgKey, string> = {
   'diag.instr.scope':
     '- 変更するのは description だけ。name({name})・他の frontmatter・ファイルの場所は変えない',
 
-  'detail.flow': 'フロー',
-  'flow.emptyHint':
-    'まだ図解がありません。定義本文から処理フロー(ステップ・分岐・委譲・人間ゲート)を claude CLI で抽出します。',
   'flow.run': '流れを抽出',
   'flow.rerun': '再抽出',
   'flow.running': '抽出中…',
@@ -1012,11 +941,8 @@ const ja: Record<MsgKey, string> = {
   'flow.gateHuman': '人間ゲート',
   'flow.yes': 'はい',
   'flow.no': 'いいえ',
-  'flow.done': '完了',
   'alert.flowFailed': 'フロー抽出に失敗: {msg}',
 
-  'detail.tokenCost':
-    'セッションあたりの負荷: 約{n}トークン(name + description は毎セッション注入されます。概算)',
   'lint.no-description':
     'frontmatter に description がありません — モデルが使いどきを判断する材料がありません',
   'lint.short-description':
@@ -1173,7 +1099,6 @@ const ja: Record<MsgKey, string> = {
   'cmd.crumb': 'CLAUDE.md',
   'common.loading': '読み込み中…',
   'common.cancel': 'キャンセル',
-  'common.close': '閉じる',
 
   'alert.copyFailed': 'コピーに失敗: {msg}',
   'alert.openFailed': 'エディタで開けませんでした: {msg}',
@@ -1186,7 +1111,7 @@ const ja: Record<MsgKey, string> = {
   'settings.aiModelNote.sonnet': '高品質。やや遅く高コスト',
   'settings.aiModelNote.opus': '最高品質。最も遅く高コスト',
   'settings.aiModelHint':
-    'claude CLI のエイリアスとして解決されます。次回の生成から適用され、生成済みキャッシュはそのまま残ります(置き換えたい場合は ✦ AI から強制再生成)',
+    'claude CLI のエイリアスとして解決されます。次回の生成から適用され、生成済みキャッシュはそのまま残ります(置き換えたい場合はホームの「効いているもの」から AI 要約を強制再生成)',
   'settings.theme': 'テーマ',
   'settings.themeAuto': '自動',
   'settings.themeAutoNote': 'OS の配色設定に従う(ダーク → Console、ライト → Ledger)',

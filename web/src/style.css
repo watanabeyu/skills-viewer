@@ -623,11 +623,12 @@ select,
   text-transform: none;
   letter-spacing: 0.02em;
 }
+/* 手動グループの印。押せないラベルなので罫線は付けない(design-system 0.4) */
 .g-manual {
   font-size: 10px;
   padding: 1px 7px;
   border-radius: var(--radius-chip);
-  border: 1px solid var(--border);
+  background: var(--raised);
   color: var(--meta);
   cursor: default;
 }

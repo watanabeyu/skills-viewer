@@ -108,6 +108,22 @@ function listFiles(dir: string, prefix = '', depth = 0, acc: string[] = []): str
 /* ---------- scanners ---------- */
 
 /*
+ * frontmatter の真偽値。parseFrontmatter は値を正規化せず生文字列を返すので、
+ * YAML 的に真である True / TRUE / yes も拾う(取りこぼすと「モデルから呼べない」表示が
+ * 誤るうえ、description が予算に計上されてしまう)。
+ */
+const isTruthy = (v: string | undefined) => /^(true|yes)$/i.test((v || '').trim());
+
+/* hidden / allowedTools の組み立て。readSkillDir と scanMdRoot で同じ規則を使う */
+function metaFlags(meta: Record<string, string>): { hidden?: true; allowedTools?: string[] } {
+  const tools = allowedToolsOf(meta);
+  return {
+    ...(isTruthy(meta['disable-model-invocation']) ? { hidden: true as const } : {}),
+    ...(tools ? { allowedTools: tools } : {}),
+  };
+}
+
+/*
  * frontmatter の allowed-tools。実データは `Read, Write, Bash(git *), ...` の
  * カンマ区切り 1 行(YAML リストではない)。空なら undefined を返す。
  */
@@ -143,8 +159,7 @@ function readSkillDir(dir: string, nameHint: string): ScanItem | null {
     updatedAt: fileMtime(skillMd),
     files: listFiles(dir).sort(),
     ...(meta.category ? { category: meta.category } : {}),
-    ...(meta['disable-model-invocation'] === 'true' ? { hidden: true } : {}),
-    ...(allowedToolsOf(meta) ? { allowedTools: allowedToolsOf(meta) } : {}),
+    ...metaFlags(meta),
     ...(lint.length ? { lint } : {}),
     _body: body, // 参照抽出用(scanSections で refs 化して破棄)
   };
@@ -187,8 +202,7 @@ function scanMdRoot(root: string, kind: 'command' | 'agent'): ScanItem[] {
       updatedAt: fileMtime(fp),
       files: [entry.name],
       ...(meta.category ? { category: meta.category } : {}),
-      ...(meta['disable-model-invocation'] === 'true' ? { hidden: true } : {}),
-      ...(allowedToolsOf(meta) ? { allowedTools: allowedToolsOf(meta) } : {}),
+      ...metaFlags(meta),
       ...(lint.length ? { lint } : {}),
       _body: body,
     });

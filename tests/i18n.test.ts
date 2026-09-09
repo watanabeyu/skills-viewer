@@ -16,7 +16,7 @@ describe('t (辞書引き + 置換)', () => {
   });
 
   it('{name} プレースホルダを置換する', () => {
-    expect(t('app.count', { shown: 3, total: 10 })).toBe('3 / 10 items');
+    expect(t('chg.count', { n: 3 })).toBe('3 changes');
   });
 
   it('params に無いプレースホルダはそのまま残す(設定例文の {path} など)', () => {
@@ -101,5 +101,52 @@ describe('usageTitle (共有ストアの合算注記)', () => {
   it('共有ストアでなければ base をそのまま / base も無ければ undefined(title="" を吐かない)', () => {
     expect(usageTitle(sec(), 'base')).toBe('base');
     expect(usageTitle(sec())).toBeUndefined();
+  });
+});
+
+/*
+ * 使われなくなったキーの番犬。型(Record<MsgKey, string>)は「不足」を捕まえるが「余り」は捕まえない。
+ * v0.9.0 で画面を組み替えた際に、退役した画面のキーが en / ja 両方に 34 件残っていた
+ * (レビュー 2026-09-09 の指摘)。辞書が 2 倍に膨らむので機械的に落とす。
+ */
+describe('辞書に未使用キーが残っていない', () => {
+  /* 動的に組み立てるキーの接頭辞。ここに属するキーはコード中にリテラルで現れない */
+  const DYNAMIC_PREFIXES = [
+    'lint.',
+    'apiError.',
+    'invocation.',
+    'rel.',
+    'memory.state.',
+    'memory.word.',
+    'memory.signal.',
+    'memory.type.',
+    'memory.triage.verdict.',
+    'memory.triage.est',
+    'hook.ev.',
+    'cmd.kind.',
+    'cmd.skipped.',
+    'settings.aiModelNote.',
+    'view.',
+    'kind.',
+  ];
+
+  it('en のキーはすべてコード中で参照されている', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const root = path.join(import.meta.dirname, '..', 'web', 'src');
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fp = path.join(dir, e.name);
+        if (e.isDirectory()) walk(fp);
+        else if (/\.tsx?$/.test(e.name) && e.name !== 'i18n.ts') files.push(fp);
+      }
+    };
+    walk(root);
+    const blob = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+    const unused = (Object.keys(DICTS.en) as MsgKey[]).filter(
+      (k) => !blob.includes(`'${k}'`) && !DYNAMIC_PREFIXES.some((p) => k.startsWith(p)),
+    );
+    expect(unused).toEqual([]);
   });
 });
