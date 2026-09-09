@@ -214,3 +214,30 @@ describe('allowedPath (実在すれば realpath で、消えていれば字句�
     expect(allowedPath(link, cwd)).toBe(true);
   });
 });
+
+/*
+ * 消えた CLAUDE.md の扱い。走査(claudeMdPaths)は existsSync で絞るので、消えたパスは
+ * 許可の対象にならない。`.claude` 配下は字句で通るので、同じ「消えた CLAUDE.md」でも
+ * 置き場所で差分の可否が変わる ── その非対称をここに固定しておく(直すなら走査側に
+ * 「存在で絞らない列挙」を足す必要があり、許可の広がりを伴う)。
+ */
+describe('allowedPath (消えた CLAUDE.md の非対称)', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-gone-claudemd-'));
+  fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+  afterAll(() => fs.rmSync(cwd, { recursive: true, force: true }));
+
+  it('.claude 配下なら消えていても許可する(差分が取れる)', () => {
+    expect(allowedPath(path.join(cwd, '.claude', 'CLAUDE.md'), cwd)).toBe(true);
+    expect(allowedPath(path.join(cwd, '.claude', 'rules', 'gone.md'), cwd)).toBe(true);
+  });
+
+  it('.claude の外(<project>/CLAUDE.md・CLAUDE.local.md)は消えると許可されない', () => {
+    expect(allowedPath(path.join(cwd, 'CLAUDE.md'), cwd)).toBe(false);
+    expect(allowedPath(path.join(cwd, 'CLAUDE.local.md'), cwd)).toBe(false);
+  });
+
+  it('存在していれば <project>/CLAUDE.md は許可される(走査が列挙するため)', () => {
+    fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), '# root');
+    expect(allowedPath(path.join(cwd, 'CLAUDE.md'), cwd)).toBe(true);
+  });
+});

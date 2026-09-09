@@ -92,8 +92,14 @@ export function allowedPath(abs: string, cwd: string = process.cwd()): boolean {
   try {
     real = fs.realpathSync(abs);
   } catch {
-    // 解決できない = 消えている。字句だけで境界を見る(CLAUDE.md 群は実在で列挙するので対象外)
-    return underDotClaude(abs) || underAutoMemory(abs, cwd) || isClaudeMdLayerFile(abs, cwd);
+    /*
+     * 解決できない = 消えている。字句だけで境界を見る。
+     * CLAUDE.md 群はここで見ない: claudeMdPaths が existsSync で絞るので、消えたパスが
+     * 一致することはない(判定を足しても常に false になり、rules ディレクトリの readdir と
+     * 全候補の realpath を無駄に走らせるだけ)。消えた CLAUDE.md の差分を出したいなら、
+     * 走査側に「存在で絞らない列挙」を足す必要がある ── 許可の広がりを伴うので別途。
+     */
+    return underDotClaude(abs) || underAutoMemory(abs, cwd);
   }
   return allowed(real, cwd);
 }
