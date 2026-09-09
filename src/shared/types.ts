@@ -223,6 +223,13 @@ export interface SkillItem {
   lint?: LintCode[];
   /* frontmatter の category(手動グループ指定。AI 分類より優先され、AI 分類の対象外) */
   category?: string;
+  /*
+   * frontmatter の disable-model-invocation: true。モデルからは呼べず、description が
+   * 一覧に載らないので毎セッションのコストに数えない(公式仕様)。
+   */
+  hidden?: boolean;
+  /* frontmatter の allowed-tools(カンマ区切り)。「何に触るか」を AI 無しで出す一次情報 */
+  allowedTools?: string[];
   /* AI 分類による所属グループ(SkillsData.groups の id)。name 単位の割当 */
   aiGroup?: string;
   /* name + description が毎セッション注入される分のトークン概算(hook は対象外) */
@@ -360,6 +367,83 @@ export interface Section {
   items: SkillItem[];
 }
 
+/* ---- CLAUDE.md 群(毎セッションの最初に読まれる指示) ---- */
+
+/* 注入順の段。managed は OS が配る管理ポリシー、project-dot は <project>/.claude/CLAUDE.md */
+export type ClaudeMdLayerKind =
+  | 'managed'
+  | 'user'
+  | 'project'
+  | 'project-dot'
+  | 'local'
+  | 'rules'
+  | 'parent';
+
+/* @import の展開結果。skipped が付いているものは中身を数えていない */
+export interface ClaudeMdImport {
+  /* 記述されていた参照(@ の後ろ) */
+  ref: string;
+  path: string;
+  exists: boolean;
+  /* 1 が直接の @import。公式仕様の上限は 4 段 */
+  depth: number;
+  tokens: number;
+  /* cycle = 同じ実パスを既に展開済み / depth = 4 段を超えた */
+  skipped?: 'cycle' | 'depth';
+}
+
+export interface ClaudeMdFile {
+  path: string;
+  /* 本文だけの概算 */
+  ownTokens: number;
+  /* 本文 + 展開した @import の合計 */
+  tokens: number;
+  updatedAt: string;
+  headings: { text: string; tokens: number }[];
+  imports: ClaudeMdImport[];
+  /* rules 段で frontmatter に paths: があり、常時ではなく遅延ロードされるもの */
+  lazy?: boolean;
+  /* 本文を返さない段(管理ポリシー)。存在と概算だけ扱う */
+  bodyWithheld?: boolean;
+}
+
+export interface ClaudeMdLayer {
+  kind: ClaudeMdLayerKind;
+  /* どこを見たか。ファイルが無い段でも「なし」の行を出せるように残す */
+  label: string;
+  files: ClaudeMdFile[];
+  /* この段が毎セッション持ち込む概算(lazy は除く) */
+  tokens: number;
+}
+
+export interface ClaudeMdScan {
+  /* 注入順。無い段も files: [] で残る */
+  layers: ClaudeMdLayer[];
+  tokens: number;
+}
+
+/*
+ * 毎セッションの最初に読まれるものの内訳。viewer から見えないもの
+ * (システムプロンプト・MCP・hook の出力)は含まない。
+ */
+export interface SessionContext {
+  claudeMd: { tok: number };
+  /* MEMORY.md の索引。上限は公式仕様(先頭 200 行 or 25KB の先に達した方) */
+  memoryIndex: { tok: number; lines: number; limitLines: number; limitBytes: number };
+  /* skill / command / agent の name + description。hidden は注入されないので除く */
+  descriptions: { tok: number; count: number; hiddenCount: number; limit: number };
+}
+
+/*
+ * description の予算。公式は「コンテキスト窓の 1%」で、200k 窓なら 2,000。
+ * settings.json に相当するキーは無い(2026-09-08 確認)ので source は default 固定。
+ */
+export interface DescriptionBudget {
+  used: number;
+  limit: number;
+  source: 'default';
+}
+
 export interface SkillsData {
   generatedAt: string;
   cwd: string;
@@ -380,6 +464,12 @@ export interface SkillsData {
   groupsStale?: boolean;
   /* 自動メモリ(読み取り専用)。1 件も無ければ省略 */
   memory?: MemorySection[];
+  /* CLAUDE.md 群(注入順。無い段も残る) */
+  claudeMd: ClaudeMdScan;
+  /* description の常時コストと予算 */
+  budget: DescriptionBudget;
+  /* 毎セッションの最初に読まれるものの内訳 */
+  context: SessionContext;
 }
 
 export interface SummaryJob {

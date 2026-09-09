@@ -10,7 +10,15 @@ import * as http from 'node:http';
 import * as crypto from 'node:crypto';
 import { execFile, spawnSync } from 'node:child_process';
 
-import type { Lang, MemorySection, Section, SkillsData } from '../shared/types';
+import type {
+  ClaudeMdScan,
+  DescriptionBudget,
+  Lang,
+  MemorySection,
+  Section,
+  SessionContext,
+  SkillsData,
+} from '../shared/types';
 import { scanSections } from './scan';
 import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
 import {
@@ -36,6 +44,7 @@ import { attachFlows, flowOne } from './flow';
 import { attachGroups, generateGroups } from './groups';
 import { attachMemoryTriage, triageProject } from './memory-triage';
 import { ackChanges, computeChanges } from './snapshot';
+import { claudeMdLayers, claudeMdRefs } from './claude-md';
 import { previousContent } from './diff';
 import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
@@ -171,6 +180,57 @@ function attributeMemoryUsage(memory: MemorySection[]): void {
  * 実績付きの memory セクション一覧。/api/skills だけでなく /api/memory-triage からも
  * 同じ事実(Read / W-E / usageAvailable)をプロンプトに載せる必要があるので共通化する。
  */
+/*
+ * description の常時コストと予算。公式は「コンテキスト窓の 1%」で、200k 窓なら 2,000。
+ * settings.json に相当するキーは無い(2026-09-08 確認)ので既定固定にし、
+ * 公式にキーが現れたら source を分けて差し替える。
+ */
+const DESCRIPTION_BUDGET = 2000;
+
+function descriptionBudget(sections: Section[]): DescriptionBudget {
+  let used = 0;
+  for (const s of sections) for (const it of s.items) used += it.tokens || 0;
+  return { used, limit: DESCRIPTION_BUDGET, source: 'default' };
+}
+
+/*
+ * 毎セッションの最初に読まれるものの内訳。viewer から見えないもの
+ * (システムプロンプト・MCP・hook の出力)は含まない ── 画面にもそう明記する。
+ */
+function sessionContext(
+  sections: Section[],
+  memory: MemorySection[],
+  claudeMd: ClaudeMdScan,
+): SessionContext {
+  let count = 0;
+  let hiddenCount = 0;
+  for (const s of sections) {
+    for (const it of s.items) {
+      if (it.kind === 'hook') continue;
+      if (it.hidden) hiddenCount++;
+      else count++;
+    }
+  }
+  // 索引のコストは memory 側が上限(200 行 / 25KB)の外を除いて計算済みなので、それを足す
+  const cur = memory.filter((m) => m.isCurrent);
+  const target = cur.length ? cur : memory;
+  return {
+    claudeMd: { tok: claudeMd.tokens },
+    memoryIndex: {
+      tok: target.reduce((n, m) => n + m.indexTokens, 0),
+      lines: target.reduce((n, m) => n + m.items.length, 0),
+      limitLines: 200,
+      limitBytes: 25 * 1024,
+    },
+    descriptions: {
+      tok: descriptionBudget(sections).used,
+      count,
+      hiddenCount,
+      limit: DESCRIPTION_BUDGET,
+    },
+  };
+}
+
 function memorySections(cwd: string): MemorySection[] {
   primeMemoryRoots(cwd);
   const memory = scanMemory(cwd);
@@ -234,6 +294,7 @@ function collect(cwd: string, lang: Lang): SkillsData {
   attachMemoryTriage(memory, lang, undefined, {
     sharedEnv: resolveAutoMemoryDir(cwd)?.scope === 'user',
   });
+  const claudeMd = claudeMdLayers({ root: cwd });
   return {
     generatedAt: new Date().toISOString(),
     cwd,
@@ -241,8 +302,10 @@ function collect(cwd: string, lang: Lang): SkillsData {
     aiStale,
     aiAvailable,
     usageAvailable,
-    // CLAUDE.md 群の受け口は Phase C2(claude-md.ts)から第 3 引数で渡す
-    changes: computeChanges(sections, memory),
+    claudeMd,
+    budget: descriptionBudget(sections),
+    context: sessionContext(sections, memory, claudeMd),
+    changes: computeChanges(sections, memory, claudeMdRefs(claudeMd)),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
     ...(memory.length ? { memory: publicMemory(memory) } : {}),
@@ -337,7 +400,11 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/changes-ack') {
-        ackChanges(scanSections(cwd, lang), memorySections(cwd));
+        ackChanges(
+          scanSections(cwd, lang),
+          memorySections(cwd),
+          claudeMdRefs(claudeMdLayers({ root: cwd })),
+        );
         return send(200, { ok: true });
       }
       if (url.pathname === '/api/open') return send(200, openInEditor(data, cwd));

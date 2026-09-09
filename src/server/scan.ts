@@ -106,6 +106,20 @@ function listFiles(dir: string, prefix = '', depth = 0, acc: string[] = []): str
 
 /* ---------- scanners ---------- */
 
+/*
+ * frontmatter の allowed-tools。実データは `Read, Write, Bash(git *), ...` の
+ * カンマ区切り 1 行(YAML リストではない)。空なら undefined を返す。
+ */
+export function allowedToolsOf(meta: Record<string, string>): string[] | undefined {
+  const raw = meta['allowed-tools'];
+  if (!raw) return undefined;
+  const list = raw
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  return list.length ? list : undefined;
+}
+
 function readSkillDir(dir: string, nameHint: string): ScanItem | null {
   const skillMd = path.join(dir, 'SKILL.md');
   if (!fs.existsSync(skillMd)) return null;
@@ -128,6 +142,8 @@ function readSkillDir(dir: string, nameHint: string): ScanItem | null {
     updatedAt: fileMtime(skillMd),
     files: listFiles(dir).sort(),
     ...(meta.category ? { category: meta.category } : {}),
+    ...(meta['disable-model-invocation'] === 'true' ? { hidden: true } : {}),
+    ...(allowedToolsOf(meta) ? { allowedTools: allowedToolsOf(meta) } : {}),
     ...(lint.length ? { lint } : {}),
     _body: body, // 参照抽出用(scanSections で refs 化して破棄)
   };
@@ -170,6 +186,8 @@ function scanMdRoot(root: string, kind: 'command' | 'agent'): ScanItem[] {
       updatedAt: fileMtime(fp),
       files: [entry.name],
       ...(meta.category ? { category: meta.category } : {}),
+      ...(meta['disable-model-invocation'] === 'true' ? { hidden: true } : {}),
+      ...(allowedToolsOf(meta) ? { allowedTools: allowedToolsOf(meta) } : {}),
       ...(lint.length ? { lint } : {}),
       _body: body,
     });
@@ -436,10 +454,11 @@ export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
   ];
   attachRefs(sections);
   // name + description は毎セッション注入されるため、その分のトークンを概算しておく。
-  // hook は設定エントリ(description 注入なし)なので対象外
+  // hook は設定エントリ(description 注入なし)、hidden はモデルの一覧に載らないので対象外
   for (const s of sections) {
     for (const it of s.items) {
-      if (it.kind !== 'hook') it.tokens = estimateTokens(it.name + ': ' + it.description);
+      if (it.kind !== 'hook' && !it.hidden)
+        it.tokens = estimateTokens(it.name + ': ' + it.description);
     }
   }
   return sections;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFrontmatter } from '../src/server/scan';
+import { allowedToolsOf, parseFrontmatter } from '../src/server/scan';
 
 describe('parseFrontmatter', () => {
   it('スカラー値を読める', () => {
@@ -68,9 +68,34 @@ describe('parseFrontmatter', () => {
     expect(Object.keys(meta).filter((k) => k.startsWith('allowed-tools.'))).toHaveLength(0);
   });
 
+  it('disable-model-invocation は文字列 true として読める(スカラーのまま)', () => {
+    const { meta } = parseFrontmatter('---\nname: x\ndisable-model-invocation: true\n---\n');
+    expect(meta['disable-model-invocation']).toBe('true');
+  });
+
   it('frontmatter が無ければ全文が body', () => {
     const { meta, body } = parseFrontmatter('# タイトルだけ\n本文');
     expect(Object.keys(meta)).toHaveLength(0);
     expect(body).toBe('# タイトルだけ\n本文');
+  });
+});
+
+describe('allowedToolsOf', () => {
+  it('カンマ区切りの 1 行を配列にする(実データはこの形)', () => {
+    const meta = { 'allowed-tools': 'Read, Write, Grep, Bash(git *), Bash(gh *)' };
+    expect(allowedToolsOf(meta)).toEqual(['Read', 'Write', 'Grep', 'Bash(git *)', 'Bash(gh *)']);
+  });
+
+  it('YAML リスト形式(パーサが値を取れず空になる)は undefined', () => {
+    const { meta } = parseFrontmatter('---\nallowed-tools:\n  - Bash\n---\n');
+    expect(allowedToolsOf(meta)).toBeUndefined();
+  });
+
+  it('キーが無ければ undefined', () => {
+    expect(allowedToolsOf({})).toBeUndefined();
+  });
+
+  it('空要素は落とす', () => {
+    expect(allowedToolsOf({ 'allowed-tools': 'Read, , Write,' })).toEqual(['Read', 'Write']);
   });
 });
