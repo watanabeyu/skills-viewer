@@ -1,21 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  applyDescription,
-  copySkill,
-  deleteSkill,
   diagnoseSkill,
   fetchFile,
-  fetchFileFull,
   fromId,
   openSkill,
-  saveFile,
   summarizeSkill,
   toId,
   type Section,
   type SkillsData,
 } from '../api';
 import {
+  diagnosisInstruction,
   flatten,
   fmtDate,
   groupByPurpose,
@@ -47,8 +43,7 @@ import {
   UnusedBadge,
   WarnBadge,
 } from './GridView';
-import { CopyMenu } from './CopyMenu';
-import { DeleteModal } from './DeleteModal';
+import { CopyButton, InlineError, InlineNote } from './Inline';
 import { FlowSection } from './FlowDiagram';
 
 export function DetailView({
@@ -80,9 +75,10 @@ export function DetailView({
 
   const tabParam = params.get('tab');
   const tab = (tabParam === 'md' || tabParam === 'flow') && it?.hasMd ? tabParam : 'overview';
-  const [copyOpen, setCopyOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
+  // 操作起点の失敗はボタンの脇に 1 行で出す(alert は使わない)
+  const [openError, setOpenError] = useState('');
+  const [summaryError, setSummaryError] = useState('');
 
   if (!it) return <Navigate to={{ pathname: '/', search: params.toString() }} replace />;
 
@@ -101,29 +97,9 @@ export function DetailView({
     navigate({ pathname: '/', search: next.toString() });
   };
 
-  const onCopy = async (target: string) => {
-    setCopyOpen(false);
-    try {
-      const r = await copySkill(it.path, target);
-      await reload();
-      onOpen(r.destMd + '#' + r.destName); // コピー先の詳細を表示(design 仕様)
-    } catch (e) {
-      alert(t('alert.copyFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
-  const onDelete = async () => {
-    try {
-      const r = await deleteSkill(it.path);
-      setConfirmDelete(false);
-      await reload();
-      backToGrid();
-      alert(t('alert.trashed', { path: r.trashedTo }));
-    } catch (e) {
-      alert(t('alert.deleteFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
   const onOpenEditor = async () => {
     // 設定(⚙)の URL スキームで開く。OS デフォルト設定時のみサーバー側で開く
+    setOpenError('');
     const url = editorUrl(loadEditorSetting(), it.path);
     if (url) {
       window.location.href = url;
@@ -132,16 +108,19 @@ export function DetailView({
     try {
       await openSkill(it.path);
     } catch (e) {
-      alert(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setOpenError(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   };
   const onSummarize = async () => {
     setSummarizing(true);
+    setSummaryError('');
     try {
       await summarizeSkill(it.path, it.name);
       await reload();
     } catch (e) {
-      alert(t('alert.summarizeFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setSummaryError(
+        t('alert.summarizeFailed', { msg: e instanceof Error ? e.message : String(e) }),
+      );
     } finally {
       setSummarizing(false);
     }
@@ -187,33 +166,24 @@ export function DetailView({
           <span className="m-upd">
             {it.updatedAt ? t('detail.lastUpdated', { date: fmtDate(it.updatedAt) }) : ''}
           </span>
+          {/* 書き込み系(コピー・削除・編集)は v0.9.0 で廃止。残るのは読む導線だけ */}
           {!!it.path && (
             <button className="pbtn" onClick={onOpenEditor}>
               {t('detail.openEditor')}
             </button>
           )}
-          {it.manage && (
-            <>
-              <span style={{ position: 'relative' }}>
-                <button className="pbtn" onClick={() => setCopyOpen((v) => !v)}>
-                  {t('detail.copy')}
-                </button>
-                {copyOpen && (
-                  <CopyMenu
-                    targets={data.targets}
-                    onPick={onCopy}
-                    onClose={() => setCopyOpen(false)}
-                  />
-                )}
-              </span>
-              <button className="pbtn" disabled={summarizing} onClick={onSummarize}>
-                {summarizing ? t('detail.summarizing') : t('detail.resummarize')}
-              </button>
-              <button className="pbtn danger" onClick={() => setConfirmDelete(true)}>
-                {t('detail.delete')}
-              </button>
-            </>
+          <InlineError msg={openError} />
+          {it.hasMd && (
+            <button
+              className="pbtn"
+              disabled={summarizing || !data.aiAvailable}
+              onClick={onSummarize}
+            >
+              {summarizing ? t('detail.summarizing') : t('detail.resummarize')}
+            </button>
           )}
+          <InlineError msg={summaryError} />
+          {it.hasMd && !data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
         </div>
         <h2 className="d-name">
           {it.name}
@@ -242,16 +212,26 @@ export function DetailView({
           )}
         </div>
         {tab === 'overview' ? (
-          <OverviewTab it={it} all={all} onOpen={onOpen} reload={reload} />
+          <OverviewTab
+            it={it}
+            all={all}
+            dir={data.sections.find((s) => s.id === it.secId)?.note || ''}
+            aiAvailable={data.aiAvailable}
+            onOpen={onOpen}
+            reload={reload}
+          />
         ) : tab === 'flow' ? (
-          <FlowTab it={it} all={all} onOpen={onOpen} reload={reload} />
+          <FlowTab
+            it={it}
+            all={all}
+            aiAvailable={data.aiAvailable}
+            onOpen={onOpen}
+            reload={reload}
+          />
         ) : (
-          <MdTab it={it} reload={reload} />
+          <MdTab it={it} />
         )}
       </div>
-      {confirmDelete && (
-        <DeleteModal name={it.name} onCancel={() => setConfirmDelete(false)} onDelete={onDelete} />
-      )}
     </div>
   );
 }
@@ -380,25 +360,40 @@ function makeResolve(it: FlatItem, all: FlatItem[]): (name: string) => FlatItem 
 function FlowTab({
   it,
   all,
+  aiAvailable,
   onOpen,
   reload,
 }: {
   it: FlatItem;
   all: FlatItem[];
+  aiAvailable: boolean;
   onOpen: (key: string) => void;
   reload: () => Promise<void>;
 }) {
-  return <FlowSection it={it} resolve={makeResolve(it, all)} onOpen={onOpen} reload={reload} />;
+  return (
+    <FlowSection
+      it={it}
+      resolve={makeResolve(it, all)}
+      aiAvailable={aiAvailable}
+      onOpen={onOpen}
+      reload={reload}
+    />
+  );
 }
 
 function OverviewTab({
   it,
   all,
+  dir,
+  aiAvailable,
   onOpen,
   reload,
 }: {
   it: FlatItem;
   all: FlatItem[];
+  /* 指示文の事実ヘッダに出す置き場の実体パス(Section.note) */
+  dir: string;
+  aiAvailable: boolean;
   onOpen: (key: string) => void;
   reload: () => Promise<void>;
 }) {
@@ -439,7 +434,9 @@ function OverviewTab({
               <span>{lintLabel(code)}</span>
             </div>
           ))}
-          {it.hasMd && <DiagnosisBlock it={it} reload={reload} />}
+          {it.hasMd && (
+            <DiagnosisBlock it={it} dir={dir} aiAvailable={aiAvailable} reload={reload} />
+          )}
         </>
       )}
       <SameNameSection it={it} all={all} onOpen={onOpen} />
@@ -501,35 +498,36 @@ function OverviewTab({
 }
 
 /*
- * AI 発動診断ブロック。キャッシュ済み診断があれば表示し、改善案は manage 可能な
- * アイテムに限りワンクリック適用できる(適用すると内容が変わるため診断キャッシュは無効化される)。
+ * AI 発動診断ブロック。viewer は description を書き換えないので(計画 15 判断 1)、
+ * 結果は「貼れる指示文」として全文を出す。改善案があれば「description を次に変える」、
+ * 無ければ「変える場合に残すもの」を、末尾の確認手順つきで組む(memory 棚卸しと同じ形)。
  */
-function DiagnosisBlock({ it, reload }: { it: FlatItem; reload: () => Promise<void> }) {
+function DiagnosisBlock({
+  it,
+  dir,
+  aiAvailable,
+  reload,
+}: {
+  it: FlatItem;
+  dir: string;
+  aiAvailable: boolean;
+  reload: () => Promise<void>;
+}) {
   const [busy, setBusy] = useState(false);
-  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState('');
   const d = it.aiDiagnosis;
+  const instruction = d ? diagnosisInstruction(it, dir) : '';
 
   const run = async () => {
     setBusy(true);
+    setError('');
     try {
       await diagnoseSkill(it.path, it.name);
       await reload();
     } catch (e) {
-      alert(t('alert.diagnoseFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setError(t('alert.diagnoseFailed', { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setBusy(false);
-    }
-  };
-  const apply = async () => {
-    if (!d) return;
-    setApplying(true);
-    try {
-      await applyDescription(it.path, d.improved);
-      await reload();
-    } catch (e) {
-      alert(t('alert.applyFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setApplying(false);
     }
   };
 
@@ -553,18 +551,28 @@ function DiagnosisBlock({ it, reload }: { it: FlatItem; reload: () => Promise<vo
                 <span className="ai-mark">✦ </span>
                 {d.improved}
               </p>
-              {it.manage && (
-                <button className="pbtn sm" disabled={applying} onClick={apply}>
-                  {applying ? t('diag.applying') : t('diag.apply')}
-                </button>
-              )}
             </>
           )}
+          {/* 指示文は折りたたまず全文を出す(貼るかどうかの判断がここで完結するように) */}
+          <div className="instr">
+            <div className="instr-h">
+              <span className="instr-t">{t('diag.instruction')}</span>
+              <CopyButton className="copybtn" text={instruction} />
+            </div>
+            <div className="instr-body">{instruction}</div>
+          </div>
         </div>
       )}
-      <button className="pbtn sm" disabled={busy} onClick={run} title={t('diag.runTitle')}>
+      <button
+        className="pbtn sm"
+        disabled={busy || !aiAvailable}
+        onClick={run}
+        title={t('diag.runTitle')}
+      >
         {busy ? t('diag.running') : d ? t('diag.rerun') : '✦ ' + t('diag.run')}
       </button>
+      <InlineError msg={error} />
+      {!aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
     </div>
   );
 }
@@ -719,18 +727,14 @@ export function clearMdCache(): void {
   mdCache.clear();
 }
 
-function MdTab({ it, reload }: { it: FlatItem; reload: () => Promise<void> }) {
+/* 全文表示(読むだけ)。ブラウザ内編集は v0.9.0 で廃止し、書き換えはエディタ側に渡す */
+function MdTab({ it }: { it: FlatItem }) {
   const path = it.path;
   const [raw, setRaw] = useState<string | null>(mdCache.get(path) ?? null);
   const [error, setError] = useState('');
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [baseMtime, setBaseMtime] = useState(0);
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    setEditing(false); // 別アイテムに移ったら編集は破棄
     if (mdCache.has(path)) {
       setRaw(mdCache.get(path)!);
       return;
@@ -750,70 +754,12 @@ function MdTab({ it, reload }: { it: FlatItem; reload: () => Promise<void> }) {
     };
   }, [path]);
 
-  /* 編集開始時に mtime 付きで取り直す(表示キャッシュが古い可能性があるため) */
-  const startEdit = async () => {
-    try {
-      const { content, mtime } = await fetchFileFull(path);
-      mdCache.set(path, content);
-      setRaw(content);
-      setDraft(content);
-      setBaseMtime(mtime);
-      setEditing(true);
-    } catch (e) {
-      alert(t('app.loadFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
-
-  const onSave = async () => {
-    if (!/^---\r?\n/.test(draft) && !confirm(t('edit.noFrontmatter'))) return;
-    setSaving(true);
-    try {
-      await saveFile(path, draft, baseMtime);
-      mdCache.set(path, draft);
-      setRaw(draft);
-      setEditing(false);
-      await reload(); // lint・トークン・description 表示を更新(mdCache は reload でクリアされる)
-    } catch (e) {
-      alert(t('alert.saveFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   if (error) return <div className="empty">{t('app.loadFailed', { msg: error })}</div>;
   if (raw === null) return <div className="empty">{t('common.loading')}</div>;
-
-  if (editing) {
-    return (
-      <div>
-        <div className="edit-bar">
-          <button className="pbtn sm primary" disabled={saving} onClick={onSave}>
-            {saving ? t('edit.saving') : t('edit.save')}
-          </button>
-          <button className="pbtn sm" disabled={saving} onClick={() => setEditing(false)}>
-            {t('common.cancel')}
-          </button>
-        </div>
-        <textarea
-          className="md-editor"
-          value={draft}
-          spellCheck={false}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-      </div>
-    );
-  }
 
   const { frontmatter, body } = splitFrontmatter(raw);
   return (
     <div>
-      {it.manage && (
-        <div className="edit-bar">
-          <button className="pbtn sm" onClick={startEdit}>
-            {t('edit.button')}
-          </button>
-        </div>
-      )}
       {frontmatter && <div className="fm-box">{frontmatter}</div>}
       {/* 自前レンダラ内で全テキストを HTML エスケープ済み */}
       <div className="md-body" dangerouslySetInnerHTML={{ __html: mdRender(body) }} />

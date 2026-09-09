@@ -46,8 +46,10 @@ const en = {
     'Summarize each SKILL.md via claude CLI (model configurable in Settings). Only changed ones are regenerated',
   'ai.confirmForce': 'All summaries are up to date. Force-regenerate all {n} items? (claude CLI)',
   'ai.confirmRun': 'Summarize {n} SKILL.md files via claude CLI?',
-  'ai.finishedErrors': 'Summarization finished ({n} errors):',
+  'ai.finishedErrors': 'Summarization finished ({n} errors): {list}',
   'ai.startFailed': 'Failed to start: {msg}',
+  /* claude CLI 不在。検出は起動時の 1 回だけなので、入れ直したら再起動が要ることまで書く */
+  'ai.unavailable': 'claude CLI not found at startup — AI features need it (restart after install)',
 
   'view.source': 'By source',
   'view.group': 'By purpose',
@@ -274,7 +276,6 @@ const en = {
   'memory.triage.instruction': 'Instruction to paste into Claude Code',
   'memory.triage.copy': 'Copy',
   'memory.triage.copied': 'Copied',
-  'memory.triage.copyAll': 'Copy all {n} instructions',
   'memory.triage.footProposals': 'Proposals',
   'memory.triage.footProposalsUnit': 'items',
   'memory.triage.footApplied': 'If all applied',
@@ -282,11 +283,13 @@ const en = {
   'memory.triage.footDiff': 'Delta',
   'memory.triage.footDiffVal': '{n} tok',
   'memory.triage.footNote':
-    'Copied instructions start with a "check first, then execute" preamble and include the destination path, removing the MEMORY.md index line and rewriting [[link]]s. To do only part of it, say so in the conversation you paste into.',
-  'memory.triage.preambleLabel':
-    'Preamble for pasting (the copy buttons add it automatically — prefer them over selecting the text by hand, so the verification steps come along)',
+    'Each instruction ends with "check first, then execute" steps and includes the destination path, removing the MEMORY.md index line and rewriting [[link]]s. To do only part of it, say so in the conversation you paste into.',
+  /*
+   * 指示文の末尾に付く確認手順(design-system 1.3)。memory 棚卸しと skill の発動診断で共用するので
+   * 出所を名指ししない。ヘッダは本文より上にあるので「上のヘッダ」を指す。
+   */
   'memory.triage.copyPreamble':
-    'The following is a proposal from the skills-viewer memory triage. First check that your working directory matches the project in the header below — if it does not (e.g. this session was started from the home directory), say so and confirm with me before continuing, because relative paths (especially under .claude/) would resolve against the wrong place. Then inspect the current state read-only and present the exact work you would do. Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. Execute only after I approve.',
+    'Before doing any of the above, verify in this order. (1) Check that your working directory matches the project in the header above — if it does not (e.g. this session was started from the home directory), say so and confirm with me before continuing, because relative paths (especially under .claude/) would resolve against the wrong place. (2) Inspect the current state read-only and present the exact work you would do. (3) Where a judgment call is needed (several candidate destinations, the primary source cannot be located, the proposal conflicts with what you find, etc.), do not guess — ask me with AskUserQuestion. (4) Execute only after I approve.',
   'memory.triage.whole': 'Triage the whole project →',
   'memory.triage.menu': 'Memory triage (current project)',
   'memory.triage.menuTitle':
@@ -296,10 +299,8 @@ const en = {
   'detail.back': '← Back to list',
   'detail.lastUpdated': 'Last updated {date}',
   'detail.openEditor': 'Open in editor',
-  'detail.copy': 'Copy ▾',
   'detail.resummarize': 'Refresh AI summary',
   'detail.summarizing': 'Summarizing…',
-  'detail.delete': 'Delete',
   'tab.overview': 'Overview',
   'detail.aiSummary': 'AI summary',
   'detail.description': 'Description',
@@ -336,10 +337,20 @@ const en = {
   'diag.verdict.good': '✓ Trigger condition looks clear',
   'diag.verdict.weak': '△ Auto-invocation unlikely as written',
   'diag.improved': 'Suggested description',
-  'diag.apply': 'Apply this suggestion',
-  'diag.applying': 'Applying…',
   'alert.diagnoseFailed': 'Diagnosis failed: {msg}',
-  'alert.applyFailed': 'Failed to apply: {msg}',
+  /* 発動診断の指示文(memory 棚卸しと同じ形: 事実ヘッダ + 本文 + 末尾の確認手順) */
+  'diag.instruction': 'Instruction to paste into Claude Code',
+  'diag.instr.hdr': 'Target: {dir} (source: {scope})',
+  'diag.instr.file': 'Target file: {path}',
+  'diag.instr.replace':
+    '- Replace the frontmatter description of {file} with this sentence: "{text}"',
+  'diag.instr.noChange':
+    '- The current description was diagnosed as having a clear trigger, so no change is needed now',
+  'diag.instr.keepWhat':
+    '- If you do change it, keep what the current description "{desc}" conveys: when it fires and what it acts on',
+  'diag.instr.issues': '- Points raised by the diagnosis: {list}',
+  'diag.instr.scope':
+    '- Change only the description. Leave the name ({name}), the rest of the frontmatter and the file location as they are',
 
   'detail.flow': 'Flow',
   'flow.emptyHint':
@@ -355,11 +366,6 @@ const en = {
   'flow.done': 'done',
   'alert.flowFailed': 'Flow extraction failed: {msg}',
 
-  'edit.button': 'Edit',
-  'edit.save': 'Save',
-  'edit.saving': 'Saving…',
-  'edit.noFrontmatter': 'No frontmatter (--- block) found. Save anyway?',
-  'alert.saveFailed': 'Save failed: {msg}',
   'detail.tokenCost':
     'Session overhead: ~{n} tokens (name + description are injected into every session; approx.)',
   'lint.no-description':
@@ -381,16 +387,8 @@ const en = {
   'common.close': 'Close',
 
   'alert.copyFailed': 'Copy failed: {msg}',
-  'alert.deleteFailed': 'Delete failed: {msg}',
-  'alert.trashed': 'Moved to trash:\n{path}',
   'alert.openFailed': 'Could not open in editor: {msg}',
   'alert.summarizeFailed': 'Summarization failed: {msg}',
-
-  'delete.title': 'Delete {name}?',
-  'delete.body': 'Moves SKILL.md and its bundled files to the trash (restorable later).',
-  'delete.confirm': 'Delete',
-
-  'copy.header': 'Copy to',
 
   'settings.title': 'Settings',
   'settings.language': 'Language',
@@ -427,17 +425,9 @@ const en = {
   'rel.references': 'references',
 
   'apiError.not-found': 'File not found: {detail}',
-  'apiError.not-managed-path': 'Path is not managed here: {detail}',
-  'apiError.plugin-managed': 'Plugin files are managed via the /plugin command',
   'apiError.not-md': 'Not a .md file: {detail}',
   'apiError.not-readable-path': 'Path is not readable here: {detail}',
   'apiError.not-openable-path': 'Path cannot be opened: {detail}',
-  'apiError.unknown-copy-target': 'Unknown copy target: {detail}',
-  'apiError.no-free-name': 'No free name for the copy',
-  'apiError.unexpected-skill-dir': 'Unexpected skill directory layout: {detail}',
-  'apiError.edit-conflict': 'The file was changed outside this app — reload the page and try again',
-  'apiError.empty-content': 'Content is empty',
-  'apiError.content-too-large': 'Content is too large to save',
   'apiError.bad-origin': 'Request rejected: bad origin',
   'apiError.bad-token': 'Bad token — reload the page (the server may have restarted)',
   'apiError.bad-json': 'Malformed request',
@@ -477,8 +467,10 @@ const ja: Record<MsgKey, string> = {
     'claude CLI で各 SKILL.md を要約(モデルは設定で変更可)。内容が変わったものだけ再生成',
   'ai.confirmForce': '全 skill の要約は最新です。全 {n} 件を強制再生成しますか?(claude CLI)',
   'ai.confirmRun': '{n} 件の SKILL.md を claude CLI で要約します。よろしいですか?',
-  'ai.finishedErrors': '要約完了(エラー {n}件):',
+  'ai.finishedErrors': '要約完了(エラー {n}件): {list}',
   'ai.startFailed': '開始に失敗: {msg}',
+  'ai.unavailable':
+    '起動時に claude CLI が見つかりませんでした。AI 機能には CLI が必要です(入れたあと再起動してください)',
 
   'view.source': 'ソース別',
   'view.group': '用途別',
@@ -686,7 +678,6 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.instruction': 'Claude Code への指示文',
   'memory.triage.copy': 'コピー',
   'memory.triage.copied': 'コピーしました',
-  'memory.triage.copyAll': '{n} 件分の指示文をまとめてコピー',
   'memory.triage.footProposals': '提案',
   'memory.triage.footProposalsUnit': '件',
   'memory.triage.footApplied': '全て適用したとき',
@@ -694,11 +685,9 @@ const ja: Record<MsgKey, string> = {
   'memory.triage.footDiff': '差分',
   'memory.triage.footDiffVal': '{n} tok',
   'memory.triage.footNote':
-    'コピーした指示文には「まず確認してから実行」の前置きが付き、移動先パス・MEMORY.md の索引行の削除・[[link]] の張り替えまで含まれます。一部だけやりたいときは、貼った先の会話でそう伝えてください。',
-  'memory.triage.preambleLabel':
-    '貼るときの前置き(コピーボタンでは自動で付きます。文面を手で選択せず、確認手順ごと付くコピーボタンを使ってください)',
+    '各指示文の末尾には「まず確認してから実行」の手順が付き、移動先パス・MEMORY.md の索引行の削除・[[link]] の張り替えまで含まれます。一部だけやりたいときは、貼った先の会話でそう伝えてください。',
   'memory.triage.copyPreamble':
-    '以下は skills-viewer の memory 棚卸し診断からの提案です。最初に、このセッションの作業ディレクトリが下のヘッダのプロジェクトと一致するか確認してください。一致しない場合(ホームディレクトリから起動したセッション等)は、相対パス(特に .claude/ 配下)の解決を誤るため、その旨を指摘して続行の可否を私に確認してください。次に読み取りだけで現状を確認し、実行する作業内容を提示してください。判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認してください。実行は承認を得てからにしてください。',
+    '上の作業を実行する前に、次の順で確認してください。(1) このセッションの作業ディレクトリが上のヘッダのプロジェクトと一致するか確認する。一致しない場合(ホームディレクトリから起動したセッション等)は、相対パス(特に .claude/ 配下)の解決を誤るため、その旨を指摘して続行の可否を私に確認する。(2) 読み取りだけで現状を確認し、実行する作業内容を提示する。(3) 判断が必要な点(移動先の候補が複数ある、一次情報の所在が分からない、提案と実態が食い違う、など)があれば推測せず AskUserQuestion で私に確認する。(4) 実行は私の承認を得てから行う。',
   'memory.triage.whole': 'プロジェクト全体を棚卸し →',
   'memory.triage.menu': 'memory 棚卸し(現在のプロジェクト)',
   'memory.triage.menuTitle':
@@ -708,10 +697,8 @@ const ja: Record<MsgKey, string> = {
   'detail.back': '← 一覧に戻る',
   'detail.lastUpdated': '最終更新 {date}',
   'detail.openEditor': 'エディタで開く',
-  'detail.copy': 'コピー ▾',
   'detail.resummarize': 'AI要約更新',
   'detail.summarizing': '要約中…',
-  'detail.delete': '削除',
   'tab.overview': '概要',
   'detail.aiSummary': 'AI 要約',
   'detail.description': '説明',
@@ -747,10 +734,18 @@ const ja: Record<MsgKey, string> = {
   'diag.verdict.good': '✓ 発動条件は明確です',
   'diag.verdict.weak': '△ このままでは自動発動されにくい可能性',
   'diag.improved': '改善案',
-  'diag.apply': 'この案を適用',
-  'diag.applying': '適用中…',
   'alert.diagnoseFailed': '診断に失敗: {msg}',
-  'alert.applyFailed': '適用に失敗: {msg}',
+  'diag.instruction': 'Claude Code への指示文',
+  'diag.instr.hdr': '対象: {dir}(出所: {scope})',
+  'diag.instr.file': '対象ファイル: {path}',
+  'diag.instr.replace': '- {file} の frontmatter の description を次の文に置き換える: 「{text}」',
+  'diag.instr.noChange':
+    '- 現在の description は発動条件が明確と診断されているので、今は変えなくてよい',
+  'diag.instr.keepWhat':
+    '- 変える場合は、現在の description「{desc}」が示している発動条件(いつ発動するか)と対象を必ず残す',
+  'diag.instr.issues': '- 診断が挙げた点: {list}',
+  'diag.instr.scope':
+    '- 変更するのは description だけ。name({name})・他の frontmatter・ファイルの場所は変えない',
 
   'detail.flow': 'フロー',
   'flow.emptyHint':
@@ -766,11 +761,6 @@ const ja: Record<MsgKey, string> = {
   'flow.done': '完了',
   'alert.flowFailed': 'フロー抽出に失敗: {msg}',
 
-  'edit.button': '編集',
-  'edit.save': '保存',
-  'edit.saving': '保存中…',
-  'edit.noFrontmatter': 'frontmatter(--- ブロック)がありません。このまま保存しますか?',
-  'alert.saveFailed': '保存に失敗: {msg}',
   'detail.tokenCost':
     'セッションあたりの負荷: 約{n}トークン(name + description は毎セッション注入されます。概算)',
   'lint.no-description':
@@ -792,16 +782,8 @@ const ja: Record<MsgKey, string> = {
   'common.close': '閉じる',
 
   'alert.copyFailed': 'コピーに失敗: {msg}',
-  'alert.deleteFailed': '削除に失敗: {msg}',
-  'alert.trashed': 'ゴミ箱に移動しました:\n{path}',
   'alert.openFailed': 'エディタで開けませんでした: {msg}',
   'alert.summarizeFailed': '要約に失敗: {msg}',
-
-  'delete.title': '{name} を削除しますか?',
-  'delete.body': 'SKILL.md と関連ファイルをゴミ箱に移動します(あとで復元できます)。',
-  'delete.confirm': '削除する',
-
-  'copy.header': 'コピー先のリスト',
 
   'settings.title': '設定',
   'settings.language': '言語',
@@ -838,18 +820,9 @@ const ja: Record<MsgKey, string> = {
   'rel.references': '参照',
 
   'apiError.not-found': 'ファイルが見つかりません: {detail}',
-  'apiError.not-managed-path': '管理対象外のパスです: {detail}',
-  'apiError.plugin-managed': 'plugin 配下は /plugin コマンドで管理してください',
   'apiError.not-md': 'md ファイルではありません: {detail}',
   'apiError.not-readable-path': '読み取り対象外のパスです: {detail}',
   'apiError.not-openable-path': '対象外のパスです: {detail}',
-  'apiError.unknown-copy-target': '未知のコピー先です: {detail}',
-  'apiError.no-free-name': 'コピー先の空き名が見つかりません',
-  'apiError.unexpected-skill-dir': 'skill ディレクトリ構造が想定外です: {detail}',
-  'apiError.edit-conflict':
-    'ファイルが外部で変更されています。ページを再読み込みしてからやり直してください',
-  'apiError.empty-content': '内容が空です',
-  'apiError.content-too-large': '内容が大きすぎて保存できません',
   'apiError.bad-origin': '不正なオリジンからのアクセスです',
   'apiError.bad-token':
     'トークンが不正です。ページを再読み込みしてください(サーバー再起動の可能性)',

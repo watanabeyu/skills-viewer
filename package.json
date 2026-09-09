@@ -1,7 +1,7 @@
 {
   "name": "skills-viewer",
   "version": "0.8.1",
-  "description": "Browse, search and manage your Claude Code skills, commands, agents and hooks in the browser",
+  "description": "Read, search and diagnose your Claude Code skills, commands, agents, hooks and auto memory in the browser",
   "license": "MIT",
   "author": "watanabeyu",
   "repository": {

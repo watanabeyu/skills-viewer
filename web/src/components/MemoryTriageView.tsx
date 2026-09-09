@@ -12,11 +12,9 @@ import {
 } from '../api';
 import {
   copyInstruction,
-  copyText,
   effectiveInstruction,
   fileName,
   instructionsOf,
-  joinInstructions,
   memoryListSearch,
   memoryResolver,
   skewedVerdict,
@@ -27,6 +25,7 @@ import {
 import { memoryVerdictLabel, t } from '../i18n';
 import { splitFrontmatter } from '../md';
 import { KindBadge } from './GridView';
+import { CopyButton, InlineError, InlineNote } from './Inline';
 import { MemoryPathSub, MemoryTypeBadge, TokFacts, usageTitle } from './MemoryBits';
 import { renderMemoryBody } from './MemoryDetail';
 
@@ -39,37 +38,6 @@ import { renderMemoryBody } from './MemoryDetail';
 /* 1 件の棚卸しを実行(詳細画面の「✦ 棚卸し診断」)。診断済みなら force で診断し直す */
 export const runTriageOne = (sec: MemorySection, it: SkillItem) =>
   triageMemory(sec.id, [fileName(it.path)], !!it.aiTriage);
-
-export function CopyButton({
-  text,
-  label,
-  className,
-}: {
-  text: string;
-  label?: string;
-  className: string;
-}) {
-  const [done, setDone] = useState(false);
-  // コピー成功のフィードバックは 2 秒でラベルを戻す
-  useEffect(() => {
-    if (!done) return;
-    const timer = window.setTimeout(() => setDone(false), 2000);
-    return () => window.clearTimeout(timer);
-  }, [done]);
-  const onClick = async () => {
-    try {
-      await copyText(text);
-      setDone(true);
-    } catch (e) {
-      alert(t('alert.copyFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
-  return (
-    <button className={className} onClick={onClick}>
-      {done ? t('memory.triage.copied') : label || t('memory.triage.copy')}
-    </button>
-  );
-}
 
 /* 出力不正の件は行き先が無いので、verdict の代わりに再診断を促すバッジを出す */
 export function VerdictBadge({ tri }: { tri: MemoryTriage }) {
@@ -152,7 +120,7 @@ function TriageResult({ it, sec }: { it: SkillItem; sec: MemorySection }) {
           <div className="instr-h">
             <span className="instr-t">{t('memory.triage.instruction')}</span>
             <span className="instr-d">{estimateLabel(it)}</span>
-            {/* コピー本文は前置き + 事実ヘッダ(対象ディレクトリ・プロジェクト・ファイル)付き */}
+            {/* コピー本文は事実ヘッダ(対象ディレクトリ・プロジェクト・ファイル)+ 本文 + 確認手順 */}
             <CopyButton className="copybtn" text={copyInstruction(sec, it)} />
           </div>
           <div className="instr-body">{instruction}</div>
@@ -302,6 +270,7 @@ export function MemoryTriageView({
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   // 本文モーダルで開いている memory(パスで持ち、再取得後も同じ行を指せるようにする)
   const [bodyPath, setBodyPath] = useState<string | null>(null);
 
@@ -329,12 +298,13 @@ export function MemoryTriageView({
 
   const run = async () => {
     setBusy(true);
+    setError('');
     try {
       // 未診断が残っていれば差分診断、全件診断済みなら force で全件を診断し直す
       await triageMemory(sec.id, undefined, untriagedCount === 0);
       await reload();
     } catch (e) {
-      alert(t('alert.triageFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setError(t('alert.triageFailed', { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setBusy(false);
     }
@@ -351,7 +321,7 @@ export function MemoryTriageView({
           <span className="sub">{t('memory.triage.sub')}</span>
           <button
             className="pbtn push-r"
-            disabled={busy}
+            disabled={busy || !data.aiAvailable}
             onClick={run}
             title={t(untriagedCount ? 'memory.triage.runTitle' : 'memory.triage.rerunTitle')}
           >
@@ -361,6 +331,8 @@ export function MemoryTriageView({
                 ? t('memory.triage.run')
                 : t('memory.triage.rerun')}
           </button>
+          <InlineError msg={error} />
+          {!data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
         </div>
         <MemoryPathSub sec={sec} />
       </div>
@@ -403,22 +375,18 @@ export function MemoryTriageView({
                     : t('memory.triage.ctaPartial', { n: sec.items.length, u: untriagedCount })}
                 </span>
               </div>
-              <button className="apply" onClick={run} title={t('memory.triage.runTitle')}>
+              <button
+                className="apply"
+                disabled={!data.aiAvailable}
+                onClick={run}
+                title={t('memory.triage.runTitle')}
+              >
                 ✦ {t('memory.triage.run')}
               </button>
             </div>
           )
         )}
-        {/* 前置きは画面にも 1 回だけ出す(範囲選択でコピーする人が拾えるように)。行の指示文には繰り返さない */}
-        {!!proposals.length && !busy && (
-          <div className="triage-preamble">
-            <div className="txt">
-              <span className="lbl">{t('memory.triage.preambleLabel')}</span>
-              <span className="bd">{t('memory.triage.copyPreamble')}</span>
-            </div>
-            <CopyButton className="copybtn" text={t('memory.triage.copyPreamble')} />
-          </div>
-        )}
+        {/* 確認手順は各行の指示文の末尾に含めるので、画面に独立した前置きブロックは置かない */}
         {bodyPath &&
           (() => {
             const cur = sec.items.find((x) => x.path === bodyPath);
@@ -477,12 +445,8 @@ export function MemoryTriageView({
                 {t('memory.triage.footDiffVal', { n: signed(diff) })}
               </span>
             </div>
+            {/* まとめてコピーは持たない(単件ずつ貼る。design-system 1.3) */}
             <span className="note">{t('memory.triage.footNote')}</span>
-            <CopyButton
-              className="apply"
-              text={joinInstructions(sec)}
-              label={t('memory.triage.copyAll', { n: proposals.length })}
-            />
           </div>
         )}
       </div>

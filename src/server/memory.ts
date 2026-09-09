@@ -108,7 +108,7 @@ function readAutoMemoryDirectory(fp: string, home: string): string | null {
   // 相対パスは公式仕様上無効
   const raw = v.startsWith('~/') ? path.join(home, v.slice(2)) : path.isAbsolute(v) ? v : null;
   if (!raw) return null;
-  // `..` や末尾のスラッシュを畳む: この値は読み取り許可(manage.ts の前方一致)と usage の
+  // `..` や末尾のスラッシュを畳む: この値は読み取り許可(read-access.ts の前方一致)と usage の
   // 許可ルートにそのまま使われるので、表記の揺れが判定の揺れになる
   const dir = path.resolve(raw);
   /*
@@ -158,7 +158,7 @@ export function autoMemoryDirOf(cwd: string, home: string = HOME): AutoMemoryDir
 
 /*
  * 解決済みの autoMemoryDirectory。解決関数はこの 1 本に集約する: スキャン(scanMemory)・
- * 読み取り許可(manage.ts)・棚卸し(memory-triage.ts)が別々に解決すると、
+ * 読み取り許可(read-access.ts)・棚卸し(memory-triage.ts)が別々に解決すると、
  * 「一覧には出るが本文は開けない」のような食い違いが生まれるため。
  * settings 3〜5 ファイルの読み取りは cwd ごとに 1 回だけにする(スキャンのたびには読まない)。
  * 起動中に settings を書き換えた場合は再起動が要る。

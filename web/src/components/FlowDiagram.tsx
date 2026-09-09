@@ -3,6 +3,7 @@ import { flowSkill, type SkillFlow } from '../api';
 import { buildFlowGraph, type FlowGraph, type FlowNode } from '../flowgraph';
 import type { FlatItem } from '../util';
 import { t } from '../i18n';
+import { InlineError, InlineNote } from './Inline';
 
 /*
  * AI フロー図解(詳細画面の「フロー」タブ本体)。
@@ -14,25 +15,30 @@ import { t } from '../i18n';
 export function FlowSection({
   it,
   resolve,
+  aiAvailable,
   onOpen,
   reload,
 }: {
   it: FlatItem;
   /* calls 内の名前を既知アイテムに解決する(OverviewTab の関連スキルと同じ規則) */
   resolve: (name: string) => FlatItem | undefined;
+  /* claude CLI があるか。無ければ抽出ボタンは押せない(起動時に 1 回だけ検出した結果) */
+  aiAvailable: boolean;
   onOpen: (key: string) => void;
   reload: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const flow = it.aiFlow;
 
   const run = async () => {
     setBusy(true);
+    setError('');
     try {
       await flowSkill(it.path, it.name);
       await reload();
     } catch (e) {
-      alert(t('alert.flowFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setError(t('alert.flowFailed', { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setBusy(false);
     }
@@ -45,9 +51,16 @@ export function FlowSection({
       ) : (
         <p className="full-desc">{t('flow.emptyHint')}</p>
       )}
-      <button className="pbtn sm" disabled={busy} onClick={run} title={t('flow.runTitle')}>
+      <button
+        className="pbtn sm"
+        disabled={busy || !aiAvailable}
+        onClick={run}
+        title={t('flow.runTitle')}
+      >
         {busy ? t('flow.running') : flow ? t('flow.rerun') : '✦ ' + t('flow.run')}
       </button>
+      <InlineError msg={error} />
+      {!aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
     </div>
   );
 }

@@ -8,10 +8,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 
 import type { Lang, MemorySection, Section, SkillsData } from '../shared/types';
-import { scanSections, listProjects, HOME } from './scan';
+import { scanSections } from './scan';
 import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
 import {
   publicMemory,
@@ -30,8 +30,7 @@ import {
   startSummarizeAll,
   summaryStatus,
 } from './summary';
-import { assertReadableMd, doCopy, doDelete, openInEditor } from './manage';
-import { doApplyDescription, doSave } from './edit';
+import { assertReadableMd, openInEditor } from './read-access';
 import { attachDiagnoses, diagnoseOne } from './diagnose';
 import { attachFlows, flowOne } from './flow';
 import { attachGroups, generateGroups } from './groups';
@@ -41,6 +40,28 @@ import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
 
 const TOKEN = crypto.randomBytes(16).toString('hex');
+
+/*
+ * claude CLI があるか(AI 機能の可否)。起動時に 1 回だけ `claude --version` を実行して覚える。
+ * リクエストごとに spawn すると /api/skills が毎回 CLI 起動を待つことになるため。
+ * 起動後に CLI を入れても、再起動するまでこの値は変わらない(既知の制約。UI にもそう書く)。
+ * 実行は runClaude(summary.ts)と同じ流儀で shell を使わず argv 配列 + タイムアウト。
+ * spawnSync なのは listen より前に確定させるため(最初の /api/skills が false を返す競合を避ける)。
+ */
+let aiAvailable = false;
+let aiChecked = false;
+function detectAi(): void {
+  if (aiChecked) return;
+  aiChecked = true;
+  try {
+    const r = spawnSync('claude', ['--version'], { stdio: 'ignore', timeout: 5000 });
+    // 未インストール(ENOENT)は error 付きで status: null になるので status で判定する
+    aiAvailable = r.status === 0;
+  } catch {
+    aiAvailable = false;
+  }
+}
+
 const DIST = path.join(__dirname, '..', '..', 'dist');
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -212,18 +233,12 @@ function collect(cwd: string, lang: Lang): SkillsData {
   attachMemoryTriage(memory, lang, undefined, {
     sharedEnv: resolveAutoMemoryDir(cwd)?.scope === 'user',
   });
-  const targets = [
-    { label: 'user skills', sub: '~/.claude/skills/', path: HOME },
-    ...listProjects(cwd)
-      .sort((a, b) => path.basename(a).localeCompare(path.basename(b)))
-      .map((p) => ({ label: path.basename(p), sub: p, path: p })),
-  ];
   return {
     generatedAt: new Date().toISOString(),
     cwd,
     sections,
-    targets,
     aiStale,
+    aiAvailable,
     usageAvailable,
     changes: computeChanges(sections),
     ...(grp.groups ? { groups: grp.groups } : {}),
@@ -272,11 +287,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
       if (url.pathname === '/api/summary-status') return send(200, summaryStatus());
       if (url.pathname === '/api/file') {
         const real = assertReadableMd(url.searchParams.get('src') || '', cwd);
-        // mtime は編集画面の競合検出(/api/save の baseMtime)に使う
-        return send(200, {
-          content: fs.readFileSync(real, 'utf8'),
-          mtime: fs.statSync(real).mtimeMs,
-        });
+        return send(200, { content: fs.readFileSync(real, 'utf8') });
       }
       throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
@@ -304,8 +315,6 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
     const lang = langOf(data.lang);
     const model = modelOf(data.model);
     try {
-      if (url.pathname === '/api/save') return send(200, doSave(data));
-      if (url.pathname === '/api/apply-description') return send(200, doApplyDescription(data));
       if (url.pathname === '/api/diagnose') {
         const real = assertReadableMd(data.src, cwd);
         const name = data.name || path.basename(path.dirname(real));
@@ -326,8 +335,6 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         ackChanges(scanSections(cwd, lang));
         return send(200, { ok: true });
       }
-      if (url.pathname === '/api/copy') return send(200, doCopy(data, cwd));
-      if (url.pathname === '/api/delete') return send(200, doDelete(data));
       if (url.pathname === '/api/open') return send(200, openInEditor(data, cwd));
       if (url.pathname === '/api/summarize-all')
         return send(200, startSummarizeAll(scanSections(cwd, lang), !!data.force, lang, model));
@@ -450,6 +457,7 @@ export function start(
   { port = 4763, open = true, cwd = process.cwd() }: StartOptions = {},
   attempt = 0,
 ): void {
+  detectAi();
   const server = http.createServer((req, res) => {
     if ((req.url || '').startsWith('/api/')) return handleApi(req, res, cwd);
     serveStatic(req, res);

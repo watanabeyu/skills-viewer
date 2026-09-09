@@ -336,22 +336,19 @@ export interface Section {
   isCurrent?: boolean;
   /* セクションの実体パス(built-in は '') */
   note: string;
-  manage?: boolean;
   items: SkillItem[];
-}
-
-export interface CopyTarget {
-  label: string;
-  sub: string;
-  path: string;
 }
 
 export interface SkillsData {
   generatedAt: string;
   cwd: string;
   sections: Section[];
-  targets: CopyTarget[];
   aiStale: number;
+  /*
+   * claude CLI が使えるか(サーバー起動時に `claude --version` を 1 回実行した結果)。
+   * false なら web は AI 生成のボタンを無効化する。起動後に CLI を入れても再起動まで変わらない。
+   */
+  aiAvailable: boolean;
   /* トランスクリプトが1件でもあるか。false なら「未使用」表示は無意味なので出さない */
   usageAvailable: boolean;
   /* 前回起動からの差分。初回起動・差分なし・既読済みは null */

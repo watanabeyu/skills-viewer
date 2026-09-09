@@ -413,13 +413,11 @@ export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
       projectName: path.basename(p.path),
       isCurrent: p.current,
       note: p.path,
-      manage: true,
       items: p.items,
     })),
     {
       id: 'user',
       source: 'user',
-      manage: true,
       note: path.join(HOME, '.claude'),
       items: scanClaudeDir(HOME),
     },

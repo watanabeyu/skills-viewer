@@ -24,6 +24,7 @@ import { editorUrl, loadEditorSetting } from '../settings';
 import { esc, mdRender, splitFrontmatter } from '../md';
 import { t } from '../i18n';
 import { KindBadge } from './GridView';
+import { InlineError, InlineNote } from './Inline';
 import { MemoryHeading, MemoryTypeBadge, TokFacts, UnreadBadge, usageTitle } from './MemoryBits';
 import { MemoryTriageBox, runTriageOne } from './MemoryTriageView';
 
@@ -81,6 +82,9 @@ export function MemoryDetail({
   const [raw, setRaw] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [triageBusy, setTriageBusy] = useState(false);
+  // 操作起点の失敗はボタンの脇に 1 行で出す(alert は使わない)
+  const [openError, setOpenError] = useState('');
+  const [triageError, setTriageError] = useState('');
 
   useEffect(() => {
     if (!path) return;
@@ -123,6 +127,7 @@ export function MemoryDetail({
 
   const onOpenEditor = async () => {
     // 設定(⚙)の URL スキームで開く。OS デフォルト設定時のみサーバー側で開く
+    setOpenError('');
     const url = editorUrl(loadEditorSetting(), it.path);
     if (url) {
       window.location.href = url;
@@ -131,18 +136,19 @@ export function MemoryDetail({
     try {
       await openSkill(it.path);
     } catch (e) {
-      alert(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setOpenError(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   };
   const onTriage = async () => {
     setTriageBusy(true);
+    setTriageError('');
     try {
       await runTriageOne(sec, it);
       await reload();
       // 結果は概要タブの棚卸しブロックに出るので、本文タブにいたら概要へ切り替える
       if (tab !== 'overview') setTab('overview');
     } catch (e) {
-      alert(t('alert.triageFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setTriageError(t('alert.triageFailed', { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setTriageBusy(false);
     }
@@ -198,9 +204,10 @@ export function MemoryDetail({
             <button className="pbtn" onClick={onOpenEditor}>
               {t('detail.openEditor')}
             </button>
+            <InlineError msg={openError} />
             <button
               className="pbtn"
-              disabled={triageBusy}
+              disabled={triageBusy || !data.aiAvailable}
               onClick={onTriage}
               title={t(it.aiTriage ? 'memory.triage.rerunTitle' : 'memory.triage.runTitle')}
             >
@@ -210,6 +217,8 @@ export function MemoryDetail({
                   ? t('memory.triage.rerun')
                   : '✦ ' + t('memory.triage.heading')}
             </button>
+            <InlineError msg={triageError} />
+            {!data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
           </span>
         </div>
         <h2 className="d-name mem">

@@ -31,6 +31,7 @@ import { MemoryTriageView } from './components/MemoryTriageView';
 import { ChangesBanner } from './components/ChangesBanner';
 import { SettingsModal } from './components/SettingsModal';
 import { AiMenu } from './components/AiMenu';
+import { InlineError, InlineNote } from './components/Inline';
 import { getLang, setLang, t, type Lang, type MsgKey } from './i18n';
 
 /* ラベルは言語切替に追従させるため、キーだけ持ってレンダー時に t() で引く */
@@ -170,6 +171,8 @@ export default function App() {
   /* ---- AI summarize-all ---- */
   const [aiLabel, setAiLabel] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
+  /* AI 操作(要約・グルーピング)の失敗はヘッダーの AI ボタン脇に 1 行で出す(alert は使わない) */
+  const [aiError, setAiError] = useState('');
   const pollTimer = useRef<number>(0);
 
   const poll = useCallback(async () => {
@@ -183,10 +186,11 @@ export default function App() {
       }
       if (st.total > 0) {
         if (st.errors.length) {
-          alert(
-            t('ai.finishedErrors', { n: st.errors.length }) +
-              '\n' +
-              st.errors.slice(0, 5).join('\n'),
+          setAiError(
+            t('ai.finishedErrors', {
+              n: st.errors.length,
+              list: st.errors.slice(0, 3).join(' / '),
+            }),
           );
         }
         await reload();
@@ -218,11 +222,12 @@ export default function App() {
     } else if (!confirm(t('ai.confirmRun', { n: data.aiStale }))) {
       return;
     }
+    setAiError('');
     try {
       await summarizeAll(force);
       poll();
     } catch (e) {
-      alert(t('ai.startFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setAiError(t('ai.startFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }
   };
 
@@ -232,11 +237,12 @@ export default function App() {
   const onGroupGen = async () => {
     if (groupBusy) return;
     setGroupBusy(true);
+    setAiError('');
     try {
       await generateGroups();
       await reload();
     } catch (e) {
-      alert(t('alert.groupFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setAiError(t('alert.groupFailed', { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setGroupBusy(false);
     }
@@ -392,9 +398,13 @@ export default function App() {
             </>
           )}
           <span className="controls-r">
+            {/* claude CLI 不在は起動時に 1 回だけ検出する。押せない理由をボタン脇に出す */}
+            {data && !data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
+            <InlineError msg={aiError} />
             <span style={{ position: 'relative' }}>
               <button
                 className="chip"
+                disabled={!!data && !data.aiAvailable}
                 onClick={() => setAiMenuOpen((v) => !v)}
                 title={t('ai.menuTitle')}
               >

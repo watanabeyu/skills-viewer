@@ -38,7 +38,6 @@ export interface FlatItem extends SkillItem {
   secId: string;
   source: Source;
   scopeLabel: string;
-  manage: boolean;
   hasMd: boolean;
 }
 
@@ -62,7 +61,8 @@ export function flatten(sections: Section[]): FlatItem[] {
       secId: s.id,
       source: s.source,
       scopeLabel: scopeLabelOf(s),
-      manage: !!s.manage && it.kind !== 'hook', // hook は設定エントリなのでコピー/削除不可
+      // hook の除外(コピー/削除の対象外)は v0.9.0 で書き込みごと廃止した。
+      // hook の path は settings.json なので、エディタで開く導線としてはむしろ有効
       hasMd: it.path.endsWith('.md'),
     })),
   );
@@ -367,20 +367,22 @@ export function estimateLabel(it: SkillItem): string {
   return t('memory.triage.estApply', { n: signed(est.index) });
 }
 
-/* 提案(指示文)のある memory だけ。サマリ・まとめコピーが同じ母集団を見るよう 1 箇所に置く */
+/* 提案(指示文)のある memory だけ。サマリと一覧が同じ母集団を見るよう 1 箇所に置く */
 export const instructionsOf = (items: SkillItem[]) =>
   items.filter((it) => effectiveInstruction(it));
 
 /*
- * コピーする指示文には「まず確認してから実行」の前置きを付ける。貼り先の Claude Code に
- * dry run(読み取り → 作業内容の提示 → 承認)を求めるためで、毎回手で書き足さなくて済むようにする。
+ * 指示文の構成(design-system 1.3): 事実ヘッダ(機械生成)+ 本文 + 末尾の確認手順。
+ * 確認手順は貼り先の Claude Code に dry run(作業ディレクトリの照合 → 読み取りで確認 →
+ * 判断が要る点は AskUserQuestion → 承認後に実行)を求める段落で、v0.8 で本文と分けて
+ * 見せていた「前置き」を末尾へ移したもの(独立して見せない)。文面は memory 棚卸しと
+ * skill の発動診断で共用する。
  */
-export const withPreamble = (body: string) => t('memory.triage.copyPreamble') + '\n\n' + body;
+export const withVerifySteps = (body: string) => body + '\n\n' + t('memory.triage.copyPreamble');
 
 /*
- * コピー本文の事実ヘッダ。どの memory ディレクトリ・どのプロジェクトの・どのファイルの話かは
- * スキャン結果から機械生成する(AI に書かせない)。貼り先が対象を取り違えないための土台なので、
- * まとめコピーにも単件コピーにも同じ形で付ける。
+ * memory の指示文の事実ヘッダ。どの memory ディレクトリ・どのプロジェクトの・どのファイルの話かは
+ * スキャン結果から機械生成する(AI に書かせない)。貼り先が対象を取り違えないための土台。
  */
 export const factHeader = (sec: MemorySection, files: string[]) =>
   t('memory.triage.hdr.dir', {
@@ -390,22 +392,32 @@ export const factHeader = (sec: MemorySection, files: string[]) =>
   '\n' +
   t('memory.triage.hdr.files', { files: files.join(', ') });
 
-/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用)。前置き + 事実ヘッダは先頭に 1 回だけ */
-export const joinInstructions = (sec: MemorySection) => {
-  const items = instructionsOf(sec.items);
-  return withPreamble(
-    factHeader(
-      sec,
-      items.map((it) => fileName(it.path)),
-    ) +
-      '\n\n' +
-      items.map((it) => '## ' + it.name + '\n\n' + effectiveInstruction(it)).join('\n\n'),
-  );
-};
-
-/* 単件コピーの本文(前置き + 事実ヘッダ + その 1 件の指示文) */
+/* memory 1 件分の指示文(事実ヘッダ + 本文 + 確認手順)。まとめコピーは持たない(単件ずつ貼る) */
 export const copyInstruction = (sec: MemorySection, it: SkillItem) =>
-  withPreamble(factHeader(sec, [fileName(it.path)]) + '\n\n' + effectiveInstruction(it));
+  withVerifySteps(factHeader(sec, [fileName(it.path)]) + '\n\n' + effectiveInstruction(it));
+
+/*
+ * skill の発動診断の指示文。memory 棚卸しと同じ形(事実ヘッダ + 本文 + 確認手順)で、
+ * 本文は診断結果(improved / issues)からテンプレートで組む(AI の散文をそのまま貼らない)。
+ * 改善案があるときは「description を次に変える」、無いときは「変える場合に残すもの」を書く。
+ * dir はその置き場の実体パス(Section.note)。
+ */
+export function diagnosisInstruction(it: FlatItem, dir: string): string {
+  const d = it.aiDiagnosis;
+  if (!d) return '';
+  const header =
+    t('diag.instr.hdr', { dir, scope: it.scopeLabel }) +
+    '\n' +
+    t('diag.instr.file', { path: it.path });
+  const improved = d.improved && d.improved !== it.description ? d.improved : '';
+  const lines = improved
+    ? [t('diag.instr.replace', { file: fileName(it.path), text: improved })]
+    : [t('diag.instr.noChange'), t('diag.instr.keepWhat', { desc: it.description })];
+  if (d.issues.length) lines.push(t('diag.instr.issues', { list: d.issues.join(' / ') }));
+  // description 以外(name・ファイルの場所)を触ると呼び出し側の参照が壊れるので必ず添える
+  lines.push(t('diag.instr.scope', { name: it.name }));
+  return withVerifySteps(header + '\n\n' + lines.join('\n'));
+}
 
 /*
  * 提案が 1 種類に偏っているか(非 keep が 5 件以上で、その 8 割以上が同じ行き先)。

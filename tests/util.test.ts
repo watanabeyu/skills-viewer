@@ -6,9 +6,9 @@ import {
   backlinksOf,
   brokenLinkCount,
   copyInstruction,
+  diagnosisInstruction,
   factHeader,
   invocationOf,
-  joinInstructions,
   kindMatches,
   memoryListSearch,
   refMatches,
@@ -18,9 +18,9 @@ import {
   sortMemory,
   usageLine,
   usageMatches,
-  withPreamble,
   buildFeedbackInstruction,
   effectiveInstruction,
+  type FlatItem,
 } from '../web/src/util';
 import { setLang, t } from '../web/src/i18n';
 import type { FeedbackBodyPlan } from '../src/shared/types';
@@ -238,72 +238,11 @@ describe('backlinksOf / brokenLinkCount ([[link]] の被リンクとリンク切
   });
 });
 
-describe('joinInstructions / withPreamble (まとめコピーの本文)', () => {
-  const tri = (instruction: string): SkillItem['aiTriage'] => ({
-    verdict: 'delete',
-    reason: '',
-    issues: [],
-    instruction,
-  });
-  /* 移動先が確定した wrong-project は instruction が空でテンプレートが唯一の出典 */
-  const wrongProject: SkillItem['aiTriage'] = {
-    verdict: 'wrong-project',
-    reason: '',
-    issues: [],
-    instruction: '',
-    target: '/w/other',
-    targetMemDir: '/h/.claude/projects/-w-other/memory',
-  };
-  const items = [
-    mem('alpha', { aiTriage: tri('- alpha を消す') }),
-    mem('beta', { aiTriage: tri('') }), // 提案なし(keep 相当)
-    mem('gamma', { aiTriage: tri('- gamma を docs/ へ') }),
-    mem('delta'), // 未診断
-    mem('epsilon', { aiTriage: wrongProject }),
-  ];
-  const sec = memSection(items);
-  const preamble = t('memory.triage.copyPreamble');
-
-  it('前置きは本文の先頭に 1 回だけ付く', () => {
-    const text = joinInstructions(sec);
-    expect(text.startsWith(preamble + '\n\n')).toBe(true);
-    expect(text.split(preamble)).toHaveLength(2); // 出現は 1 回
-    expect(withPreamble('body')).toBe(preamble + '\n\nbody');
-  });
-
-  it('各件は「## name」見出しで区切る', () => {
-    const text = joinInstructions(sec);
-    // 指示文の先頭には機械生成のフルパスアンカーが付く(手選択コピー対策)
-    expect(text).toContain(
-      '## alpha\n\n' + t('memory.triage.tpl.target', { path: '/m/alpha.md' }) + '\n- alpha を消す',
-    );
-    expect(text).toContain(
-      '## gamma\n\n' +
-        t('memory.triage.tpl.target', { path: '/m/gamma.md' }) +
-        '\n- gamma を docs/ へ',
-    );
-  });
-
-  it('指示文が空の件・未診断の件は含めない', () => {
-    const text = joinInstructions(sec);
-    expect(text).not.toContain('## beta');
-    expect(text).not.toContain('## delta');
-  });
-
-  /* instruction が空でも移動先が確定していればテンプレートで指示文が組まれるので、母集団に入る */
-  it('instruction が空の wrong-project も見出し・対象ファイル一覧・テンプレート行が載る', () => {
-    const text = joinInstructions(sec);
-    expect(text).toContain(
-      '## epsilon\n\n' + t('memory.triage.tpl.target', { path: '/m/epsilon.md' }),
-    );
-    expect(text).toContain('- This memory is about /w/other');
-    expect(text).toContain('/h/.claude/projects/-w-other/memory');
-    expect(text).toContain(factHeader(sec, ['alpha.md', 'gamma.md', 'epsilon.md']));
-  });
-});
-
-/* 判断 4(計画 13 Phase B): コピー本文の事実ヘッダはモデル出力ではなくスキャン結果から機械生成する */
-describe('factHeader / copyInstruction (コピー本文の事実ヘッダ)', () => {
+/*
+ * 判断 7(計画 15 Phase B): 指示文は「事実ヘッダ(機械生成)+ 本文 + 末尾の確認手順」。
+ * 前置きを独立して見せることも、まとめてコピーすることもしない(単件ずつ貼る)。
+ */
+describe('factHeader / copyInstruction (指示文の構成)', () => {
   const item = mem('alpha', {
     aiTriage: { verdict: 'delete', reason: '', issues: [], instruction: '- alpha を消す' },
   });
@@ -322,28 +261,67 @@ describe('factHeader / copyInstruction (コピー本文の事実ヘッダ)', () 
     );
   });
 
-  it('まとめコピーは前置きの直後にヘッダ(対象ファイルは提案のある件だけ)', () => {
-    const text = joinInstructions(sec);
-    expect(text).toBe(
-      t('memory.triage.copyPreamble') +
+  it('事実ヘッダ → 本文 → 確認手順 の順に並ぶ', () => {
+    expect(copyInstruction(sec, item)).toBe(
+      factHeader(sec, ['alpha.md']) +
         '\n\n' +
-        factHeader(sec, ['alpha.md']) +
-        '\n\n## alpha\n\n' +
+        // 指示文の先頭には機械生成のフルパスアンカーが付く(手選択コピー対策)
         t('memory.triage.tpl.target', { path: '/m/alpha.md' }) +
-        '\n- alpha を消す',
+        '\n- alpha を消す' +
+        '\n\n' +
+        t('memory.triage.copyPreamble'),
     );
   });
 
-  it('単件コピーも同じヘッダを持つ(対象ファイルはその 1 件)', () => {
+  it('確認手順は末尾に 1 回だけ付く', () => {
+    const steps = t('memory.triage.copyPreamble');
     const text = copyInstruction(sec, item);
-    expect(text).toBe(
-      t('memory.triage.copyPreamble') +
-        '\n\n' +
-        factHeader(sec, ['alpha.md']) +
-        '\n\n' +
-        t('memory.triage.tpl.target', { path: '/m/alpha.md' }) +
-        '\n- alpha を消す',
+    expect(text.endsWith(steps)).toBe(true);
+    expect(text.split(steps)).toHaveLength(2);
+  });
+});
+
+/* skill の発動診断も同じ形。本文は改善案の有無で「次に変える」/「変える場合に残すもの」に分かれる */
+describe('diagnosisInstruction (発動診断の指示文)', () => {
+  const flat = (over: Partial<SkillItem> = {}): FlatItem => ({
+    ...base(over),
+    key: 'k',
+    secId: 'proj-0',
+    source: 'project',
+    scopeLabel: 'alpha',
+    hasMd: true,
+  });
+  const header =
+    t('diag.instr.hdr', { dir: '/w/alpha', scope: 'alpha' }) +
+    '\n' +
+    t('diag.instr.file', { path: '/p/.claude/skills/foo/SKILL.md' });
+
+  it('未診断は空文字(ブロックごと出さない)', () => {
+    expect(diagnosisInstruction(flat(), '/w/alpha')).toBe('');
+  });
+
+  it('改善案があれば description の置き換えを指示する', () => {
+    const text = diagnosisInstruction(
+      flat({
+        aiDiagnosis: { verdict: 'weak', issues: ['発動条件が無い'], improved: 'Use when X' },
+      }),
+      '/w/alpha',
     );
+    expect(text.startsWith(header + '\n\n')).toBe(true);
+    expect(text).toContain(t('diag.instr.replace', { file: 'SKILL.md', text: 'Use when X' }));
+    expect(text).toContain(t('diag.instr.issues', { list: '発動条件が無い' }));
+    expect(text).toContain(t('diag.instr.scope', { name: 'foo' }));
+    expect(text.endsWith(t('memory.triage.copyPreamble'))).toBe(true);
+  });
+
+  it('改善案が無い(現行と同じ)ときは「変える場合に残すもの」を書く', () => {
+    const text = diagnosisInstruction(
+      flat({ aiDiagnosis: { verdict: 'good', issues: [], improved: 'desc' } }),
+      '/w/alpha',
+    );
+    expect(text).toContain(t('diag.instr.noChange'));
+    expect(text).toContain(t('diag.instr.keepWhat', { desc: 'desc' }));
+    expect(text).not.toContain(t('diag.instr.replace', { file: 'SKILL.md', text: 'desc' }));
   });
 });
 

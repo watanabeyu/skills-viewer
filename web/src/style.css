@@ -155,7 +155,6 @@ select,
 .m-upd,
 .tabs,
 .modal h3,
-.drop .dh,
 .drop .di .l1,
 .costbar .k,
 .costbar .u,
@@ -167,7 +166,6 @@ select,
 .foot .u,
 .foot .note,
 .instr-t,
-.triage-preamble .lbl,
 .diag-imp-t,
 .diag-verdict,
 .fc-title,
@@ -199,6 +197,8 @@ select,
   display: flex;
   align-items: baseline;
   gap: 12px;
+  /* 棚卸し見出しの右端にはボタンと 1 行のインライン表示が並ぶので折り返す */
+  flex-wrap: wrap;
 }
 .hd h1 {
   font-size: 22px;
@@ -539,6 +539,9 @@ select,
   display: inline-flex;
   gap: 8px;
   align-items: center;
+  /* AI 不在の注記・失敗の 1 行が入るので、ボタンを押し出さず折り返す */
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 /* kind フィルタのセグメントコントロール */
@@ -1043,13 +1046,6 @@ select,
 .pbtn:hover {
   background: var(--panel);
 }
-.pbtn.danger {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-.pbtn.danger:hover {
-  background: var(--danger-tint);
-}
 .d-name {
   font-size: 26px;
   font-weight: 700;
@@ -1232,13 +1228,6 @@ select,
   max-height: 320px;
   overflow-y: auto;
 }
-.drop .dh {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--meta);
-  padding: 6px 14px 4px;
-}
 .drop .di {
   display: block;
   width: 100%;
@@ -1296,18 +1285,6 @@ select,
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-.modal .del {
-  background: var(--danger);
-  border: 1px solid var(--danger);
-  color: var(--bg);
-  border-radius: var(--radius-chip);
-  font-size: 12px;
-  padding: 7px 16px;
-  cursor: pointer;
-}
-.modal .del:hover {
-  background: var(--danger);
 }
 /* 棚卸し行の本文モーダル: 設定モーダルより広く、本文は内側でスクロール */
 .modal.mem-modal {
@@ -1575,32 +1552,25 @@ select,
   white-space: nowrap;
 }
 
-/* ---- v0.5.0: インライン編集・AI 発動診断 ---- */
-/* 編集/保存/キャンセルはコンテンツに被らないよう右寄せ + 上マージン */
-.edit-bar {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin: 10px 0 12px;
+/*
+ * ---- 操作起点のインライン表示(v0.9.0 で alert ダイアログを全廃した受け皿)----
+ * 押したボタンの隣に 1 行だけ出す。失敗は危険色 + ⚠、注記(claude CLI 不在など)は補足色。
+ * 画面全体の失敗(app.loadFailed)はここではなく既存の .empty(全画面)に出す。
+ */
+.inline-msg {
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.5;
+  max-width: 46ch;
 }
-.md-editor {
-  width: 100%;
-  min-height: 480px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.7;
-  resize: vertical;
-  outline: none;
-  box-sizing: border-box;
+.inline-msg.err {
+  color: var(--danger);
 }
-.md-editor:focus {
-  border-color: var(--text);
+.inline-msg.note {
+  color: var(--meta);
 }
+
+/* ---- AI 発動診断 ---- */
 .diag-block {
   margin: 8px 0 4px;
 }
@@ -1820,11 +1790,16 @@ select,
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .pane-top .push {
   margin-left: auto;
   display: inline-flex;
   gap: 8px;
+  /* AI 不在の注記・失敗の 1 行が入るので、ボタンを押し出さず折り返す */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
 }
 /* d-name にバッジを並べる(Detail .d-name: flex / gap 9px) */
 .d-name.mem {
@@ -2026,47 +2001,6 @@ select,
   opacity: 0.55;
   pointer-events: none;
 }
-/* 貼るときの前置き(1 回だけ表示。コピーボタンはこれを自動で付ける) */
-.triage-preamble {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  background: var(--bg);
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 10px 16px;
-  margin: 0 0 12px;
-}
-.triage-preamble .txt {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.triage-preamble .lbl {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--meta);
-}
-.triage-preamble .bd {
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--meta);
-}
-.triage-preamble .copybtn {
-  margin-left: auto;
-  white-space: nowrap;
-  font-family: var(--font-ui);
-  font-size: 11px;
-  padding: 4px 11px;
-  border-radius: var(--radius-chip);
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--sub);
-  cursor: pointer;
-}
 .triage-row {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2214,6 +2148,10 @@ select,
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--sub);
+  margin-left: auto;
+}
+/* 試算(.instr-d)を持たない発動診断でもコピーは右端に置く */
+.instr-h .instr-t + .copybtn {
   margin-left: auto;
 }
 .copybtn {

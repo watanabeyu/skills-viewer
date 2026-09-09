@@ -3,8 +3,9 @@ import { t } from '../i18n';
 
 /*
  * ヘッダーの「✦ AI」ドロップダウン。AI 要約(summarize-all)・用途グルーピング・
- * memory 棚卸しを集約する(CopyMenu と同じ開閉パターン)。行を選ぶとメニューを閉じて実行する。
+ * memory 棚卸しを集約する。行を選ぶとメニューを閉じて実行する。
  * 棚卸しは現在のプロジェクトに memory がある場合だけ出す(無ければ項目ごと出さない)。
+ * claude CLI が無い環境では呼び出し側(App)がメニューを開くボタンごと無効化する。
  */
 export function AiMenu({
   summaryLabel,

@@ -16,6 +16,7 @@ import {
   type ThemePref,
 } from '../settings';
 import { t, type Lang, type MsgKey } from '../i18n';
+import { InlineError } from './Inline';
 
 const LANGS: [Lang, string][] = [
   ['ja', '日本語'],
@@ -41,6 +42,8 @@ export function SettingsModal({
   const [setting, setSetting] = useState<EditorSetting>(loadEditorSetting);
   const [aiModel, setAiModel] = useState<AiModel>(loadAiModel);
   const [themePref, setThemePref] = useState<ThemePref>(loadThemePref);
+  /* 入力検証の結果はモーダル内(該当の入力欄の下)に出す。モーダルの上に alert を重ねない */
+  const [error, setError] = useState('');
   /* 言語と同じく即時反映(保存を待たない)。見た目の切替は選んだ瞬間に確かめたいため */
   const changeTheme = (p: ThemePref) => {
     setThemePref(p);
@@ -50,9 +53,10 @@ export function SettingsModal({
 
   const save = () => {
     if (setting.mode === 'custom' && !(setting.template || '').includes('{path}')) {
-      alert(t('settings.customNeedsPath'));
+      setError(t('settings.customNeedsPath'));
       return;
     }
+    setError('');
     saveEditorSetting(setting);
     saveAiModel(aiModel);
     onClose();
@@ -140,12 +144,15 @@ export function SettingsModal({
             <span>{t('settings.customScheme')}</span>
           </label>
           {setting.mode === 'custom' && (
-            <input
-              className="set-input"
-              placeholder="myeditor://open?file={path}"
-              value={setting.template || ''}
-              onChange={(e) => setSetting({ mode: 'custom', template: e.target.value })}
-            />
+            <>
+              <input
+                className="set-input"
+                placeholder="myeditor://open?file={path}"
+                value={setting.template || ''}
+                onChange={(e) => setSetting({ mode: 'custom', template: e.target.value })}
+              />
+              <InlineError msg={error} />
+            </>
           )}
           <label className="set-option">
             <input

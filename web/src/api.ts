@@ -26,7 +26,6 @@ export type {
   SnapshotChanges,
   Source,
   Section,
-  CopyTarget,
   SkillsData,
   SummaryJob,
 } from '../../src/shared/types';
@@ -47,9 +46,6 @@ export async function initToken(): Promise<void> {
 export const fetchSkills = () => req<SkillsData>('/api/skills?lang=' + getLang());
 export const fetchFile = (src: string) =>
   req<{ content: string }>('/api/file?src=' + encodeURIComponent(src)).then((r) => r.content);
-/* 編集用: mtime 付きで取得(保存時の競合検出に使う) */
-export const fetchFileFull = (src: string) =>
-  req<{ content: string; mtime: number }>('/api/file?src=' + encodeURIComponent(src));
 export const fetchSummaryStatus = () => req<SummaryJob>('/api/summary-status');
 
 /*
@@ -65,13 +61,6 @@ function mutate<T>(path: string, payload: Record<string, unknown>): Promise<T> {
   });
 }
 
-export const copySkill = (src: string, target: string) =>
-  mutate<{ ok: true; dest: string; destMd: string; destName: string }>('/api/copy', {
-    src,
-    target,
-  });
-export const deleteSkill = (src: string) =>
-  mutate<{ ok: true; trashedTo: string }>('/api/delete', { src });
 export const openSkill = (src: string) =>
   mutate<{ ok: true; editor: string }>('/api/open', { src });
 export const summarizeSkill = (src: string, name: string) =>
@@ -88,10 +77,6 @@ export const triageMemory = (project: string, files?: string[], force = false) =
   mutate<{ ok: true }>('/api/memory-triage', { project, files, force });
 /* What's Changed の「既読にする」: 現在の状態を次回比較の基準として保存 */
 export const ackChanges = () => mutate<{ ok: true }>('/api/changes-ack', {});
-export const saveFile = (src: string, content: string, baseMtime: number) =>
-  mutate<{ ok: true; mtime: number }>('/api/save', { src, content, baseMtime });
-export const applyDescription = (src: string, description: string) =>
-  mutate<{ ok: true; mtime: number }>('/api/apply-description', { src, description });
 export const diagnoseSkill = (src: string, name: string) =>
   mutate<{ ok: true } & import('../../src/shared/types').SkillDiagnosis>('/api/diagnose', {
     src,

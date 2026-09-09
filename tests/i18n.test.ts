@@ -10,9 +10,9 @@ afterEach(() => setLang('en'));
 describe('t (辞書引き + 置換)', () => {
   it('言語切替で訳が変わる', () => {
     expect(getLang()).toBe('en');
-    expect(t('detail.delete')).toBe('Delete');
+    expect(t('detail.openEditor')).toBe('Open in editor');
     setLang('ja');
-    expect(t('detail.delete')).toBe('削除');
+    expect(t('detail.openEditor')).toBe('エディタで開く');
   });
 
   it('{name} プレースホルダを置換する', () => {
@@ -42,8 +42,8 @@ describe('辞書のプレースホルダ整合', () => {
 describe('apiErrorMessage (エラーコード → 表示文言)', () => {
   it('既知コードは detail 付きで翻訳する', () => {
     setLang('ja');
-    expect(apiErrorMessage({ error: 'not-managed-path', detail: '/x' }, 400)).toBe(
-      '管理対象外のパスです: /x',
+    expect(apiErrorMessage({ error: 'not-readable-path', detail: '/x' }, 400)).toBe(
+      '読み取り対象外のパスです: /x',
     );
   });
 

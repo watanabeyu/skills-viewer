@@ -24,6 +24,7 @@ import {
   type ViewMode,
 } from '../util';
 import { lintLabel, t } from '../i18n';
+import { InlineError, InlineNote } from './Inline';
 import type { Section, SkillItem, Source } from '../api';
 
 export function KindBadge({ it }: { it: SkillItem }) {
@@ -133,28 +134,36 @@ export function GroupHeading({
 function GroupGenButton({
   label,
   title,
+  aiAvailable,
   reload,
 }: {
   label: string;
   title: string;
+  aiAvailable: boolean;
   reload: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const run = async () => {
     setBusy(true);
+    setError('');
     try {
       await generateGroups();
       await reload();
     } catch (e) {
-      alert(t('alert.groupFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setError(t('alert.groupFailed', { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setBusy(false);
     }
   };
   return (
-    <button className="chip" disabled={busy} onClick={run} title={title}>
-      {busy ? t('group.generating') : label}
-    </button>
+    <>
+      <button className="chip" disabled={busy || !aiAvailable} onClick={run} title={title}>
+        {busy ? t('group.generating') : label}
+      </button>
+      <InlineError msg={error} />
+      {!aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
+    </>
   );
 }
 
@@ -240,7 +249,7 @@ export function GridView({
   const pass = (it: SkillItem) =>
     kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, data.usageAvailable);
   if (view === 'group') {
-    // 未生成なら生成導線だけを出す(claude CLI が無い環境ではボタンがエラーを表示する)
+    // 未生成なら生成導線だけを出す(claude CLI が無い環境ではボタンを押せない)
     if (!data.groups?.length) {
       return (
         <div className="grid-pad">
@@ -249,6 +258,7 @@ export function GridView({
             <GroupGenButton
               label={t('group.generate')}
               title={t('group.generateTitle')}
+              aiAvailable={data.aiAvailable}
               reload={reload}
             />
           </div>

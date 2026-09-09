@@ -2,9 +2,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { assertManagedPath, assertReadableMd, uniqueDest } from '../src/server/manage';
+import { assertReadableMd } from '../src/server/read-access';
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-manage-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-'));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 function make(rel: string, content = 'x'): string {
@@ -13,25 +13,6 @@ function make(rel: string, content = 'x'): string {
   fs.writeFileSync(fp, content);
   return fp;
 }
-
-describe('assertManagedPath (コピー/削除のパス検証)', () => {
-  it('skills / commands / agents 配下を kind 付きで許可する', () => {
-    expect(assertManagedPath(make('p/.claude/skills/foo/SKILL.md')).kind).toBe('skill');
-    expect(assertManagedPath(make('p/.claude/commands/bar.md')).kind).toBe('command');
-    expect(assertManagedPath(make('p/.claude/agents/baz.md')).kind).toBe('agent');
-  });
-
-  it('.claude 外・plugin 配下はエラーコード付きで拒否する', () => {
-    expect(() => assertManagedPath(make('p/outside.md'))).toThrow('not-managed-path');
-    expect(() => assertManagedPath(make('h/.claude/plugins/x/skills/s/SKILL.md'))).toThrow(
-      'plugin-managed',
-    );
-  });
-
-  it('存在しないパスは not-found', () => {
-    expect(() => assertManagedPath(path.join(tmp, 'no-such-file.md'))).toThrow('not-found');
-  });
-});
 
 describe('assertReadableMd (md 読み取りの検証)', () => {
   it('.claude 配下の .md は plugin でも許可する', () => {
@@ -43,6 +24,10 @@ describe('assertReadableMd (md 読み取りの検証)', () => {
     expect(() => assertReadableMd(make('p/.claude/settings.json', '{}'))).toThrow('not-md');
     expect(() => assertReadableMd(make('p/free.md'))).toThrow('not-readable-path');
   });
+
+  it('存在しないパスは not-found', () => {
+    expect(() => assertReadableMd(path.join(tmp, 'no-such-file.md'))).toThrow('not-found');
+  });
 });
 
 /*
@@ -51,8 +36,8 @@ describe('assertReadableMd (md 読み取りの検証)', () => {
  * 解決は cwd 側の settings.local.json を最優先に読むので、専用の cwd を作って設定を置く。
  */
 describe('assertReadableMd (autoMemoryDirectory の置き場)', () => {
-  const autoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-manage-automem-'));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-manage-cwd-'));
+  const autoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-automem-'));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-cwd-'));
   fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
   fs.writeFileSync(
     path.join(cwd, '.claude', 'settings.local.json'),
@@ -82,8 +67,8 @@ describe('assertReadableMd (autoMemoryDirectory の置き場)', () => {
   });
 
   it('別の置き場を指す cwd では、この置き場配下でも拒否する(許可は解決結果に紐づく)', () => {
-    const otherCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-manage-other-'));
-    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-manage-otherstore-'));
+    const otherCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-other-'));
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-otherstore-'));
     fs.mkdirSync(path.join(otherCwd, '.claude'), { recursive: true });
     fs.writeFileSync(
       path.join(otherCwd, '.claude', 'settings.local.json'),
@@ -93,22 +78,5 @@ describe('assertReadableMd (autoMemoryDirectory の置き場)', () => {
     expect(() => assertReadableMd(fp, otherCwd)).toThrow('not-readable-path');
     fs.rmSync(otherCwd, { recursive: true, force: true });
     fs.rmSync(otherDir, { recursive: true, force: true });
-  });
-});
-
-describe('uniqueDest (-copy サフィックス)', () => {
-  it('空きがあればそのまま、既存なら -copy, -copy2 と採番する', () => {
-    const base = path.join(tmp, 'dest', 'note.md');
-    expect(uniqueDest(base, true)).toBe(base);
-    make('dest/note.md');
-    expect(uniqueDest(base, true)).toBe(path.join(tmp, 'dest', 'note-copy.md'));
-    make('dest/note-copy.md');
-    expect(uniqueDest(base, true)).toBe(path.join(tmp, 'dest', 'note-copy2.md'));
-  });
-
-  it('ディレクトリ(skill)にも同じ規則を適用する', () => {
-    const dir = path.join(tmp, 'dest', 'myskill');
-    fs.mkdirSync(dir, { recursive: true });
-    expect(uniqueDest(dir, false)).toBe(path.join(tmp, 'dest', 'myskill-copy'));
   });
 });

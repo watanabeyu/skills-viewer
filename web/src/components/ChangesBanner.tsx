@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { ackChanges, type ChangeEntry, type SnapshotChanges } from '../api';
 import { t } from '../i18n';
+import { InlineError } from './Inline';
 
 const SHOW_MAX = 8;
 
@@ -53,13 +54,15 @@ export function ChangesBanner({
   reload: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const onAck = async () => {
     setBusy(true);
+    setError('');
     try {
       await ackChanges();
       await reload();
     } catch (e) {
-      alert(t('alert.ackFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setError(t('alert.ackFailed', { msg: e instanceof Error ? e.message : String(e) }));
       setBusy(false);
     }
   };
@@ -91,6 +94,7 @@ export function ChangesBanner({
       >
         {t('changes.ack')}
       </button>
+      <InlineError msg={error} />
     </div>
   );
 }
