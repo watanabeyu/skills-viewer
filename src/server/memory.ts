@@ -80,6 +80,24 @@ export function repoRootOf(dir: string): string | null {
 }
 
 /*
+ * fp を実際に含んでいる git のワークツリーのルート(= `.git` を持つ最も近い祖先)。
+ * repoRootOf との違いは linked worktree の扱いで、こちらは worktree 自身を返す。
+ * `git -C <ここ> log/show` は「そのファイルが今いるワークツリーの HEAD」を見るので、
+ * ファイルの履歴を引く用途(差分追跡の誰が・いつ / GET /api/diff)ではこちらが正しい
+ * (repoRootOf はメインワークツリーへ寄せるため、worktree 内のファイルが root の外に出る)。
+ * 見つからなければ null(git 管理外)。
+ */
+export function worktreeRootOf(dir: string): string | null {
+  let cur = path.resolve(dir);
+  for (;;) {
+    if (fs.existsSync(path.join(cur, '.git'))) return cur;
+    const parent = path.dirname(cur);
+    if (parent === cur) return null;
+    cur = parent;
+  }
+}
+
+/*
  * settings.json の `autoMemoryDirectory`(公式仕様)を解決する。設定すると自動メモリの置き場が
  * 丸ごと変わり、~/.claude/projects/<project>/memory/ には何も作られなくなるため、
  * この設定が無いと memory が 1 件も見えない環境が生まれる。

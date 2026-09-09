@@ -1,6 +1,10 @@
 /* server / web 共通の型定義(単一ソース) */
 
-export type ItemKind = 'skill' | 'command' | 'agent' | 'hook' | 'memory';
+/*
+ * 一覧に並ぶアイテムの種類。claude-md は SkillItem としては現れず、差分追跡(ChangeEntry)
+ * だけで使う(CLAUDE.md は「呼び出す」ものではなく、毎セッション注入される文書のため)。
+ */
+export type ItemKind = 'skill' | 'command' | 'agent' | 'hook' | 'memory' | 'claude-md';
 export type Source = 'built-in' | 'user' | 'project' | 'plugin';
 /*
  * 自動メモリ(~/.claude/projects/<encoded>/memory/*.md)の frontmatter type。
@@ -319,6 +323,23 @@ export interface ChangeEntry {
   name: string;
   kind: ItemKind;
   path: string;
+  /* 出所。誰が・いつ(git)を引く対象は project のものだけ */
+  source: Source;
+  /* このファイルを最後に触ったコミットの author 名。project 出所かつ git 管理下のときだけ */
+  author?: string;
+  /* 同コミットの author date(ISO 8601)。author とセットで付く */
+  authoredAt?: string;
+}
+
+/*
+ * GET /api/diff の応答。available: false は「前版を出せない」(非 git / 履歴なし /
+ * user scope)を意味し、web は diff ボタン自体を出さない。エラーではないので 200 で返す。
+ */
+export interface DiffResponse {
+  available: boolean;
+  /* HEAD 時点の内容(available: true のときだけ)。現在の内容は /api/file 側で取る */
+  previous?: string;
+  reason?: 'not-git' | 'no-history' | 'user-scope';
 }
 
 /* 前回起動からの差分。hook(識別子が不安定)と built-in(実ファイル無し)は対象外 */

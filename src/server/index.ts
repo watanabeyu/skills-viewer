@@ -36,6 +36,7 @@ import { attachFlows, flowOne } from './flow';
 import { attachGroups, generateGroups } from './groups';
 import { attachMemoryTriage, triageProject } from './memory-triage';
 import { ackChanges, computeChanges } from './snapshot';
+import { previousContent } from './diff';
 import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
 
@@ -240,7 +241,8 @@ function collect(cwd: string, lang: Lang): SkillsData {
     aiStale,
     aiAvailable,
     usageAvailable,
-    changes: computeChanges(sections),
+    // CLAUDE.md 群の受け口は Phase C2(claude-md.ts)から第 3 引数で渡す
+    changes: computeChanges(sections, memory),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
     ...(memory.length ? { memory: publicMemory(memory) } : {}),
@@ -289,6 +291,9 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         const real = assertReadableMd(url.searchParams.get('src') || '', cwd);
         return send(200, { content: fs.readFileSync(real, 'utf8') });
       }
+      // 前版(HEAD)の内容。削除済みファイルも対象なので assertReadableMd は通さない(diff.ts に専用の検証)
+      if (url.pathname === '/api/diff')
+        return send(200, previousContent(url.searchParams.get('src') || ''));
       throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
       return send(
@@ -332,7 +337,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/changes-ack') {
-        ackChanges(scanSections(cwd, lang));
+        ackChanges(scanSections(cwd, lang), memorySections(cwd));
         return send(200, { ok: true });
       }
       if (url.pathname === '/api/open') return send(200, openInEditor(data, cwd));
