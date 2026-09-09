@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { assertReadableMd } from '../src/server/read-access';
+import { allowedPath, assertAiReadableMd, assertReadableMd } from '../src/server/read-access';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-'));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -113,5 +113,104 @@ describe('assertReadableMd (CLAUDE.md 群)', () => {
     const fp = path.join(cwd, 'CLAUDE.md');
     expect(() => assertReadableMd(fp, other)).toThrow('not-readable-path');
     fs.rmSync(other, { recursive: true, force: true });
+  });
+});
+
+/*
+ * AI に本文を送ってよい範囲(assertAiReadableMd)は、表示のための読み取りより狭い。
+ * CLAUDE.local.md は通常 gitignore される私的なファイルなので、画面には出しても claude CLI には
+ * 渡さない ── README Security の約束をここで固定する(レビュー 2 周目の指摘。実装を
+ * 表示用と同じ広さに戻しても全テストが緑のままだった)。
+ */
+describe('assertAiReadableMd (AI に送ってよい範囲は表示より狭い)', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-ai-readable-'));
+  const autoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-ai-readable-automem-'));
+  fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(cwd, '.claude', 'settings.local.json'),
+    JSON.stringify({ autoMemoryDirectory: autoDir }),
+  );
+  const put = (rel: string, content = 'x') => {
+    const fp = path.join(cwd, rel);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, content);
+    return fp;
+  };
+  afterAll(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(autoDir, { recursive: true, force: true });
+  });
+
+  it('.claude 配下の定義本文は送ってよい', () => {
+    const fp = put('.claude/skills/x/SKILL.md', '---\nname: x\n---\n本文');
+    expect(assertAiReadableMd(fp, cwd)).toBe(fs.realpathSync(fp));
+  });
+
+  it('autoMemoryDirectory 配下の memory も送ってよい(棚卸しが読む)', () => {
+    const fp = path.join(autoDir, 'note.md');
+    fs.writeFileSync(fp, '本文');
+    expect(assertAiReadableMd(fp, cwd)).toBe(fs.realpathSync(fp));
+  });
+
+  it('CLAUDE.md 群は表示できても送らない(CLAUDE.local.md は私的なファイル)', () => {
+    const root = put('CLAUDE.md', '# root');
+    const local = put('CLAUDE.local.md', '# local');
+    // 表示は通る
+    expect(assertReadableMd(root, cwd)).toBe(fs.realpathSync(root));
+    expect(assertReadableMd(local, cwd)).toBe(fs.realpathSync(local));
+    // AI には渡らない
+    expect(() => assertAiReadableMd(root, cwd)).toThrow('not-readable-path');
+    expect(() => assertAiReadableMd(local, cwd)).toThrow('not-readable-path');
+  });
+
+  it('.md 以外は not-md', () => {
+    expect(() => assertAiReadableMd(path.join(cwd, '.claude', 'settings.local.json'), cwd)).toThrow(
+      'not-md',
+    );
+  });
+});
+
+/*
+ * allowedPath は GET /api/diff の境界判定。削除済みファイルの過去の内容を出すのが目的なので
+ * 実在を前提にできないが、実在するなら解決後のパスで見る ── 字句一致だけで通すと、
+ * 経路に .claude を含む symlink が別の場所を指しているとき /api/file と許可範囲が食い違う。
+ */
+describe('allowedPath (実在すれば realpath で、消えていれば字句で)', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-allowed-path-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-allowed-path-outside-'));
+  afterAll(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('.claude 配下の実在ファイルは許可する', () => {
+    const fp = path.join(cwd, '.claude', 'skills', 'x', 'SKILL.md');
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, 'x');
+    expect(allowedPath(fp, cwd)).toBe(true);
+  });
+
+  it('消えていても .claude 配下のパスなら許可する(差分の主役)', () => {
+    expect(allowedPath(path.join(cwd, '.claude', 'skills', 'gone', 'SKILL.md'), cwd)).toBe(true);
+  });
+
+  it('消えていて境界の外なら許可しない', () => {
+    expect(allowedPath(path.join(cwd, 'docs', 'gone.md'), cwd)).toBe(false);
+  });
+
+  it('境界の外を指す symlink が .claude 配下にあっても許可しない', () => {
+    fs.writeFileSync(path.join(outside, 'private.md'), 'CONFIDENTIAL');
+    const link = path.join(cwd, '.claude', 'link');
+    fs.symlinkSync(outside, link);
+    expect(allowedPath(path.join(link, 'private.md'), cwd)).toBe(false);
+  });
+
+  it('境界の中を指す symlink は外から来ていても許可する(/api/file と同じ広さ)', () => {
+    const real = path.join(cwd, '.claude', 'skills', 'y', 'SKILL.md');
+    fs.mkdirSync(path.dirname(real), { recursive: true });
+    fs.writeFileSync(real, 'x');
+    const link = path.join(outside, 'alias.md');
+    fs.symlinkSync(real, link);
+    expect(allowedPath(link, cwd)).toBe(true);
   });
 });

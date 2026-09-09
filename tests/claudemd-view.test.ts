@@ -11,16 +11,20 @@ import {
   defaultFile,
   displayPath,
   homeOf,
+  importLine,
   importRefsOfLine,
   importStats,
+  importTok,
   importTrees,
   latestUpdated,
   layerRows,
   lazyTokens,
+  nestedState,
   outlineOf,
   presentKinds,
   splitImports,
 } from '../web/src/claudemd';
+import { setLang } from '../web/src/i18n';
 
 const file = (path: string, over: Partial<ClaudeMdFile> = {}): ClaudeMdFile => ({
   path,
@@ -266,5 +270,57 @@ describe('homeOf / displayPath', () => {
     ).toBe('/Library/Application Support/ClaudeCode/CLAUDE.md');
     expect(displayPath('', '/x', home)).toBe('');
     expect(homeOf(empty)).toBe('');
+  });
+});
+
+/*
+ * @import 1 件の見え方。サーバーが返す skipped は 5 種あり、以前は cycle / depth しか分岐が無く、
+ * 残り 3 種が既定の「ここで展開(0 tok)」に落ちていた ── 読まなかったものを「読んだ」と
+ * 表示するので、修正前より誤解が強い(レビュー 2 周目の指摘)。全種を固定する。
+ */
+describe('importLine / nestedState / importTok — skipped の全種', () => {
+  const cases: [NonNullable<ClaudeMdImport['skipped']>, string, string][] = [
+    ['cycle', 'cycle', 'cycle'],
+    ['duplicate', 'expanded above', 'counted once'],
+    ['depth', 'beyond 4 levels', 'beyond 4 levels'],
+    ['too-large', 'too large', 'too large'],
+    ['out-of-scope', 'outside the project', 'out of scope'],
+  ];
+
+  it.each(cases)('%s は展開扱いにせず専用の文言を出す', (skipped, direct, nested) => {
+    setLang('en');
+    const im = imp('x.md', { skipped, tokens: 0 });
+    expect(importLine(im)).toContain(direct);
+    expect(importLine(im)).not.toContain('expanded here');
+    expect(nestedState(im)).toContain(nested);
+    expect(nestedState(im)).not.toBe('0 tok');
+    // 読まなかったものに tok は出さない
+    expect(importTok(im)).toBe('—');
+  });
+
+  it('展開できたものは tok を出す', () => {
+    setLang('en');
+    const im = imp('ok.md', { tokens: 120 });
+    expect(importLine(im)).toContain('expanded here');
+    expect(importTok(im)).toBe('120');
+    expect(nestedState(im)).toBe('120 tok');
+  });
+
+  it('見つからないものは「無い」と出す(打ち切りとは言い分ける)', () => {
+    setLang('en');
+    const im = imp('gone.md', { exists: false, tokens: 0 });
+    expect(importLine(im)).toContain('not found');
+    expect(importTok(im)).toBe('—');
+  });
+
+  it('両言語に文言がある(片方だけだとキーがそのまま出る)', () => {
+    for (const lang of ['en', 'ja'] as const) {
+      setLang(lang);
+      for (const [skipped] of cases) {
+        const s = importLine(imp('x.md', { skipped, tokens: 0 }));
+        expect(s).not.toContain('cmd.');
+      }
+    }
+    setLang('en');
   });
 });

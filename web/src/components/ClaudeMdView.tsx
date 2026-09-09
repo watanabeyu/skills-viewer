@@ -16,7 +16,6 @@ import {
   openSkill,
   toId,
   type ClaudeMdFile,
-  type ClaudeMdImport,
   type ClaudeMdLayer,
   type DiffResponse,
   type SkillsData,
@@ -28,11 +27,14 @@ import {
   displayPath,
   findFile,
   homeOf,
+  importLine,
   importStats,
+  importTok,
   latestUpdated,
   layerOf,
   layerRows,
   lazyTokens,
+  nestedState,
   outlineOf,
   presentKinds,
   splitImports,
@@ -414,24 +416,6 @@ function ImportRows({ tree }: { tree: ImportTree }) {
       ))}
     </>
   );
-}
-
-const importTok = (im: ClaudeMdImport) =>
-  !im.exists ? '—' : im.skipped ? '—' : im.tokens.toLocaleString();
-
-/* 展開位置の印の文言(直接の import)。配下の状態は ImportNote 内で 1 行ずつ */
-function importLine(im: ClaudeMdImport): string {
-  if (!im.exists) return t('cmd.importMissing', { ref: im.ref });
-  if (im.skipped === 'cycle') return t('cmd.importCycle', { ref: im.ref });
-  if (im.skipped === 'depth') return t('cmd.importDepth', { ref: im.ref });
-  return t('cmd.expandedHere', { ref: im.ref, n: im.tokens.toLocaleString() });
-}
-
-function nestedState(im: ClaudeMdImport): string {
-  if (!im.exists) return t('cmd.nestedMissing');
-  if (im.skipped === 'cycle') return t('cmd.nestedCycle');
-  if (im.skipped === 'depth') return t('cmd.nestedDepth');
-  return t('cmd.nestedTok', { n: im.tokens.toLocaleString() });
 }
 
 function ImportNote({ refText, tree }: { refText: string; tree?: ImportTree }) {

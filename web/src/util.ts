@@ -42,6 +42,13 @@ export const asKindFilter = (v: string | null): KindFilter =>
 export const asUseFilter = (v: string | null): UseFilter =>
   USE_FILTERS.includes(v as UseFilter) ? (v as UseFilter) : 'all';
 
+/*
+ * 使用実績フィルタの選択肢のラベル(ホーム ③ と「すべてのプロジェクト」で同じ並びを出す)。
+ * use… で始めない: React の hooks 規則の lint が「フックの呼び出し」と誤認する
+ */
+export const labelOfUseFilter = (v: UseFilter): string =>
+  v === 'all' ? t('kind.all') : v === 'used' ? t('filter.used') : t('filter.unused');
+
 export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
 
 /*

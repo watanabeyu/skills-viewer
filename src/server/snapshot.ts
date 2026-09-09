@@ -216,12 +216,16 @@ const GIT_AUTHOR_MAX = 40;
 /* 全体の時間上限。巨大リポジトリやネットワーク FS で 1 件が遅いときに待受を止めないため */
 const GIT_AUTHOR_BUDGET_MS = 600;
 
-/* project 出所の変化項目にだけ git 履歴を付ける(user / plugin / built-in は共有の履歴を持たない) */
+/*
+ * project 出所の変化項目にだけ git 履歴を付ける(user / plugin / built-in は共有の履歴を持たない)。
+ * removed を先に回す: 消えたファイルは mtime が残っておらず、git が唯一の情報源なので、
+ * 上限に当たったときに真っ先に落ちるのが一番惜しい。
+ */
 function attachGitAuthors(changes: SnapshotChanges): void {
   rootMemo.clear();
   const started = Date.now();
   let calls = 0;
-  for (const list of [changes.added, changes.updated, changes.removed]) {
+  for (const list of [changes.removed, changes.added, changes.updated]) {
     for (const e of list) {
       if (e.source !== 'project') continue;
       if (calls >= GIT_AUTHOR_MAX || Date.now() - started > GIT_AUTHOR_BUDGET_MS) return;

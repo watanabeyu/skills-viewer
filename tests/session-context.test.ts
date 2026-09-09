@@ -142,3 +142,29 @@ describe('sessionContext', () => {
     expect(ctx.claudeMd.tok).toBe(1180);
   });
 });
+
+/*
+ * 母集団の食い違いは「現在プロジェクトが 1 件も無い」ときに出る。
+ * 以前は memoryIndex だけ全プロジェクトを合算するフォールバックがあり、description が user だけに
+ * 縮むのに索引だけ全件、という状態になっていた(レビュー 2 周目の指摘。新テストが isCurrent 付きの
+ * memory しか渡していなかったのでこの分岐に入っていなかった)。
+ */
+describe('sessionContext(現在プロジェクトが無いとき)', () => {
+  const secs = [section('proj-a', 'project', [item('a', 100)]), section('user', 'user', [])];
+
+  it('memoryIndex も 0 行に落とす(全プロジェクトを合算しない)', () => {
+    const ctx = sessionContext(
+      secs,
+      [memSection('a', 310, 3, false), memSection('b', 999, 9, false)],
+      emptyClaudeMd,
+    );
+    expect(ctx.memoryIndex.tok).toBe(0);
+    expect(ctx.memoryIndex.lines).toBe(0);
+  });
+
+  it('3 つの内訳が同じ母集団を見る(description も 0)', () => {
+    const ctx = sessionContext(secs, [memSection('a', 310, 3, false)], emptyClaudeMd);
+    expect(ctx.descriptions.tok).toBe(0);
+    expect(ctx.memoryIndex.tok).toBe(0);
+  });
+});

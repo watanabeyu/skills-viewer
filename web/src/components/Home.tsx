@@ -12,13 +12,13 @@
 import { useState } from 'react';
 import type { Section, SkillsData, Source } from '../api';
 import {
-  KIND_FILTERS,
   changeMarkOf,
   claudeMdCounts,
   contextRows,
   contextTotal,
   fileName,
   flatten,
+  KIND_FILTERS,
   kindMatches,
   matches,
   scopeLabelOf,
@@ -26,6 +26,8 @@ import {
   sessionSections,
   sortItems,
   usageMatches,
+  USE_FILTERS,
+  labelOfUseFilter,
   type KindFilter,
   type SortKey,
   type UseFilter,
@@ -222,15 +224,9 @@ export function ActiveBlock({
               title={t('filter.unusedTitle')}
               onChange={(e) => setParam('use', e.target.value === 'all' ? null : e.target.value)}
             >
-              {(
-                [
-                  ['all', t('kind.all')],
-                  ['used', t('filter.used')],
-                  ['unused', t('filter.unused')],
-                ] as [UseFilter, string][]
-              ).map(([key, label]) => (
+              {USE_FILTERS.map((key) => (
                 <option key={key} value={key}>
-                  {t('filter.usePrefix', { v: label })}
+                  {t('filter.usePrefix', { v: labelOfUseFilter(key) })}
                 </option>
               ))}
             </select>

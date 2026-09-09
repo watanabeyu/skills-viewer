@@ -87,6 +87,43 @@ describe('resolveDiffTarget(パス検証)', () => {
       relPath: '.claude/skills/x/SKILL.md',
     });
   });
+
+  /*
+   * 境界の中に見えても root の外へ出るパス。allowedPath は「消えているファイル」を救うために
+   * 字句判定に落ちるので、git に `..` を渡さない最後の砦がここで効くことを固定する。
+   */
+  it('境界内の字句だが root の外に出るものは not-readable-path', () => {
+    try {
+      resolveDiffTarget('/other/.claude/skills/x/SKILL.md', cwd, rootOf);
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect((e as ApiError).code).toBe('not-readable-path');
+    }
+  });
+});
+
+/*
+ * clone してきたリポジトリは symlink を持ち込める。経路に `.claude` を含む symlink が別の
+ * リポジトリを指しているとき、字句一致だけで許可すると /api/file が拒否する同じパスで
+ * /api/diff が別リポジトリの HEAD を返してしまう(レビュー 2 周目の指摘。実測で再現済み)。
+ */
+describe('resolveDiffTarget(symlink で境界の外へ出られないこと)', () => {
+  it('.claude 配下の symlink が別リポジトリを指していても out-of-scope', () => {
+    const base = mkTmp('sv-diff-sym-');
+    const cloned = path.join(base, 'cloned');
+    const other = path.join(base, 'other-repo', 'notes');
+    fs.mkdirSync(path.join(cloned, '.claude'), { recursive: true });
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(other, 'private.md'), 'CONFIDENTIAL\n');
+    fs.symlinkSync(path.join(base, 'other-repo'), path.join(cloned, '.claude', 'link'));
+
+    const target = path.join(cloned, '.claude', 'link', 'notes', 'private.md');
+    expect(resolveDiffTarget(target, cloned, () => other)).toEqual({ reason: 'out-of-scope' });
+    expect(previousContent(target, cloned)).toEqual({
+      available: false,
+      reason: 'out-of-scope',
+    });
+  });
 });
 
 describe('resolveDiffTarget(root の決め方)', () => {
@@ -94,8 +131,9 @@ describe('resolveDiffTarget(root の決め方)', () => {
     const dir = mkTmp('sv-diff-root-');
     fs.mkdirSync(path.join(dir, '.git'));
     fs.mkdirSync(path.join(dir, '.claude', 'commands'), { recursive: true });
+    // root は realpath 済みで返る(macOS の /var → /private/var。git -C はどちらでも同じ答え)
     expect(resolveDiffTarget(path.join(dir, '.claude', 'commands', 'a.md'), dir)).toEqual({
-      root: dir,
+      root: fs.realpathSync(dir),
       relPath: '.claude/commands/a.md',
     });
   });
@@ -113,7 +151,7 @@ describe('resolveDiffTarget(root の決め方)', () => {
     fs.mkdirSync(path.join(wt, '.claude'), { recursive: true });
     // repoRootOf を使うと root が main になり、wt のファイルが root の外(`..`)に出てしまう
     expect(resolveDiffTarget(path.join(wt, '.claude', 'CLAUDE.md'), wt)).toEqual({
-      root: wt,
+      root: fs.realpathSync(wt),
       relPath: '.claude/CLAUDE.md',
     });
   });

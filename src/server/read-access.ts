@@ -80,23 +80,22 @@ function isClaudeMdLayerFile(target: string, cwd: string): boolean {
 }
 
 /*
- * 実在を前提にしない許可判定(パスの前方一致だけ)。削除済みファイルの過去の内容を扱う
- * GET /api/diff は realpath を通せないので、境界の判定だけをここから使う。
- * CLAUDE.md 群は「走査が列挙した実在ファイル」なので、消えていれば単に許可されない。
+ * 実在を前提にしない許可判定。削除済みファイルの過去の内容を扱う GET /api/diff は
+ * realpath を通せないので、そこだけ字句の前方一致に落とす。
+ *
+ * 実在するなら判定は assertReadableMd と同じ(解決後のパスが境界の中)にする。
+ * 字句一致で即 true にすると、経路に `.claude` を含む symlink が別のリポジトリを指している場合に
+ * /api/file が拒否する同じパスを /api/diff が通してしまう(clone してきたリポジトリが仕込める)。
  */
 export function allowedPath(abs: string, cwd: string = process.cwd()): boolean {
-  if (underDotClaude(abs) || underAutoMemory(abs, cwd) || isClaudeMdLayerFile(abs, cwd))
-    return true;
-  // 実在するなら realpath でも見る(symlink 経由のパスで一致が外れないように)。
-  // 削除済みファイルは解決できないので、その場合は前方一致だけの判定で終わる
   let real: string;
   try {
     real = fs.realpathSync(abs);
   } catch {
-    return false;
+    // 解決できない = 消えている。字句だけで境界を見る(CLAUDE.md 群は実在で列挙するので対象外)
+    return underDotClaude(abs) || underAutoMemory(abs, cwd) || isClaudeMdLayerFile(abs, cwd);
   }
-  if (real === abs) return false;
-  return underDotClaude(real) || underAutoMemory(real, cwd) || isClaudeMdLayerFile(real, cwd);
+  return allowed(real, cwd);
 }
 
 /*

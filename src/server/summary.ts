@@ -42,15 +42,19 @@ for (const legacy of ['claude-code-my-skills', 'claude-skills-browser']) {
  * v0.8 までのインライン編集が作った 1 世代バックアップの掃除。v0.9.0 で書き込みを廃止したので
  * 誰も参照せず、README にも説明が無いまま利用者のファイルのコピーがディスクに残る
  * (README は「viewer は自分の状態しか書かない」と約束している)。一度だけ消す。
+ *
+ * import 時の副作用にはしない: このモジュールは contentHash 経由で snapshot.ts からも読まれるので、
+ * トップレベルに置くと `pnpm test` を回しただけで実行者の HOME の控えが消える。
+ * 起動経路(index.ts の start)から 1 回だけ呼び、消したことは起動時に 1 行出す。
  */
-{
-  const backups = path.join(CACHE_DIR, 'backups');
-  if (fs.existsSync(backups)) {
-    try {
-      fs.rmSync(backups, { recursive: true, force: true });
-    } catch {
-      /* 消せなくても本体機能には影響させない */
-    }
+export function cleanupLegacyBackups(cacheDir: string = CACHE_DIR): boolean {
+  const backups = path.join(cacheDir, 'backups');
+  try {
+    if (!fs.existsSync(backups)) return false;
+    fs.rmSync(backups, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false; // 消せなくても本体機能には影響させない
   }
 }
 

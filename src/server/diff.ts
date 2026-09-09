@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import * as path from 'node:path';
 import type { DiffResponse } from '../shared/types';
 import { ApiError } from './errors';
-import { worktreeRootOf } from './memory';
+import { isUnder, realDir, worktreeRootOf } from './memory';
 import { userClaudeDir } from './claude-md';
 import { allowedPath } from './read-access';
 
@@ -38,20 +38,27 @@ export function resolveDiffTarget(
   cwd: string = process.cwd(),
   rootOf: (dir: string) => string | null = worktreeRootOf,
 ): { root: string; relPath: string } | { reason: DiffResponse['reason'] } {
-  const abs = path.resolve(src);
-  if (!abs.endsWith('.md')) throw new ApiError('not-md', abs);
+  const raw = path.resolve(src);
+  if (!raw.endsWith('.md')) throw new ApiError('not-md', raw);
+  /*
+   * ファイル自身は消えていることがあるが、置かれていたディレクトリは普通に残る。
+   * そこを realDir で解決してから判定する: 解決しないと、経路に `.claude` を含む symlink が
+   * 別のリポジトリを指しているとき、その別リポジトリの HEAD を返してしまう
+   * (clone してきたリポジトリが symlink を持ち込める。/api/file は同じパスを拒否する)。
+   */
+  const dir = realDir(path.dirname(raw));
+  const abs = path.join(dir, path.basename(raw));
   // .git 配下は git show で読めてしまうので、リポジトリ判定より前に明示的に拒否する
   if (abs.split(path.sep).includes('.git')) throw new ApiError('not-readable-path', abs);
   /*
    * 読み取りの境界の外は返さない。ここが無いと「git 管理下ならどこの .md でも HEAD が読める」
    * ことになり、同じファイルに対して /api/file(assertReadableMd)と許可範囲が食い違う。
-   * realpath は使えない(削除済みファイルの過去の内容を出すのがこの API の目的)ので、
-   * path.resolve 後の前方一致で判定する。
    */
   if (!allowedPath(abs, cwd)) return { reason: 'out-of-scope' };
-  // user scope(~/.claude)は全プロジェクトで共有され git 履歴を持たないので差分の対象外
-  if (abs.startsWith(userClaudeDir() + path.sep)) return { reason: 'user-scope' };
-  const root = rootOf(path.dirname(abs));
+  // user scope(~/.claude)は全プロジェクトで共有され git 履歴を持たないので差分の対象外。
+  // 比較はケース非依存 FS で case-fold する isUnder に揃える(v0.8.1 の判断)
+  if (isUnder(abs, userClaudeDir())) return { reason: 'user-scope' };
+  const root = rootOf(dir);
   if (!root) return { reason: 'not-git' };
   const rel = path.relative(root, abs);
   // root は abs の祖先として求めているので通常は起きない。git に `..` を渡さない最後の砦

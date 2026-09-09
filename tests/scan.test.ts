@@ -22,6 +22,15 @@ function writeSkill(project: string, name: string, extraMeta = ''): void {
     `---\nname: ${name}\ndescription: ${name} desc\n${extraMeta}---\n`,
   );
 }
+/* command / agent は SKILL.md ではなく <dir>/<name>.md 側の走査(scanMdRoot)に入る */
+function writeMd(project: string, kindDir: string, name: string, extraMeta = ''): void {
+  const dir = path.join(project, '.claude', kindDir);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, `${name}.md`),
+    `---\nname: ${name}\ndescription: ${name} desc\n${extraMeta}---\n`,
+  );
+}
 function registerProjects(projects: string[]): void {
   fs.writeFileSync(
     path.join(home, '.claude.json'),
@@ -38,6 +47,9 @@ beforeAll(async () => {
   writeSkill(projB, 'beta-skill');
   writeSkill(projB, 'hidden-skill', 'disable-model-invocation: True\n');
   writeSkill(projB, 'tools-skill', 'allowed-tools: Read, Write, Bash(git *)\n');
+  writeSkill(projB, 'yes-skill', 'disable-model-invocation: yes\n');
+  writeMd(projB, 'commands', 'hidden-cmd', 'disable-model-invocation: true\n');
+  writeMd(projB, 'commands', 'tools-cmd', 'allowed-tools: Read, Grep\n');
   vi.stubEnv('HOME', home);
   ({ scanSections, projectSectionId } = await import('../src/server/scan'));
 });
@@ -117,5 +129,20 @@ describe('hidden / allowedTools(計画 15 C2)', () => {
 
   it('allowed-tools が無ければ undefined', () => {
     expect(itemsOf(projB).get('beta-skill')!.allowedTools).toBeUndefined();
+  });
+
+  it('yes も真として扱う(公式は true / yes / True のいずれも受ける)', () => {
+    expect(itemsOf(projB).get('yes-skill')!.hidden).toBe(true);
+  });
+
+  /*
+   * skill(SKILL.md)と command / agent(<name>.md)は別の走査経路。metaFlags に括ったのは
+   * 2 経路で同じ規則を使うためなので、片方だけ確かめても括った意味が担保されない。
+   */
+  it('command / agent 側(scanMdRoot)でも同じ規則が効く', () => {
+    const items = itemsOf(projB);
+    expect(items.get('hidden-cmd')!.hidden).toBe(true);
+    expect(items.get('hidden-cmd')!.tokens).toBeUndefined();
+    expect(items.get('tools-cmd')!.allowedTools).toEqual(['Read', 'Grep']);
   });
 });

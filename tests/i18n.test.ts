@@ -110,7 +110,11 @@ describe('usageTitle (共有ストアの合算注記)', () => {
  * (レビュー 2026-09-09 の指摘)。辞書が 2 倍に膨らむので機械的に落とす。
  */
 describe('辞書に未使用キーが残っていない', () => {
-  /* 動的に組み立てるキーの接頭辞。ここに属するキーはコード中にリテラルで現れない */
+  /*
+   * 動的に組み立てるキーの接頭辞。ここに属するキーはコード中にリテラルで現れない。
+   * 免除は接頭辞ごと丸ごとなので、実際にリテラルで書かれている家系(view. / kind.)は
+   * 入れない ── 入れるとその家系の未使用キーを永久に見逃す(レビュー 2 周目の指摘)。
+   */
   const DYNAMIC_PREFIXES = [
     'lint.',
     'apiError.',
@@ -124,13 +128,10 @@ describe('辞書に未使用キーが残っていない', () => {
     'memory.triage.est',
     'hook.ev.',
     'cmd.kind.',
-    'cmd.skipped.',
     'settings.aiModelNote.',
-    'view.',
-    'kind.',
   ];
 
-  it('en のキーはすべてコード中で参照されている', async () => {
+  const webSources = async (): Promise<string> => {
     const fs = await import('node:fs');
     const path = await import('node:path');
     const root = path.join(import.meta.dirname, '..', 'web', 'src');
@@ -143,10 +144,28 @@ describe('辞書に未使用キーが残っていない', () => {
       }
     };
     walk(root);
-    const blob = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+    return files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  };
+
+  it('en のキーはすべてコード中で参照されている', async () => {
+    const blob = await webSources();
+    // 引用符 3 種で見る(t("x") や t(`x`) で書かれた参照を「未使用」と誤判定しないため)
+    const referenced = (k: string) =>
+      blob.includes(`'${k}'`) || blob.includes(`"${k}"`) || blob.includes(`\`${k}\``);
     const unused = (Object.keys(DICTS.en) as MsgKey[]).filter(
-      (k) => !blob.includes(`'${k}'`) && !DYNAMIC_PREFIXES.some((p) => k.startsWith(p)),
+      (k) => !referenced(k) && !DYNAMIC_PREFIXES.some((p) => k.startsWith(p)),
     );
     expect(unused).toEqual([]);
+  });
+
+  /*
+   * 「余り」だけでなく「不足」も見る。動的に組み立てるキーは参照が文字列として現れないので、
+   * 辞書から落ちても番犬は鳴かず、画面にキー名がそのまま出る
+   * (`cmd.skipped.*` を足すつもりで免除だけ書き、文言を落としていた実例がある)。
+   */
+  it('動的接頭辞にはキーが 1 件以上ある(免除だけが残っていない)', () => {
+    const keys = Object.keys(DICTS.en);
+    const dead = DYNAMIC_PREFIXES.filter((p) => !keys.some((k) => k.startsWith(p)));
+    expect(dead).toEqual([]);
   });
 });

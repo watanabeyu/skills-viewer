@@ -13,6 +13,7 @@ import type {
   ClaudeMdLayerKind,
   ClaudeMdScan,
 } from './api';
+import { t, type MsgKey } from './i18n';
 
 /* 公式の読み込み順(README 6.6)。サーバーが段を省いた場合(root 無し)も 7 行を保つための順序表 */
 export const LAYER_ORDER: ClaudeMdLayerKind[] = [
@@ -96,14 +97,63 @@ export function importStats(scan: ClaudeMdScan): ImportStats {
   return st;
 }
 
+/* ---- @import 1 件の見え方(文言と tok 列) ---- */
+
+/*
+ * 打ち切り・未読の理由ごとの文言。`Record` で受けるので、サーバーが理由を増やしたら
+ * ここが型エラーになる(既定値に落ちて「展開した」と嘘をつく事故を型で止める)。
+ */
+type Skip = NonNullable<ClaudeMdImport['skipped']>;
+
+const IMPORT_SKIP: Record<Skip, MsgKey> = {
+  cycle: 'cmd.importCycle',
+  duplicate: 'cmd.importDuplicate',
+  depth: 'cmd.importDepth',
+  'too-large': 'cmd.importTooLarge',
+  'out-of-scope': 'cmd.importOutOfScope',
+};
+
+const NESTED_SKIP: Record<Skip, MsgKey> = {
+  cycle: 'cmd.nestedCycle',
+  duplicate: 'cmd.nestedDuplicate',
+  depth: 'cmd.nestedDepth',
+  'too-large': 'cmd.nestedTooLarge',
+  'out-of-scope': 'cmd.nestedOutOfScope',
+};
+
+/* 読まなかったものに tok は出さない(0 と書くと「読んで 0 だった」に見える) */
+export const importTok = (im: ClaudeMdImport): string =>
+  !im.exists || im.skipped ? '—' : im.tokens.toLocaleString();
+
+/* 展開位置の印の文言(直接の import)。配下の状態は nestedState が 1 行ずつ */
+export function importLine(im: ClaudeMdImport): string {
+  if (!im.exists) return t('cmd.importMissing', { ref: im.ref });
+  if (im.skipped) return t(IMPORT_SKIP[im.skipped], { ref: im.ref });
+  return t('cmd.expandedHere', { ref: im.ref, n: im.tokens.toLocaleString() });
+}
+
+export function nestedState(im: ClaudeMdImport): string {
+  if (!im.exists) return t('cmd.nestedMissing');
+  if (im.skipped) return t(NESTED_SKIP[im.skipped]);
+  return t('cmd.nestedTok', { n: im.tokens.toLocaleString() });
+}
+
 /* ---- 本文中の @import(展開位置の印) ---- */
 
-/* 1 行に含まれる @import の参照(サーバーの importRefs と同じ規則) */
+/*
+ * 1 行に含まれる @import の参照(サーバーの importRefs と同じ規則)。
+ * 公式の除外規則はコードスパンとコードフェンス(フェンスは呼び出し側が飛ばす)。
+ * サーバーと規則がずれると、本文の印とサーバーの展開結果を出現順で突き合わせている都合で
+ * 1 つずつずれる(実在する @import の行に別のファイルの tok が付く)ので、必ず揃える。
+ */
 export function importRefsOfLine(line: string): string[] {
   const refs: string[] = [];
-  for (const m of line.matchAll(/(^|\s)@(\S+)/g)) {
-    const ref = m[2].replace(/[.,;:)\]]+$/, '');
-    if (ref) refs.push(ref);
+  // コードスパンは中身ごと落とす(`@README` は文字どおりの表記で参照ではない)
+  for (const m of line.replace(/`[^`]*`/g, ' ').matchAll(/(^|\s)@(\S+)/g)) {
+    let end = m[2].length;
+    while (end > 0 && '.,;:)]'.includes(m[2][end - 1])) end--;
+    const ref = m[2].slice(0, end);
+    if (ref && ref.length <= 1024) refs.push(ref);
   }
   return refs;
 }

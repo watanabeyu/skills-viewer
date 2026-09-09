@@ -29,6 +29,7 @@ import {
   usageAvailableFor,
 } from './memory';
 import {
+  cleanupLegacyBackups,
   loadSummaries,
   contentHash,
   modelOf,
@@ -221,9 +222,13 @@ export function sessionContext(
       else count++;
     }
   }
-  // 索引のコストは memory 側が上限(200 行 / 25KB)の外を除いて計算済みなので、それを足す
-  const cur = memory.filter((m) => m.isCurrent);
-  const target = cur.length ? cur : memory;
+  /*
+   * 索引のコストは memory 側が上限(200 行 / 25KB)の外を除いて計算済みなので、それを足す。
+   * 母集団は sessionScope と同じ「現在のプロジェクトだけ」。cwd が未登録なら 0 行になり、
+   * 画面はこの行を出さない。全プロジェクトを合算するフォールバックは置かない
+   * (description は user だけに縮むのに索引だけ全件になり、3 つの内訳の母集団がずれる)。
+   */
+  const target = memory.filter((m) => m.isCurrent);
   return {
     claudeMd: { tok: claudeMd.tokens },
     memoryIndex: {
@@ -508,11 +513,8 @@ function printStartupSummary(cwd: string): void {
         ),
       );
     }
-    const sessionTokens = data.sections
-      // sessionScope と同じ母集団(そのセッションに注入されるものだけ)
-      .filter((s) => sessionScope([s]).length > 0)
-      .flatMap((s) => s.items)
-      .reduce((sum, it) => sum + (it.tokens || 0), 0);
+    // 画面の「セッションの文脈」と同じ数字を出す(式を再現せず、計算済みの値を使う)
+    const sessionTokens = data.budget.used;
     const unused = data.usageAvailable
       ? data.sections.flatMap((s) => s.items).filter((it) => it.kind !== 'hook' && !it.useCount)
           .length
@@ -556,6 +558,14 @@ export function start(
   server.listen(port, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${port}`;
     console.log(`skills-viewer: ${url}  (cwd: ${cwd})`);
+    // v0.8 のインライン編集が残した控え。黙って消さず、消したことを 1 行出す
+    if (cleanupLegacyBackups())
+      console.log(
+        srvMsg(
+          'v0.8 の編集機能が作ったバックアップ(~/.cache/skills-viewer/backups)を削除しました。',
+          'Removed the backups left by the v0.8 editor (~/.cache/skills-viewer/backups).',
+        ),
+      );
     printStartupSummary(cwd);
     console.log(
       srvMsg(

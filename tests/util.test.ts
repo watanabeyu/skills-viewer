@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { MemorySection, MemoryVerdict, SkillItem } from '../src/shared/types';
+import type { KindFilter, UseFilter } from '../web/src/util';
 import { itemKey } from '../web/src/api';
 import {
+  KIND_FILTERS,
+  USE_FILTERS,
+  asKindFilter,
+  asUseFilter,
   estimateLabel,
   backlinksOf,
   brokenLinkCount,
@@ -848,5 +853,28 @@ describe('sessionSections / duplicateNames (③ 効いているもの・同名)'
       },
     ];
     expect(duplicateNames(all)).toEqual([{ name: 'foo', scopes: ['alpha', 'user'] }]);
+  });
+});
+
+/*
+ * クエリの検証。未知の値をそのまま filter に渡すと一覧が空になり、select も空欄で
+ * 「何も無い」と「絞り込みすぎ」の区別が付かなくなる(v0.8 の挙動)。
+ * KIND_FILTERS / USE_FILTERS は select の選択肢そのものなので、型の全値を網羅していることも見る。
+ */
+describe('asKindFilter / asUseFilter (URL クエリの検証)', () => {
+  it('既知の値はそのまま、未知と null は all に落とす', () => {
+    expect(asKindFilter('hook')).toBe('hook');
+    expect(asKindFilter('bogus')).toBe('all');
+    expect(asKindFilter(null)).toBe('all');
+    expect(asUseFilter('unused')).toBe('unused');
+    expect(asUseFilter('bogus')).toBe('all');
+    expect(asUseFilter(null)).toBe('all');
+  });
+
+  it('選択肢が型の全値を網羅している(select に欠けがない)', () => {
+    const kinds: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
+    const uses: UseFilter[] = ['all', 'used', 'unused'];
+    expect([...KIND_FILTERS].sort()).toEqual([...kinds].sort());
+    expect([...USE_FILTERS].sort()).toEqual([...uses].sort());
   });
 });

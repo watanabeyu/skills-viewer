@@ -178,6 +178,31 @@ describe('@import の展開', () => {
     expect(f.tokens).toBe(f.ownTokens + sum);
   });
 
+  /*
+   * 参照の末尾から句読点を落とす処理が正規表現(`[.,;:)\]]+$`)だと、長い「.」の連なりで
+   * バックトラックして入力長の 2 乗になる。200KB の 1 行で 9 秒、待受スレッドが丸ごと止まり、
+   * ページを開くたびに再発した(レビュー 2 周目の実測)。CLAUDE.md は clone してきた
+   * リポジトリから来るので、この形は仕込める。
+   */
+  it('句読点の連なりで時間が爆発しない(入力長に線形)', () => {
+    write(path.join(root, 'CLAUDE.md'), '@' + 'a'.repeat(100000) + '.'.repeat(100000) + 'b');
+    const started = Date.now();
+    const f = layer('project').files[0];
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(1000);
+    // 長すぎる参照は解決にも行かない(realpath / stat を無駄に叩かない)
+    expect(f.imports).toEqual([]);
+  });
+
+  /* 参照 1 件ごとに realpath + stat が走るので、扇形に広い CLAUDE.md で件数を打ち切る */
+  it('1 ファイルから拾う参照の件数に上限がある', () => {
+    write(
+      path.join(root, 'CLAUDE.md'),
+      Array.from({ length: 500 }, (_, i) => `@./n${i}.md`).join('\n'),
+    );
+    expect(layer('project').files[0].imports.length).toBeLessThanOrEqual(200);
+  });
+
   it('存在しない参照は exists: false で残す(コストは 0)', () => {
     write(path.join(root, 'CLAUDE.md'), '@./missing.md');
     const f = layer('project').files[0];
@@ -204,25 +229,61 @@ describe('@import の展開', () => {
     expect(im.tokens).toBe(0);
   });
 
-  it('散文の @名前 は参照として拾わない(パスに見えるものだけ)', () => {
-    write(path.join(root, 'CLAUDE.md'), '@alice に聞く。@claude も見る。');
+  /*
+   * 公式の除外規則はバッククォート(memory.md「writing `@README` keeps the text literal,
+   * while @README outside backticks imports the file」)。拡張子もスラッシュも無い @README は
+   * 参照として扱う ── ここを「パスに見えるものだけ」に狭めると公式が読むものを数え落とす。
+   */
+  it('拡張子もスラッシュも無い @README も参照として扱う', () => {
+    write(path.join(root, 'README'), 'readme body');
+    write(path.join(root, 'CLAUDE.md'), 'See @README for the overview.');
+    const im = layer('project').files[0].imports[0];
+    expect(im.ref).toBe('README');
+    expect(im.exists).toBe(true);
+    expect(im.tokens).toBeGreaterThan(0);
+  });
+
+  it('コードスパン(バッククォート)の中は参照として拾わない', () => {
+    write(path.join(root, 'README'), 'readme body');
+    write(path.join(root, 'CLAUDE.md'), 'Mention `@README` without importing it.');
     expect(layer('project').files[0].imports).toEqual([]);
   });
 
-  it('上限を超える大きさは too-large で読まない', () => {
-    write(path.join(root, 'big.md'), 'x'.repeat(300 * 1024));
+  it('散文の @名前 は解決に失敗して exists: false の行になる(境界の外は開かない)', () => {
+    write(path.join(root, 'CLAUDE.md'), '@alice に聞く。');
+    const im = layer('project').files[0].imports[0];
+    expect(im.ref).toBe('alice');
+    expect(im.exists).toBe(false);
+    expect(im.tokens).toBe(0);
+  });
+
+  /* 公式は 4 MiB 超の CLAUDE.md を読まない。viewer もそこに揃える */
+  it('4 MiB を超える大きさは too-large で読まない', () => {
+    write(path.join(root, 'big.md'), 'x'.repeat(4 * 1024 * 1024 + 16));
     write(path.join(root, 'CLAUDE.md'), '@./big.md');
     const im = layer('project').files[0].imports[0];
     expect(im.skipped).toBe('too-large');
     expect(im.tokens).toBe(0);
   });
 
-  it('~ 始まりは home から解決する', () => {
-    write(path.join(home, 'shared.md'), 'shared');
-    write(path.join(root, 'CLAUDE.md'), '@~/shared.md');
+  it('~ 始まりは home から解決する(~/.claude 配下は境界の中)', () => {
+    write(path.join(home, '.claude', 'shared.md'), 'shared');
+    write(path.join(root, 'CLAUDE.md'), '@~/.claude/shared.md');
     const f = layer('project').files[0];
     expect(f.imports[0].exists).toBe(true);
-    expect(f.imports[0].path).toBe(fs.realpathSync(path.join(home, 'shared.md')));
+    expect(f.imports[0].path).toBe(fs.realpathSync(path.join(home, '.claude', 'shared.md')));
+  });
+
+  /* home 直下は ~/.claude の外。境界外は解決先の存在もフルパスも返さない(覗く材料にしない) */
+  it('~ 始まりでも ~/.claude の外は out-of-scope、存在もパスも漏らさない', () => {
+    const outside = path.join(home, 'private.md');
+    write(outside, 'private');
+    write(path.join(root, 'CLAUDE.md'), '@~/private.md');
+    const im = layer('project').files[0].imports[0];
+    expect(im.skipped).toBe('out-of-scope');
+    expect(im.exists).toBe(false);
+    expect(im.tokens).toBe(0);
+    expect(im.path).not.toBe(fs.realpathSync(outside));
   });
 });
 
