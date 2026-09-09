@@ -10,17 +10,19 @@ import type {
 import { itemKey } from './api';
 import { t } from './i18n';
 
+/* 出所の色(design-system 0.1)。値は style.css のトークンに委ね、テーマに追随させる。
+ * project は無彩色(「ここ」は既定なので色を持たない)。有彩色は外から来る 3 つだけ */
 export const SRC_COLOR: Record<Source, string> = {
-  'built-in': '#2a6fdb',
-  user: '#1f8a5b',
-  project: '#c07a1f',
-  plugin: '#7b5bd6',
+  'built-in': 'var(--src-builtin)',
+  user: 'var(--src-user)',
+  project: 'var(--text)',
+  plugin: 'var(--src-plugin)',
 };
 export const SRC_TINT: Record<Source, string> = {
-  'built-in': 'rgba(42,111,219,.10)',
-  user: 'rgba(31,138,91,.10)',
-  project: 'rgba(192,122,31,.13)',
-  plugin: 'rgba(123,91,214,.10)',
+  'built-in': 'var(--src-builtin-tint)',
+  user: 'var(--src-user-tint)',
+  project: 'var(--raised)',
+  plugin: 'var(--src-plugin-tint)',
 };
 
 export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
@@ -28,8 +30,8 @@ export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
 /* 一覧の表示軸: ソース別(置き場所)/ 用途別(AI グルーピング)/ メモリ(自動メモリのみ)/ フラット */
 export type ViewMode = 'source' | 'group' | 'memory' | 'flat';
 
-/* memory セクションのアクセント色(skill の SRC_COLOR に相当。AI マークと同系色) */
-export const MEM_COLOR = '#b0836a';
+/* memory セクションのアクセント色(skill の SRC_COLOR に相当)。専用 hue は持たず副文色(design-system 0.2) */
+export const MEM_COLOR = 'var(--sub)';
 
 export interface FlatItem extends SkillItem {
   key: string;

@@ -54,13 +54,14 @@ export function FlowSection({
 
 /* ── フローチャート描画 ── */
 
+/* 配線は種類を破線パターンで分け、色は無彩色(テーマのトークンに追随) */
 const WIRE = {
-  seq: { stroke: '#b9b2a4', label: '#6b6558', dash: '' },
-  loop: { stroke: '#b0713f', label: '#96591f', dash: '5 4' },
-  exit: { stroke: '#a8443a', label: '#a8443a', dash: '2 3' },
+  seq: { stroke: 'var(--border-strong)', label: 'var(--sub)', dash: '' },
+  loop: { stroke: 'var(--border-strong)', label: 'var(--sub)', dash: '5 4' },
+  exit: { stroke: 'var(--border-strong)', label: 'var(--sub)', dash: '2 3' },
 } as const;
 /* SVG ラベルの縁取り(ペイン背景色)。文字が線に重なっても読めるようにする */
-const HALO = '#faf9f7';
+const HALO = 'var(--bg)';
 
 function FlowChart({
   flow,
@@ -180,9 +181,14 @@ function Node({
 
 const NS = 'http://www.w3.org/2000/svg';
 
+/* fill / stroke は var() を確実に解決させるため属性でなく style に当てる */
+const STYLE_KEYS = new Set(['fill', 'stroke']);
 function mk(tag: string, attrs: Record<string, string>): SVGElement {
   const el = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (STYLE_KEYS.has(k)) el.style.setProperty(k, v);
+    else el.setAttribute(k, v);
+  }
   return el;
 }
 

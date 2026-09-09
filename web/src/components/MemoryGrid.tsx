@@ -22,7 +22,7 @@ import {
 
 /* 比較バーの最大幅(モック実測)。最大値のバーをこの幅にして他を比例させる */
 const CMP_MAX_PX = 122;
-const CMP_OTHER_COLOR = '#c9c2b4';
+const CMP_OTHER_COLOR = 'var(--meta)';
 
 function CmpRow({
   label,

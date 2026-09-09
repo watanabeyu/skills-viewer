@@ -86,11 +86,6 @@ export default function App() {
   // v0.3.0 の共有 URL(unused=1)も unused 扱いで解釈する
   const use = (params.get('use') || (params.get('unused') === '1' ? 'unused' : 'all')) as UseFilter;
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [width, setWidth] = useState(() => localStorage.getItem('csb-width') || 'full');
-  const changeWidth = (w: string) => {
-    setWidth(w);
-    localStorage.setItem('csb-width', w);
-  };
   const [lang, setLangState] = useState<Lang>(getLang());
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -255,7 +250,7 @@ export default function App() {
     );
 
   return (
-    <div className={'wrap' + (width === 'fixed' ? ' fixed' : '')}>
+    <div className="wrap">
       <div className="hd">
         <div className="t-row">
           <h1>
@@ -434,8 +429,6 @@ export default function App() {
       </div>
       {settingsOpen && (
         <SettingsModal
-          width={width}
-          onChangeWidth={changeWidth}
           lang={lang}
           onChangeLang={changeLang}
           onClose={() => setSettingsOpen(false)}
