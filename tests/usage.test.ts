@@ -243,6 +243,47 @@ describe('scanMemoryUsage (autoMemoryDirectory の置き場を許可ルートと
   });
 });
 
+/*
+ * 走査結果のキャッシュは許可ルート(rootsKey)ごとに保持する(レビュー 1 周目)。
+ * 計画 16 で許可ルートが「選んだプロジェクト」に追随するようになり、1 つの値を上書きする
+ * 方式だと切替のたびに全エントリが無効化されて transcript(実測 456MB)を読み直していた
+ * (29MB の合成 transcript で 16ms → 150〜210ms)。
+ *
+ * 「読み直していないこと」は、mtime を据え置いたまま中身を書き換えて観測する
+ * (キャッシュが効いていれば古い結果、捨てられていれば新しい結果が返る)。
+ */
+describe('走査キャッシュは許可ルートごとに保持する(切替で捨てない)', () => {
+  const root = path.join(tmp, 'roots-cache', '.claude', 'projects');
+  const storeA = path.join(tmp, 'roots-cache', 'store-a');
+  const storeB = path.join(tmp, 'roots-cache', 'store-b');
+  const line = (fp: string, ts: string) =>
+    `{"timestamp":"${ts}","tool":{"name":"Read","input":{"file_path":"${fp}"}}}`;
+
+  it('A → B → A と切り替えても、A の結果は 1 回目のまま(再スキャンしていない)', () => {
+    const dir = path.join(root, '-Users-x-switch');
+    fs.mkdirSync(dir, { recursive: true });
+    const jsonl = path.join(dir, 's1.jsonl');
+    const first = path.join(storeA, 'first.md');
+    const later = path.join(storeA, 'later.md');
+    fs.writeFileSync(jsonl, line(first, '2026-07-14T00:00:00.000Z'));
+    // mtime は秒ちょうどに固定する(ns 精度の値を書き戻すと丸めで別物になり、キャッシュが外れる)
+    const fixed = new Date('2026-01-01T00:00:00.000Z');
+    fs.utimesSync(jsonl, fixed, fixed);
+
+    expect(scanMemoryUsage(root, [storeA]).byPath[first]).toMatchObject({ reads: 1 });
+    scanMemoryUsage(root, [storeB]); // 別のプロジェクトを選んだ状態
+    // 中身だけ差し替え、mtime は据え置く(再スキャンしたかどうかだけを見るため)
+    fs.writeFileSync(jsonl, line(later, '2026-07-14T01:00:00.000Z'));
+    fs.utimesSync(jsonl, fixed, fixed);
+
+    const back = scanMemoryUsage(root, [storeA]).byPath;
+    expect(back[first]).toMatchObject({ reads: 1 }); // A のキャッシュが残っている
+    expect(back[later]).toBeUndefined();
+    // 未知の鍵で引けば読み直され、新しい中身が見える(据え置いた mtime のせいではないことの確認)
+    expect(scanMemoryUsage(root, [storeA, storeB]).byPath[later]).toMatchObject({ reads: 1 });
+  });
+});
+
 /* 入力は Set だけなので他 describe の fixture に依存させない(-t 指定の単独実行でも通す) */
 describe('hasTranscripts (usageAvailable の前方一致)', () => {
   const dirs = new Set(['-Users-x-repo', '-Users-x-repo-feat-a']);

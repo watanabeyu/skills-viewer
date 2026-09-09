@@ -20,8 +20,12 @@ export function clearMdCache(): void {
   mdCache.clear();
 }
 
-/* SKILL.md の生テキスト。全文ブロックと、フロー図未生成時の見出しツリーが共有する */
-export function useMdText(path: string): { raw: string | null; error: string } {
+/*
+ * SKILL.md の生テキスト。全文ブロックと、フロー図未生成時の見出しツリーが共有する。
+ * selected は今どのプロジェクトを選んでいるか(SkillsData.selected.id)。読み取り許可が
+ * 「cwd + 選んだプロジェクト」なので、これを送らないと cwd 以外の本文が開けない(計画 16)。
+ */
+export function useMdText(path: string, selected: string): { raw: string | null; error: string } {
   const [raw, setRaw] = useState<string | null>(() => (path ? (mdCache.get(path) ?? null) : null));
   const [error, setError] = useState('');
   useEffect(() => {
@@ -35,7 +39,7 @@ export function useMdText(path: string): { raw: string | null; error: string } {
       return;
     }
     setRaw(null);
-    fetchFile(path)
+    fetchFile(path, selected)
       .then((content) => {
         mdCache.set(path, content);
         if (alive) setRaw(content);
@@ -46,7 +50,7 @@ export function useMdText(path: string): { raw: string | null; error: string } {
     return () => {
       alive = false;
     };
-  }, [path]);
+  }, [path, selected]);
   return { raw, error };
 }
 
@@ -55,11 +59,14 @@ export function FullTextBlock({
   raw,
   error,
   cwd,
+  selected,
 }: {
   it: FlatItem;
   raw: string | null;
   error: string;
   cwd: string;
+  /* 選んでいるプロジェクト(SkillsData.selected.id)。前版の取得も読み取り許可に乗る */
+  selected: string;
 }) {
   const [prev, setPrev] = useState<DiffResponse | null>(null);
   const [showDiff, setShowDiff] = useState(false);
@@ -71,7 +78,7 @@ export function FullTextBlock({
     setShowDiff(false);
     setMore(false);
     // 失敗(サーバー停止など)はボタンを出さないだけ。全文の表示は妨げない
-    fetchDiff(it.path)
+    fetchDiff(it.path, selected)
       .then((r) => {
         if (alive) setPrev(r);
       })
@@ -79,7 +86,7 @@ export function FullTextBlock({
     return () => {
       alive = false;
     };
-  }, [it.path]);
+  }, [it.path, selected]);
 
   const parsed = raw === null ? null : splitFrontmatter(raw);
   const preview = parsed ? splitPreview(parsed.body) : null;
@@ -199,13 +206,13 @@ export function DiffBlock({
 }
 
 /* 同名の別定義との diff(事実の帯から開く)。両方の現在の内容を取って並べる */
-export function SameNameDiff({ a, b }: { a: FlatItem; b: FlatItem }) {
+export function SameNameDiff({ a, b, selected }: { a: FlatItem; b: FlatItem; selected: string }) {
   return (
     <DiffBlock
       aLabel={t('diff.thisDef', { label: a.scopeLabel })}
       bLabel={'+ ' + b.scopeLabel}
       dep={a.path + '\n' + b.path}
-      load={() => Promise.all([fetchFile(a.path), fetchFile(b.path)])}
+      load={() => Promise.all([fetchFile(a.path, selected), fetchFile(b.path, selected)])}
     />
   );
 }

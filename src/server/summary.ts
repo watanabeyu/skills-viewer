@@ -101,8 +101,25 @@ function saveSummaries(s: SummaryStore): void {
   // 保存のついでに死にエントリを掃除する(GET では書き込まないので掃除もしない)
   fs.writeFileSync(SUMMARY_FILE, JSON.stringify(pruneMissing(s), null, 1));
 }
+/*
+ * hash のために全文を読む上限。claude-md.ts の MAX_FILE_BYTES と同じ 4 MiB
+ * (Claude Code 自身がファイルを飛ばす大きさ)に合わせる。
+ * 計画 16 Phase D で差分追跡の対象が登録簿の全プロジェクトに広がり、この関数は
+ * 1 リクエストで数百ファイルに掛かるようになった ── 巨大な .md が 1 つ混ざるだけで
+ * 毎リクエストその全文を読むことになるので、上限を超えたら中身は読まない。
+ */
+const MAX_HASH_BYTES = 4 * 1024 * 1024;
+
+/*
+ * 内容ハッシュ(AI 結果のキャッシュ鍵 / 差分追跡の同一性判定)。
+ * 上限超えは `size:mtime` のメタで代用する: 中身は見ないので「同じ大きさ・同じ更新時刻なら
+ * 変わっていない」という弱い判定になるが、変更されれば mtime が動くので追跡は成立する。
+ * 形が hex 16 桁と違う(`:` を含む)ので、古いキャッシュ値と取り違えることもない。
+ */
 export function contentHash(fp: string): string | null {
   try {
+    const st = fs.statSync(fp);
+    if (st.size > MAX_HASH_BYTES) return `${st.size}:${Math.round(st.mtimeMs)}`;
     return crypto.createHash('sha256').update(fs.readFileSync(fp)).digest('hex').slice(0, 16);
   } catch {
     return null;

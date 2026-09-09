@@ -86,7 +86,13 @@ export function InvokeBlock({
           <>
             <span className="k">{t('inv.diag')}</span>
             <span className="v-col v-diag">
-              <DiagnosisRow it={it} dir={dir} aiAvailable={data.aiAvailable} reload={reload} />
+              <DiagnosisRow
+                it={it}
+                dir={dir}
+                aiAvailable={data.aiAvailable}
+                selected={data.selected.id}
+                reload={reload}
+              />
             </span>
           </>
         )}
@@ -99,11 +105,14 @@ function DiagnosisRow({
   it,
   dir,
   aiAvailable,
+  selected,
   reload,
 }: {
   it: FlatItem;
   dir: string;
   aiAvailable: boolean;
+  /* 選んでいるプロジェクト(SkillsData.selected.id)。診断は本文を読むので読み取り許可に乗る */
+  selected: string;
   reload: () => Promise<void>;
 }) {
   const d = it.aiDiagnosis;
@@ -118,7 +127,7 @@ function DiagnosisRow({
     setBusy(true);
     setError('');
     try {
-      await diagnoseSkill(it.path, it.name);
+      await diagnoseSkill(it.path, it.name, selected);
       await reload();
     } catch (e) {
       setError(t('alert.diagnoseFailed', { msg: e instanceof Error ? e.message : String(e) }));

@@ -1,5 +1,22 @@
-import { describe, expect, it } from 'vitest';
-import type { MemorySection, MemoryTriage, Section, SkillItem } from '../src/shared/types';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  MemorySection,
+  MemoryTriage,
+  Section,
+  SelectedProject,
+  SkillItem,
+  SkillsData,
+} from '../src/shared/types';
+/*
+ * runTriage の結線だけを見るので、API クライアントは triageMemory だけ差し替える
+ * (実際の fetch は起こさない)。他の export は util.ts などが実体を使うので残す。
+ */
+vi.mock('../web/src/api', async (orig) => ({
+  ...(await orig<typeof import('../web/src/api')>()),
+  triageMemory: vi.fn(),
+}));
+import { triageMemory } from '../web/src/api';
+import { runTriage } from '../web/src/components/MemoryBits';
 import {
   STALE_SIGNALS,
   asTypeFilter,
@@ -156,17 +173,25 @@ describe('memoryRows / typeMatches (一覧の絞り込み)', () => {
   });
 });
 
-describe('sectionsFor (ヘッダーの切替に従うセクション)', () => {
+/*
+ * 一覧に出す置き場は「サーバーが計算した対象(SkillsData.selected)」に帰属するもの(計画 16 Phase A)。
+ * サーバーは選んだプロジェクトを起点に置き場を解決するので、MemorySection.isCurrent は
+ * 「cwd」ではなく「選んだプロジェクト(+ 本体)」の印になった。cwd 特別扱い(project.isCurrent &&
+ * m.isCurrent)に戻すと、cwd 以外を選んだ環境で一覧だけが空になる ── ここで機械的に止める。
+ */
+describe('sectionsFor (選んだプロジェクトに帰属するセクション)', () => {
   const cur = section([item('a')], { id: 'cur', projectPath: '/repo', isCurrent: true });
   const other = section([item('b')], { id: 'oth', projectPath: '/other', projectName: 'other' });
   const orphan = section([item('c')], { id: 'orp', projectPath: null, orphan: true });
-  const autoDir = section([item('d')], {
+  /* user scope の autoMemoryDirectory: どのプロジェクトの memory か決まらないので projectPath なし */
+  const shared = section([item('d')], {
     id: 'auto-x',
     projectPath: null,
     isCurrent: true,
     autoDir: true,
+    sharedStore: true,
   });
-  const memory = [cur, other, orphan, autoDir];
+  const memory = [cur, other, orphan, shared];
   const proj = (note: string, isCurrent?: boolean): Section => ({
     id: 'p',
     source: 'project',
@@ -174,17 +199,78 @@ describe('sectionsFor (ヘッダーの切替に従うセクション)', () => {
     items: [],
     ...(isCurrent ? { isCurrent } : {}),
   });
+  /* サーバーの応答。selected 以外は sectionsFor が見ないので最小限で作る */
+  const dataOf = (path: string, extra: Partial<SelectedProject> = {}): SkillsData =>
+    ({
+      memory,
+      selected: { id: 'p', path, name: path.slice(1), isCwd: path === '/repo', ...extra },
+    }) as unknown as SkillsData;
 
   it('all は全部(プロジェクト不明・共有ストアもここでだけ見える)', () => {
-    expect(sectionsFor(memory, 'all').map((s) => s.id)).toEqual(['cur', 'oth', 'orp', 'auto-x']);
+    expect(sectionsFor(dataOf('/repo'), 'all').map((s) => s.id)).toEqual([
+      'cur',
+      'oth',
+      'orp',
+      'auto-x',
+    ]);
   });
-  it('cwd のプロジェクトは isCurrent(実パス一致 + autoMemoryDirectory の置き場)', () => {
-    expect(sectionsFor(memory, proj('/repo', true)).map((s) => s.id)).toEqual(['cur', 'auto-x']);
-    expect(sectionsFor(memory, null).map((s) => s.id)).toEqual(['cur', 'auto-x']);
+
+  it('選んだプロジェクトの置き場 +(逆引きできない)共有ストアが出る', () => {
+    expect(sectionsFor(dataOf('/repo'), proj('/repo', true)).map((s) => s.id)).toEqual([
+      'cur',
+      'auto-x',
+    ]);
+    // Section が無い(定義 0 件の)プロジェクトでも selected 基準なので同じ
+    expect(sectionsFor(dataOf('/repo'), null).map((s) => s.id)).toEqual(['cur', 'auto-x']);
   });
-  it('他プロジェクトは実パスで結び付ける(プロジェクト不明は出ない)', () => {
-    expect(sectionsFor(memory, proj('/other')).map((s) => s.id)).toEqual(['oth']);
-    expect(sectionsFor(memory, proj('/nowhere'))).toEqual([]);
+
+  it('cwd 以外を選んでも空にならない(共有ストアがある環境でも他プロジェクトの置き場が出る)', () => {
+    expect(sectionsFor(dataOf('/other'), proj('/other')).map((s) => s.id)).toEqual([
+      'oth',
+      'auto-x',
+    ]);
+  });
+
+  it('worktree を選ぶと本体(mainPath)の置き場が出る(memory は本体に収束する)', () => {
+    const d = dataOf('/repo-wt', { mainPath: '/repo' });
+    expect(sectionsFor(d, proj('/repo-wt')).map((s) => s.id)).toEqual(['cur', 'auto-x']);
+  });
+
+  it('他プロジェクトの置き場と、逆引きできない孤児(選択の印なし)は出ない', () => {
+    expect(sectionsFor(dataOf('/nowhere'), proj('/nowhere')).map((s) => s.id)).toEqual(['auto-x']);
+    expect(sectionsFor(dataOf('/repo'), proj('/repo', true)).map((s) => s.id)).not.toContain('oth');
+    expect(sectionsFor(dataOf('/repo'), proj('/repo', true)).map((s) => s.id)).not.toContain('orp');
+  });
+
+  it('判定の基準は Section ではなく selected(取り直し中に param が先に変わっても応答に従う)', () => {
+    // 切替の途中で渡ってくる Section が古くても、出すのはサーバーが計算した対象の置き場
+    expect(sectionsFor(dataOf('/other'), proj('/repo', true)).map((s) => s.id)).toEqual([
+      'oth',
+      'auto-x',
+    ]);
+  });
+});
+
+/*
+ * 棚卸しの結線(計画 16)。triageMemory(project, selected, …)は引数が両方 string なので、
+ * 取り違えても型では落ちない。呼び出しの順そのものをここで固定する
+ * (selected を落とすと、選んだプロジェクトの置き場が not-found になって棚卸しだけ失敗する)。
+ */
+describe('runTriage (棚卸しの呼び出し: 置き場の id と走査の起点)', () => {
+  const sec = section([item('a'), item('b')], { id: '-w-repo' });
+  beforeEach(() => vi.mocked(triageMemory).mockClear());
+
+  it('1 件(詳細)はファイル名の配列で呼び、診断済みなら force', () => {
+    runTriage(sec, 'proj--w-repo', item('a', { aiTriage: tri({ verdict: 'keep' }) }));
+    expect(triageMemory).toHaveBeenCalledWith('-w-repo', 'proj--w-repo', ['a.md'], true);
+  });
+
+  it('一括(一覧)は files 無しで呼び、全件診断済みなら force', () => {
+    runTriage(sec, 'proj--w-repo');
+    expect(triageMemory).toHaveBeenCalledWith('-w-repo', 'proj--w-repo', undefined, false);
+    const done = section([item('a', { aiTriage: tri({}) })], { id: '-w-repo' });
+    runTriage(done, 'proj--w-repo');
+    expect(triageMemory).toHaveBeenLastCalledWith('-w-repo', 'proj--w-repo', undefined, true);
   });
 });
 

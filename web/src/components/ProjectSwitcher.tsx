@@ -74,6 +74,8 @@ export function ProjectSwitcher({
    * 1 行。sub = worktree(本体の下に字下げ)。id を持たない行は選べない本体の見出しなので
    * ボタンにしない(押しても解決できる候補が無い)。
    * 起動ディレクトリの行は「現在」の印だけで区別する(cwd は既定の選択にすぎない。判断 7)。
+   * 見出し行(heading)に「アイテムがありません」は出さない ── 登録簿に無く走査していないだけで、
+   * 0 件だと確かめたわけではないため。
    */
   const row = (r: ProjectRow, sub = false) => {
     const inner = (
@@ -82,7 +84,7 @@ export function ProjectSwitcher({
           <SourceDot source="project" />
           {r.name}
           {r.cwd && <span className="proj-cur">{t('proj.current')}</span>}
-          {r.section === null && <span className="meta"> · {t('proj.empty')}</span>}
+          {!r.heading && r.section === null && <span className="meta"> · {t('proj.empty')}</span>}
         </span>
         {/*
          * worktree はディレクトリ名よりブランチで覚えているので、あれば 2 行目の先頭に出す

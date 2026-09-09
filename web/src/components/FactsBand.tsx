@@ -189,7 +189,8 @@ export function FactsBand({
       </div>
       {diffWith && (
         <div className="dv-diff">
-          <SameNameDiff a={it} b={diffWith} />
+          {/* 同名の別定義は別プロジェクトにあり得るので、読み取りの起点(選んだプロジェクト)を渡す */}
+          <SameNameDiff a={it} b={diffWith} selected={data.selected.id} />
         </div>
       )}
     </div>

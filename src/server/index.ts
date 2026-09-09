@@ -48,6 +48,7 @@ import { attachFlows, flowOne } from './flow';
 import { attachGroups, generateGroups } from './groups';
 import { attachMemoryTriage, triageProject } from './memory-triage';
 import { ackChanges, computeChanges } from './snapshot';
+import type { ClaudeMdRef } from './snapshot';
 import { claudeMdLayers, claudeMdRefsOf } from './claude-md';
 import { previousContent } from './diff';
 import { ApiError, toErrorBody } from './errors';
@@ -301,9 +302,16 @@ export function projectWorktrees(cwd: string): Worktree[] {
  * worktree を足すのは、「claude を起動して登録された」かつ「.claude/ に 1 件以上ある」ものしか
  * 登録簿に出ないため ── 登録の有無に依らず選べるようにする(計画 16 判断 5・6)。
  * 足すのは列挙した path だけで、生のパスは入らない。
+ *
+ * worktrees を引数で受け取れるのは、1 リクエストの中で列挙を 2 回走らせないため
+ * (レビュー 1 周目の実測: /api/skills 1 回で listProjects が 5〜7 回、worktreesForProjects が
+ * 3 回走っていた)。collect は冒頭で 1 回だけ組み、以降はそれを配り回す。
  */
-export function projectCandidates(cwd: string): string[] {
-  return [...new Set([...listProjects(cwd), ...projectWorktrees(cwd).map((w) => w.path)])];
+export function projectCandidates(
+  cwd: string,
+  worktrees: Worktree[] = projectWorktrees(cwd),
+): string[] {
+  return [...new Set([...listProjects(cwd), ...worktrees.map((w) => w.path)])];
 }
 
 /*
@@ -332,11 +340,22 @@ export function selectedProject(
  * 突き合わせて一致したものだけを採り、'all'・未知の id・省略はすべて cwd に落とす。
  * こうしておけば「?project= に任意のパスを渡して読ませる」経路が生まれない。
  */
-export function resolveSelectedProject(cwd: string, id: string | null): string {
+export function resolveSelectedProject(
+  cwd: string,
+  id: string | null,
+  /* 呼び出し元が既に組んでいるなら渡す。省略時は「id があるときだけ」組む(登録簿を無駄に読まない) */
+  candidates?: string[],
+): string {
   const fallback = path.resolve(cwd);
   if (!id || id === 'all') return fallback;
-  for (const p of projectCandidates(cwd)) if (projectSectionId(p) === id) return path.resolve(p);
-  return fallback;
+  /*
+   * projectSectionId は非可逆(英数字以外を '-' に潰す)なので、`~/w/foo.bar` と `~/w/foo-bar` は
+   * 同じ id になる。どちらを指しているか決められない以上、勝手に片方を選ばない
+   * ── 一致が 2 件以上なら未知の id と同じく cwd に落とす(読み取り許可の母集団に
+   * 「利用者が選んだつもりのない方」が入るのを防ぐ)。
+   */
+  const hits = (candidates ?? projectCandidates(cwd)).filter((p) => projectSectionId(p) === id);
+  return hits.length === 1 ? path.resolve(hits[0]) : fallback;
 }
 
 /*
@@ -357,12 +376,40 @@ export function triageTarget(
 }
 
 /*
- * selectedPath は「選んだプロジェクト」= ② セッションの文脈を計算する対象(計画 16 判断 1)。
- * cwd はその既定値でしかないが、①(changes)と起動時サマリは cwd 起点のまま(判断 8)。
+ * ①(前回からの変化)の入力 3 点。collect と POST /api/changes-ack が同じものを見ることを
+ * 1 か所で保証する ── 入力がずれると「既読にした」直後に同じ差分がまた出る。
+ * 起点は選択に依らず cwd(計画 16 判断 8)、CLAUDE.md 群だけは候補(cwd ∪ 登録簿 ∪ worktree)
+ * 全体を追う(Phase D 判断 9)。
+ * sections / memory を渡せるのは、collect が既に持っているものを再スキャンしないため。
  */
-function collect(cwd: string, lang: Lang, selectedPath: string): SkillsData {
+export function changeInputs(
+  cwd: string,
+  lang: Lang,
+  candidates: string[],
+  pre: { sections?: Section[]; memory?: MemorySection[] } = {},
+): { sections: Section[]; memory: MemorySection[]; claudeMd: ClaudeMdRef[] } {
+  return {
+    sections: pre.sections ?? scanSections(cwd, lang),
+    memory: pre.memory ?? memorySections(cwd),
+    claudeMd: claudeMdRefsOf(candidates),
+  };
+}
+
+/*
+ * projectId は ?project= の値(未指定は null)。ここで 1 回だけ解決するのは、選んだ
+ * プロジェクトのパス = ② セッションの文脈を計算する対象 = 読み取り許可の母集団、だから
+ * (計画 16 判断 1・4)。cwd はその既定値でしかないが、①(changes)と起動時サマリは
+ * cwd 起点のまま(判断 8)。
+ *
+ * worktree の列挙と候補は冒頭で 1 回だけ組み、選択の解決・selectedProject・CLAUDE.md の
+ * 追跡対象に配り回す(レビュー 1 周目: 同じ集合を 3 か所が別々に組み直していた)。
+ */
+export function collect(cwd: string, lang: Lang, projectId: string | null): SkillsData {
   const worktrees = projectWorktrees(cwd);
+  const candidates = projectCandidates(cwd, worktrees);
+  const selectedPath = resolveSelectedProject(cwd, projectId, candidates);
   const selected = selectedProject(cwd, selectedPath, worktrees);
+  // 以降の絞り込みは「解決したパスの Section id」で見る(受け取った id をそのまま信じない)
   const selectedId = selected.id;
   const isCwd = selected.isCwd;
   primeMemoryRoots(selectedPath);
@@ -413,6 +460,7 @@ function collect(cwd: string, lang: Lang, selectedPath: string): SkillsData {
    * ── 集合は最初から cwd 抜きに全プロジェクト分なので、選択が cwd かどうかに依らない。
    */
   const cwdMemory = isCwd ? memory : scanMemory(cwd);
+  const chIn = changeInputs(cwd, lang, candidates, { sections, memory: cwdMemory });
   return {
     generatedAt: new Date().toISOString(),
     cwd,
@@ -426,7 +474,7 @@ function collect(cwd: string, lang: Lang, selectedPath: string): SkillsData {
     claudeMd,
     budget: descriptionBudget(sections, selectedId),
     context: sessionContext(sections, memory, claudeMd, selectedId),
-    changes: computeChanges(sections, cwdMemory, claudeMdRefsOf(projectCandidates(cwd))),
+    changes: computeChanges(chIn.sections, chIn.memory, chIn.claudeMd),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
     ...(memory.length ? { memory: publicMemory(memory) } : {}),
@@ -475,17 +523,31 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
             cwd,
             langOf(url.searchParams.get('lang')),
             // 読み取りパラメータなのでトークンは要らない(GET / mutation の二分はそのまま)
-            resolveSelectedProject(cwd, url.searchParams.get('project')),
+            url.searchParams.get('project'),
           ),
         );
       if (url.pathname === '/api/summary-status') return send(200, summaryStatus());
+      /*
+       * 読み取り系も「どのプロジェクトを選んでいるか」を受ける(?project=<id>)。
+       * 許可の母集団が cwd と選んだプロジェクトの 2 つだからで、省略・未知は cwd に落ちる
+       * ので従来(cwd 限定)と同じ挙動になる。生のパスは解釈しない(候補との一致だけ)。
+       */
       if (url.pathname === '/api/file') {
-        const real = assertReadableMd(url.searchParams.get('src') || '', cwd);
+        const selectedPath = resolveSelectedProject(cwd, url.searchParams.get('project'));
+        const real = assertReadableMd(url.searchParams.get('src') || '', cwd, selectedPath);
         return send(200, { content: fs.readFileSync(real, 'utf8') });
       }
       // 前版(HEAD)の内容。削除済みファイルも対象なので assertReadableMd は通さない(diff.ts に専用の検証)
       if (url.pathname === '/api/diff')
-        return send(200, previousContent(url.searchParams.get('src') || '', cwd));
+        return send(
+          200,
+          previousContent(
+            url.searchParams.get('src') || '',
+            cwd,
+            undefined, // rootOf(テスト注入用)は既定のまま
+            resolveSelectedProject(cwd, url.searchParams.get('project')),
+          ),
+        );
       throw new ApiError('unknown-endpoint', url.pathname);
     } catch (e) {
       return send(
@@ -511,9 +573,16 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
     }
     const lang = langOf(data.lang);
     const model = modelOf(data.model);
+    /*
+     * mutation の body の `selected` は ?project= と同じ Section.id(生のパスは解釈しない)。
+     * 読み取り許可の母集団は cwd と選んだプロジェクトの 2 つなので、AI に本文を送る前・
+     * エディタに渡す前の検証にも同じ解決結果を渡す。省略・未知は cwd に落ちる = 従来の挙動。
+     */
+    const selectedId = typeof data.selected === 'string' ? data.selected : null;
+    const selectedPath = () => resolveSelectedProject(cwd, selectedId);
     try {
       if (url.pathname === '/api/diagnose') {
-        const real = assertAiReadableMd(data.src, cwd);
+        const real = assertAiReadableMd(data.src, cwd, selectedPath());
         const name = data.name || path.basename(path.dirname(real));
         diagnoseOne(real, name, lang, model)
           .then((d) => send(200, { ok: true, ...d }))
@@ -521,7 +590,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/flow') {
-        const real = assertAiReadableMd(data.src, cwd);
+        const real = assertAiReadableMd(data.src, cwd, selectedPath());
         const name = data.name || path.basename(path.dirname(real));
         flowOne(real, name, lang, model)
           .then((f) => send(200, { ok: true, ...f }))
@@ -529,16 +598,15 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/changes-ack') {
-        // 既読にする基準は collect の changes と同じ入力で作る(cwd 起点・全登録プロジェクト分)。
-        // 入力がずれると「既読にした」直後に同じ差分がまた出る
-        ackChanges(
-          scanSections(cwd, lang),
-          memorySections(cwd),
-          claudeMdRefsOf(projectCandidates(cwd)),
-        );
+        /*
+         * 既読にする基準は collect の changes と同じ入力(changeInputs)で作る。
+         * 起点は cwd のまま ── ack の対象集合は cwd 起点なので、prime も選択に追随させない。
+         */
+        const inp = changeInputs(cwd, lang, projectCandidates(cwd));
+        ackChanges(inp.sections, inp.memory, inp.claudeMd);
         return send(200, { ok: true });
       }
-      if (url.pathname === '/api/open') return send(200, openInEditor(data, cwd));
+      if (url.pathname === '/api/open') return send(200, openInEditor(data, cwd, selectedPath()));
       if (url.pathname === '/api/summarize-all')
         return send(200, startSummarizeAll(scanSections(cwd, lang), !!data.force, lang, model));
       if (url.pathname === '/api/group-generate') {
@@ -584,7 +652,7 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/summarize') {
-        const real = assertAiReadableMd(data.src, cwd);
+        const real = assertAiReadableMd(data.src, cwd, selectedPath());
         // refs(関係候補)はスキャン結果から復元する
         const sections = scanSections(cwd, lang);
         const item = sections.flatMap((s) => s.items).find((x) => x.path === real);
@@ -632,8 +700,8 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
  */
 function printStartupSummary(cwd: string): void {
   try {
-    // 起動時サマリは cwd の文脈(計画 16 判断 8)。CLI に選択という概念は無い
-    const data = collect(cwd, serverLang, path.resolve(cwd));
+    // 起動時サマリは cwd の文脈(計画 16 判断 8)。CLI に選択という概念は無いので id は渡さない
+    const data = collect(cwd, serverLang, null);
     const ch = data.changes;
     if (ch) {
       console.log(

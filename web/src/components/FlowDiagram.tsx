@@ -22,6 +22,7 @@ export function FlowBlock({
   raw,
   resolve,
   aiAvailable,
+  selected,
   onOpen,
   reload,
 }: {
@@ -32,6 +33,8 @@ export function FlowBlock({
   resolve: (name: string) => FlatItem | undefined;
   /* claude CLI があるか。無ければ抽出ボタンは押せない(起動時に 1 回だけ検出した結果) */
   aiAvailable: boolean;
+  /* 選んでいるプロジェクト(SkillsData.selected.id)。抽出は本文を読むので読み取り許可に乗る */
+  selected: string;
   onOpen: (key: string) => void;
   reload: () => Promise<void>;
 }) {
@@ -43,7 +46,7 @@ export function FlowBlock({
     setBusy(true);
     setError('');
     try {
-      await flowSkill(it.path, it.name);
+      await flowSkill(it.path, it.name, selected);
       await reload();
     } catch (e) {
       setError(t('alert.flowFailed', { msg: e instanceof Error ? e.message : String(e) }));

@@ -38,6 +38,12 @@ export function resolveDiffTarget(
   src: string,
   cwd: string = process.cwd(),
   rootOf: (dir: string) => string | null = worktreeRootOf,
+  /*
+   * 選んだプロジェクト(?project= の解決結果)。許可の母集団は cwd と選択の 2 つなので、
+   * /api/file と同じ答えを出すにはここにも渡す必要がある。テスト注入の rootOf より後ろに
+   * 置いているのは、既存の呼び出し(src, cwd, rootOf)の位置を変えないため。
+   */
+  selectedPath?: string,
 ): { root: string; relPath: string } | { reason: DiffResponse['reason'] } {
   const raw = path.resolve(src);
   if (!raw.endsWith('.md')) throw new ApiError('not-md', raw);
@@ -57,7 +63,7 @@ export function resolveDiffTarget(
    * 読み取りの境界の外は返さない。ここが無いと「git 管理下ならどこの .md でも HEAD が読める」
    * ことになり、同じファイルに対して /api/file(assertReadableMd)と許可範囲が食い違う。
    */
-  if (!allowedPath(abs, cwd)) return { reason: 'out-of-scope' };
+  if (!allowedPath(abs, cwd, selectedPath)) return { reason: 'out-of-scope' };
   // user scope(~/.claude)は全プロジェクトで共有され git 履歴を持たないので差分の対象外。
   // 比較はケース非依存 FS で case-fold する isUnder に揃え、HOME 自身が symlink 経由でも
   // 同じ答えになるよう解決前後の両方を見る(importScopeOf と同じ扱い)
@@ -74,7 +80,8 @@ export function resolveDiffTarget(
    * symlink や `gitdir:` を書いたファイルで別のリポジトリに化けうる。
    * その root の下の同じ相対パスが許可されるかを見れば、化けた場合に落ちる。
    */
-  if (!allowedPath(path.join(realDir(root), rel), cwd)) return { reason: 'out-of-scope' };
+  if (!allowedPath(path.join(realDir(root), rel), cwd, selectedPath))
+    return { reason: 'out-of-scope' };
   // git は常に POSIX 区切りの相対パスを期待する(Windows の \ をそのまま渡すと引けない)
   return { root, relPath: rel.split(path.sep).join('/') };
 }
@@ -104,8 +111,9 @@ export function previousContent(
   src: string,
   cwd: string = process.cwd(),
   rootOf: (dir: string) => string | null = worktreeRootOf,
+  selectedPath?: string,
 ): DiffResponse {
-  const target = resolveDiffTarget(src, cwd, rootOf);
+  const target = resolveDiffTarget(src, cwd, rootOf, selectedPath);
   if ('reason' in target) return { available: false, reason: target.reason };
   try {
     const out = execFileSync('git', ['-C', target.root, 'show', `HEAD:${target.relPath}`], {

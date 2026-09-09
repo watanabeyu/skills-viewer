@@ -78,6 +78,60 @@ describe('worktreesOf (.git/worktrees を読むだけで列挙する)', () => {
     expect(src).not.toMatch(/child_process/);
   });
 
+  /*
+   * gitdir の中身は clone に含まれるファイルなので、無検証で root にすると
+   * 「任意のディレクトリを worktree として名乗る」ことができ、切替の候補
+   * (= 読み取り許可の母集団)に入ってしまう。逆リンク(root/.git → この本体)を要求する。
+   */
+  it('逆リンクが無いディレクトリを指す gitdir は採らない', () => {
+    const fake = path.join(root, 'not-a-worktree');
+    fs.mkdirSync(fake, { recursive: true });
+    fs.writeFileSync(path.join(fake, 'CLAUDE.md'), '# 誰かの別ディレクトリ');
+    // git が作った worktree なら必ずある `<root>/.git`(gitdir: …)を置かない
+    writeAdminDir(main, 'not-a-worktree', path.join(fake, '.git'), 'ref: refs/heads/x');
+    expect(worktreesOf(main).map((w) => w.path)).not.toContain(fake);
+    fs.rmSync(path.join(main, '.git', 'worktrees', 'not-a-worktree'), {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it('別の本体を指し返す .git も採らない(逆リンク先が一致すること)', () => {
+    const other = path.join(root, 'other-repo');
+    const claimed = path.join(root, 'claimed');
+    fs.mkdirSync(path.join(other, '.git', 'worktrees', 'claimed'), { recursive: true });
+    fs.mkdirSync(claimed, { recursive: true });
+    // claimed/.git は other-repo を指す = main の worktree ではない
+    fs.writeFileSync(
+      path.join(claimed, '.git'),
+      'gitdir: ' + path.join(other, '.git', 'worktrees', 'claimed') + '\n',
+    );
+    writeAdminDir(main, 'claimed', path.join(claimed, '.git'), 'ref: refs/heads/x');
+    expect(worktreesOf(main).map((w) => w.path)).not.toContain(claimed);
+    fs.rmSync(path.join(main, '.git', 'worktrees', 'claimed'), { recursive: true, force: true });
+  });
+
+  it('gitdir / HEAD が数 KB を超えたら読まない(branch は先頭 1 行・128 文字まで)', () => {
+    // 巨大な gitdir はその 1 件を落とす
+    const big = path.join(root, 'repo-big');
+    fs.mkdirSync(big, { recursive: true });
+    writeAdminDir(main, 'repo-big', 'x'.repeat(5000));
+    expect(worktreesOf(main).map((w) => w.name)).not.toContain('repo-big');
+    fs.rmSync(path.join(main, '.git', 'worktrees', 'repo-big'), { recursive: true, force: true });
+    // HEAD が読めない・長すぎる場合も worktree 自体は残す(ブランチ不明)
+    const headFile = path.join(main, '.git', 'worktrees', 'repo-feat-a', 'HEAD');
+    const orig = fs.readFileSync(headFile, 'utf8');
+    fs.writeFileSync(headFile, 'ref: refs/heads/' + 'b'.repeat(9000));
+    expect(worktreesOf(main).find((w) => w.name === 'repo-feat-a')).toEqual({
+      path: alive,
+      name: 'repo-feat-a',
+    });
+    // 長い(が上限内の)ブランチ名は 128 文字に切る
+    fs.writeFileSync(headFile, 'ref: refs/heads/' + 'c'.repeat(300) + '\nゴミ行\n');
+    expect(worktreesOf(main).find((w) => w.name === 'repo-feat-a')?.branch).toBe('c'.repeat(128));
+    fs.writeFileSync(headFile, orig);
+  });
+
   it('worktreesForProjects は登録簿を本体に畳んでから 1 回だけ列挙する(重複なし)', () => {
     // 同じリポジトリの本体・worktree・サブディレクトリが登録されていても結果は 1 組
     const found = worktreesForProjects([main, alive, path.join(main, 'sub')]);
@@ -152,10 +206,10 @@ describe('worktree が切替の候補に入る(登録簿に無くても選べる
 });
 
 /*
- * 読み取り許可(判断 4)。選べるのに CLAUDE.md が開けない状態を作らないため、
- * 許可の母集団にも worktree を足す。広がる先は登録簿から辿れる worktree だけ。
+ * 読み取り許可(判断 4、レビュー 1 周目で縮めた)。選べるのに CLAUDE.md が開けない状態を
+ * 作らないため、**選んだ** worktree は母集団に入る。選んでいない worktree は入らない。
  */
-describe('読み取り許可が worktree の CLAUDE.md を通す', () => {
+describe('読み取り許可が「選んだ」worktree の CLAUDE.md を通す', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-worktree-access-'));
   const home = path.join(root, 'home');
   const main = path.join(root, 'repo');
@@ -183,10 +237,16 @@ describe('読み取り許可が worktree の CLAUDE.md を通す', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('未登録の worktree の CLAUDE.md も本体から辿って読める', () => {
+  it('未登録の worktree でも、選べば CLAUDE.md を読める', () => {
     const fp = path.join(wt, 'CLAUDE.md');
-    expect(mod.assertReadableMd(fp, main)).toBe(fs.realpathSync(fp));
-    expect(mod.assertOpenablePath(fp, main)).toBe(fs.realpathSync(fp));
+    expect(mod.assertReadableMd(fp, main, wt)).toBe(fs.realpathSync(fp));
+    expect(mod.assertOpenablePath(fp, main, wt)).toBe(fs.realpathSync(fp));
+  });
+
+  it('選んでいない worktree は読めない(本体を見ているだけでは開かない)', () => {
+    expect(() => mod.assertReadableMd(path.join(wt, 'CLAUDE.md'), main)).toThrow(
+      'not-readable-path',
+    );
   });
 
   it('worktree でも登録済みでもないディレクトリは従来どおり拒む(母集団の上限)', () => {
@@ -196,7 +256,7 @@ describe('読み取り許可が worktree の CLAUDE.md を通す', () => {
   });
 
   it('AI に送ってよい集合は広がらない(CLAUDE.md 群は表示だけ)', () => {
-    expect(() => mod.assertAiReadableMd(path.join(wt, 'CLAUDE.md'), main)).toThrow(
+    expect(() => mod.assertAiReadableMd(path.join(wt, 'CLAUDE.md'), main, wt)).toThrow(
       'not-readable-path',
     );
   });

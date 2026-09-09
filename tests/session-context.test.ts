@@ -258,6 +258,48 @@ describe('resolveSelectedProject (?project= の解決)', () => {
 });
 
 /*
+ * id の衝突(レビュー 1 周目)。projectSectionId は英数字以外を '-' に潰す非可逆な変換なので、
+ * `foo.bar` と `foo-bar` は同じ id になる。どちらを指しているか決められない以上、
+ * 勝手に片方を選ばない ── 選択は読み取り許可の母集団でもあるため、
+ * 「利用者が選んだつもりのない方」が開くことがないようにする(未知の id と同じく cwd へ)。
+ */
+describe('resolveSelectedProject (id が衝突したら cwd に落とす)', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-id-collision-'));
+  const home = path.join(tmp, 'home');
+  const cwd = path.join(tmp, 'work', 'alpha');
+  const dotted = path.join(tmp, 'work', 'foo.bar');
+  const dashed = path.join(tmp, 'work', 'foo-bar');
+  let mod: typeof import('../src/server/index');
+
+  beforeAll(async () => {
+    for (const d of [home, cwd, dotted, dashed]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ projects: { [cwd]: {}, [dotted]: {}, [dashed]: {} } }),
+    );
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/index');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('同じ id になる候補が 2 つあるときは、どちらも選ばない', () => {
+    // 前提: 2 つのパスが同じ id に潰れている
+    expect(projectSectionId(dotted)).toBe(projectSectionId(dashed));
+    expect(mod.resolveSelectedProject(cwd, projectSectionId(dotted))).toBe(cwd);
+  });
+
+  it('衝突が無ければ従来どおり解決する', () => {
+    fs.rmSync(dashed, { recursive: true, force: true }); // 実在しない登録は候補から落ちる
+    expect(mod.resolveSelectedProject(cwd, projectSectionId(dotted))).toBe(dotted);
+  });
+});
+
+/*
  * 棚卸し(POST /api/memory-triage)の対象解決(計画 16)。一覧は選んだプロジェクトを起点に
  * 走査するので、棚卸しだけ cwd 固定だと autoMemoryDirectory の置き場が引けない
  * ── 画面には出ているのに not-found、という食い違いをここで塞ぐ。
@@ -310,5 +352,170 @@ describe('triageTarget (棚卸しの対象は選んだプロジェクトを起�
       expect(r.root).toBe(cwd);
       expect(r.section).toBeUndefined();
     }
+  });
+});
+
+/*
+ * collect の結線(レビュー 1 周目のテストの穴)。sessionScope / sessionContext の単体は
+ * 純関数として固めてあったが、「走査の起点が本当に選んだプロジェクトか」はどこも見ていなかった
+ * ── memory / CLAUDE.md / autoMemory / 予算のどれか 1 つを cwd に戻しても全テストが緑のままだった。
+ *
+ * alpha(cwd)と beta を登録し、beta だけに autoMemoryDirectory と MEMORY.md を置く。
+ * beta を選んだ collect の結果が 4 点とも beta 由来になることを同時に固定する。
+ */
+describe('collect (走査の起点は選んだプロジェクト)', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sv-collect-')));
+  const home = path.join(tmp, 'home');
+  const alpha = path.join(tmp, 'work', 'alpha'); // cwd
+  const beta = path.join(tmp, 'work', 'beta'); // 選ぶ方
+  const store = path.join(tmp, 'beta-memory'); // beta の autoMemoryDirectory
+  let mod: typeof import('../src/server/index');
+  let data: import('../src/shared/types').SkillsData;
+
+  const skill = (dir: string, name: string, desc: string) => {
+    fs.mkdirSync(path.join(dir, '.claude', 'skills', name), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.claude', 'skills', name, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: ${desc}\n---\n本文\n`,
+    );
+  };
+
+  beforeAll(async () => {
+    for (const d of [home, alpha, beta, store, path.join(beta, '.claude')])
+      fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ projects: { [alpha]: {}, [beta]: {} } }),
+    );
+    // 予算: alpha の description は長く、beta は短い(cwd に戻ると合計が跳ね上がる)
+    skill(alpha, 'alpha-skill', 'a'.repeat(400));
+    skill(beta, 'beta-skill', 'b'.repeat(40));
+    skill(home, 'user-skill', 'u'.repeat(40));
+    // CLAUDE.md も長さを変える(トークン合計の出どころが判別できるように)
+    fs.writeFileSync(path.join(alpha, 'CLAUDE.md'), '# alpha\n' + 'x'.repeat(4000));
+    fs.writeFileSync(path.join(beta, 'CLAUDE.md'), '# beta\n');
+    // 自動メモリは beta の設定にだけある
+    fs.writeFileSync(
+      path.join(beta, '.claude', 'settings.json'),
+      JSON.stringify({ autoMemoryDirectory: store }),
+    );
+    fs.writeFileSync(path.join(store, 'MEMORY.md'), '- [note](note.md) — beta の memory\n');
+    fs.writeFileSync(path.join(store, 'note.md'), '本文');
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/index');
+    data = mod.collect(alpha, 'en', projectSectionId(beta));
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('選んだプロジェクトが selected として返る(cwd の印は付かない)', () => {
+    expect(data.selected).toMatchObject({ id: projectSectionId(beta), path: beta, isCwd: false });
+  });
+
+  it('CLAUDE.md は選んだプロジェクトの分を走査する', () => {
+    const files = data.claudeMd.layers.flatMap((l) => l.files.map((f) => f.path));
+    expect(files).toContain(path.join(beta, 'CLAUDE.md'));
+    expect(files).not.toContain(path.join(alpha, 'CLAUDE.md'));
+    // ② の内訳は走査の合計をそのまま使う(alpha の 4000 字が混ざれば桁が変わる)
+    expect(data.context.claudeMd.tok).toBe(data.claudeMd.tokens);
+    expect(data.context.claudeMd.tok).toBeLessThan(100);
+  });
+
+  it('memory は選んだプロジェクトの置き場を「現在地」として走査する', () => {
+    const current = (data.memory || []).filter((m) => m.isCurrent);
+    expect(current.map((m) => m.note)).toEqual([store]);
+    expect(data.context.memoryIndex.lines).toBeGreaterThan(0);
+    expect(data.context.memoryIndex.tok).toBeGreaterThan(0);
+  });
+
+  it('予算は選んだプロジェクト + 共有スコープだけを足す(cwd の分は入らない)', () => {
+    const sum = (secs: typeof data.sections) =>
+      secs.flatMap((x) => x.items).reduce((n, it) => n + (it.tokens || 0), 0);
+    const tok = (id: string) => sum(data.sections.filter((x) => x.id === id));
+    const betaTok = tok(projectSectionId(beta));
+    const alphaTok = tok(projectSectionId(alpha));
+    // 共有スコープ(user / plugin / built-in)は選択に依らず毎セッション入る
+    const shared = sum(data.sections.filter((x) => x.source !== 'project'));
+    expect(betaTok).toBeGreaterThan(0);
+    expect(tok('user')).toBeGreaterThan(0);
+    expect(alphaTok).toBeGreaterThan(betaTok); // 取り違えたら気づける差を付けてある
+    expect(data.budget.used).toBe(betaTok + shared);
+    expect(data.context.descriptions.tok).toBe(betaTok + shared);
+  });
+
+  it('省略(cwd)を選ぶと 4 点とも cwd 由来に戻る', () => {
+    const onCwd = mod.collect(alpha, 'en', null);
+    const files = onCwd.claudeMd.layers.flatMap((l) => l.files.map((f) => f.path));
+    expect(onCwd.selected.isCwd).toBe(true);
+    expect(files).toContain(path.join(alpha, 'CLAUDE.md'));
+    expect((onCwd.memory || []).filter((m) => m.isCurrent).map((m) => m.note)).toEqual([]);
+    expect(onCwd.context.memoryIndex.lines).toBe(0);
+  });
+});
+
+/*
+ * ①(前回からの変化)の入力を collect と /api/changes-ack で 1 か所に寄せた(changeInputs)。
+ * 入力がずれると「既読にする」を押した直後に同じ差分がまた出る ── Phase D で CLAUDE.md の
+ * 追跡が登録簿の全プロジェクトに広がったので、ack 側が cwd の 7 段しか見ていないと
+ * 別プロジェクトの CLAUDE.md が永久に「追加」のままになる。
+ * snapshot ファイルは一時ディレクトリに向ける(実環境の ~/.cache を触らない)。
+ */
+describe('changeInputs (collect と ack が同じ入力を見る)', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sv-change-inputs-')));
+  const home = path.join(tmp, 'home');
+  const alpha = path.join(tmp, 'work', 'alpha'); // cwd
+  const beta = path.join(tmp, 'work', 'beta');
+  const snap = path.join(tmp, 'snapshot.json');
+  let mod: typeof import('../src/server/index');
+  let snapMod: typeof import('../src/server/snapshot');
+
+  beforeAll(async () => {
+    for (const d of [home, alpha, beta]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ projects: { [alpha]: {}, [beta]: {} } }),
+    );
+    fs.writeFileSync(path.join(alpha, 'CLAUDE.md'), '# alpha\n');
+    fs.writeFileSync(path.join(beta, 'CLAUDE.md'), '# beta\n');
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/index');
+    snapMod = await import('../src/server/snapshot');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const inputs = () => mod.changeInputs(alpha, 'en', mod.projectCandidates(alpha));
+
+  it('cwd 以外の登録済みプロジェクトの CLAUDE.md も参照に含む', () => {
+    const paths = inputs().claudeMd.map((c) => c.path);
+    expect(paths).toContain(path.join(beta, 'CLAUDE.md'));
+    expect(paths).toContain(path.join(alpha, 'CLAUDE.md'));
+  });
+
+  it('既読にした直後は差分が出ない(ack と computeChanges の入力が一致する)', () => {
+    const i1 = inputs();
+    snapMod.ackChanges(i1.sections, i1.memory, i1.claudeMd, snap);
+    const i2 = inputs();
+    expect(snapMod.computeChanges(i2.sections, i2.memory, i2.claudeMd, snap)).toBeNull();
+  });
+
+  it('cwd 以外のプロジェクトに CLAUDE.md が増えれば「追加」になり、既読にすると消える', () => {
+    const added = path.join(beta, 'CLAUDE.local.md');
+    fs.writeFileSync(added, '# beta local\n');
+    const i1 = inputs();
+    const ch = snapMod.computeChanges(i1.sections, i1.memory, i1.claudeMd, snap);
+    expect(ch?.added.map((e) => e.path)).toContain(added);
+    const i2 = inputs();
+    snapMod.ackChanges(i2.sections, i2.memory, i2.claudeMd, snap);
+    const i3 = inputs();
+    expect(snapMod.computeChanges(i3.sections, i3.memory, i3.claudeMd, snap)).toBeNull();
   });
 });

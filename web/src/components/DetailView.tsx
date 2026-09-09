@@ -68,7 +68,9 @@ function SkillBody({
   onOpen: (key: string) => void;
   reload: () => Promise<void>;
 }) {
-  const { raw, error } = useMdText(it.hasMd ? it.path : '');
+  /* 本文・前版・AI 生成はどれも読み取り許可(cwd + 選んだプロジェクト)に乗るので起点を渡す */
+  const selected = data.selected.id;
+  const { raw, error } = useMdText(it.hasMd ? it.path : '', selected);
   const dir = data.sections.find((s) => s.id === it.secId)?.note || '';
   return (
     <>
@@ -81,11 +83,14 @@ function SkillBody({
           raw={raw}
           resolve={makeResolve(it, all)}
           aiAvailable={data.aiAvailable}
+          selected={selected}
           onOpen={onOpen}
           reload={reload}
         />
       )}
-      {it.hasMd && <FullTextBlock it={it} raw={raw} error={error} cwd={data.cwd} />}
+      {it.hasMd && (
+        <FullTextBlock it={it} raw={raw} error={error} cwd={data.cwd} selected={selected} />
+      )}
     </>
   );
 }
@@ -106,13 +111,13 @@ function TitleBlock({
   const [summarizing, setSummarizing] = useState(false);
   // 操作起点の失敗はボタンの脇に 1 行で出す(alert は使わない)
   const [summaryError, setSummaryError] = useState('');
-  const { openError, onOpenEditor } = useOpenEditor(it.path);
+  const { openError, onOpenEditor } = useOpenEditor(it.path, data.selected.id);
 
   const onSummarize = async () => {
     setSummarizing(true);
     setSummaryError('');
     try {
-      await summarizeSkill(it.path, it.name);
+      await summarizeSkill(it.path, it.name, data.selected.id);
       await reload();
     } catch (e) {
       setSummaryError(

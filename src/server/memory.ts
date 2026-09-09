@@ -68,12 +68,36 @@ export interface WorktreeEntry {
 }
 
 /*
+ * `.git/worktrees/<name>/` の管理ファイル(gitdir / HEAD)の読み取り上限。
+ * 中身はパス 1 行 / ref 1 行で数十バイトしかない。ここを無制限に読むと、リポジトリを
+ * clone しただけで巨大なファイルを毎リクエスト読まされる(claude-md.ts の MAX_FILE_BYTES と同じ趣旨)。
+ */
+const MAX_GIT_META_BYTES = 4 * 1024;
+
+/* 管理ファイルを 1 つ読む。無い・大きすぎる・読めないは null(その 1 件だけスキップさせる) */
+function readGitMeta(fp: string): string | null {
+  try {
+    if (fs.statSync(fp).size > MAX_GIT_META_BYTES) return null;
+    return fs.readFileSync(fp, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/*
  * mainDir に紐づく linked worktree の一覧。mainWorktreeOf と同じ流儀で git コマンドは呼ばず、
  * `<mainDir>/.git/worktrees/<name>/` のファイルだけを読む(git が書いた事実そのもの)。
  *   - gitdir: worktree 側の `.git` のパス。その親ディレクトリが worktree のルート
  *   - HEAD:   `ref: refs/heads/<branch>`(detached なら sha なので branch は付けない)
  * 消した worktree の残骸(prune 前は gitdir が残る)は実体が無いので落とす。
  * 読めない・形が違うものはその 1 件だけスキップする(一覧全体を落とさない)。
+ *
+ * gitdir の中身は検証してから採る(レビュー 1 周目): 中身は「clone したリポジトリに入っていた
+ * ファイル」なので、任意のディレクトリを指す gitdir を書けば、そこが worktree として列挙され
+ * 切替の候補(= 読み取り許可の母集団)に入ってしまう。git が実際に作った worktree なら
+ * 逆リンク(`<root>/.git` がこの mainDir の管理ディレクトリを指す)が必ずあるので、
+ * mainWorktreeOf(root) が mainDir に戻ることを確かめる。
+ * branch も同じ理由で先頭 1 行・128 文字に切る(HEAD は 1 行のファイルで、長い ref 名は無い)。
  */
 export function worktreesOf(mainDir: string): WorktreeEntry[] {
   const base = path.join(mainDir, '.git', 'worktrees');
@@ -83,15 +107,11 @@ export function worktreesOf(mainDir: string): WorktreeEntry[] {
   } catch {
     return []; // worktree が 1 つも無ければこのディレクトリ自体が無い(通常の状態)
   }
+  const mainAbs = path.resolve(mainDir);
   const out: WorktreeEntry[] = [];
   for (const d of dirs) {
-    let gitdir: string;
-    try {
-      gitdir = fs.readFileSync(path.join(base, d.name, 'gitdir'), 'utf8').trim();
-    } catch {
-      continue; // gitdir が無い / 読めない管理ディレクトリ
-    }
-    if (!gitdir) continue;
+    const gitdir = readGitMeta(path.join(base, d.name, 'gitdir'))?.trim();
+    if (!gitdir) continue; // gitdir が無い / 読めない / 大きすぎる管理ディレクトリ
     // git は通常フルパスを書くが、相対で書かれていても壊れないよう mainDir を起点に解決する
     const root = path.dirname(path.resolve(mainDir, gitdir));
     try {
@@ -99,16 +119,16 @@ export function worktreesOf(mainDir: string): WorktreeEntry[] {
     } catch {
       continue; // ディレクトリごと消された worktree(git worktree prune 前の残骸)
     }
+    // 逆リンクの検証。realDir も見るのは /tmp → /private/var のような symlink 経由でも同じ答えにするため
+    const back = mainWorktreeOf(root);
+    if (!back || !(samePath(back, mainAbs) || samePath(realDir(back), realDir(mainAbs)))) continue;
     let branch: string | undefined;
-    try {
-      const m = fs
-        .readFileSync(path.join(base, d.name, 'HEAD'), 'utf8')
-        .trim()
-        .match(/^ref:\s*refs\/heads\/(.+)$/);
-      if (m) branch = m[1].trim();
-    } catch {
-      /* HEAD が読めなくても worktree 自体は列挙する(ブランチ不明として扱う) */
-    }
+    const head = readGitMeta(path.join(base, d.name, 'HEAD'));
+    const m = head
+      ?.split('\n', 1)[0]
+      .trim()
+      .match(/^ref:\s*refs\/heads\/(.+)$/);
+    if (m) branch = m[1].trim().slice(0, 128);
     out.push({ path: root, name: path.basename(root), ...(branch ? { branch } : {}) });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -118,7 +138,9 @@ export function worktreesOf(mainDir: string): WorktreeEntry[] {
  * 登録済みプロジェクト群から辿れる linked worktree(重複なし。計画 16 判断 5)。
  * 登録簿にはリポジトリのサブディレクトリや worktree 自身も入るので、まず repoRootOf で本体へ
  * 畳んでから本体ごとに 1 回だけ列挙する(同じ本体を登録の数だけ readdir しない)。
- * 列挙の起点が登録簿に閉じているので、任意のパスがここから増えることはない。
+ * 列挙の起点は登録簿に閉じており、各 worktree は worktreesOf が逆リンクを検証して採るので、
+ * 「gitdir に書いた任意のパス」がここから増えることはない(レビュー 1 周目で検証を足した。
+ * それまでは gitdir の指す先を無検証で root にしていた)。
  */
 export function worktreesForProjects(projects: string[]): (WorktreeEntry & { mainPath: string })[] {
   const mains = new Set<string>();

@@ -82,6 +82,8 @@ export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () =>
   const it = sec?.items.find((x) => x.path === target);
 
   const path = it?.path || '';
+  /* 本文の取得も読み取り許可(cwd + 選んだプロジェクト)に乗るので起点を渡す(計画 16) */
+  const selected = data.selected.id;
   const [raw, setRaw] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -90,7 +92,7 @@ export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () =>
     let alive = true;
     setRaw(null);
     setError('');
-    fetchFile(path)
+    fetchFile(path, selected)
       .then((content) => {
         if (alive) setRaw(content);
       })
@@ -100,7 +102,7 @@ export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () =>
     return () => {
       alive = false;
     };
-  }, [path]);
+  }, [path, selected]);
 
   /* 同一セクション内で name またはファイル名が一致するメモリに解決する */
   const resolve = useMemo(() => memoryResolver(sec?.items || []), [sec]);
@@ -114,13 +116,13 @@ export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () =>
 
   return (
     <div className="dv">
-      <TitleBlock it={it} sec={sec} />
+      <TitleBlock it={it} sec={sec} selected={selected} />
       <Facts it={it} sec={sec} data={data} resolve={resolve} onOpen={openMemory} />
       <IndexPanel it={it} />
       <TriagePanel
         it={it}
         sec={sec}
-        selected={data.selected.id}
+        selected={selected}
         aiAvailable={data.aiAvailable}
         reload={reload}
       />
@@ -130,8 +132,17 @@ export function MemoryDetail({ data, reload }: { data: SkillsData; reload: () =>
 }
 
 /* 名前とチップ(memory / type / プロジェクト)、右端に「エディタで開く」。下に description */
-function TitleBlock({ it, sec }: { it: SkillItem; sec: MemorySection }) {
-  const { openError, onOpenEditor } = useOpenEditor(it.path);
+function TitleBlock({
+  it,
+  sec,
+  selected,
+}: {
+  it: SkillItem;
+  sec: MemorySection;
+  /* 選んでいるプロジェクト(SkillsData.selected.id)。エディタで開く経路も読み取り許可に乗る */
+  selected: string;
+}) {
+  const { openError, onOpenEditor } = useOpenEditor(it.path, selected);
   return (
     <div className="dv-title">
       <div className="dv-title-row">

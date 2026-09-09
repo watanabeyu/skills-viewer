@@ -6,6 +6,7 @@ import type {
   MemorySection,
   MemoryVerdict,
   Section,
+  SelectedProject,
   SkillGroup,
   SkillItem,
   SkillsData,
@@ -13,7 +14,7 @@ import type {
   Source,
 } from './api';
 import { itemKey } from './api';
-import { t } from './i18n';
+import { t, type MsgKey } from './i18n';
 
 /* 出所の色(design-system 0.1)。値は style.css のトークンに委ね、テーマに追随させる。
  * project は無彩色(「ここ」は既定なので色を持たない)。有彩色は外から来る 3 つだけ */
@@ -89,6 +90,28 @@ export const selectedSection = (data: SkillsData): Section | null =>
   data.sections.find((s) => s.source === 'project' && s.id === data.selected.id) || null;
 
 /*
+ * 0 件の理由の文言キー。worktree だけ理由が違う(.claude/ が git 未追跡なら本体にあってもここには無い)。
+ * サーバーは .claude の有無そのものを確かめていないので、文言は「skill / command / agent が無い」
+ * という走査の事実に留める(.claude/settings.local.json だけあるプロジェクトは普通にある)。
+ */
+export const emptyReasonKey = (selected: SelectedProject): MsgKey =>
+  selected.mainPath ? 'proj.emptyReasonWorktree' : 'proj.emptyReason';
+
+/*
+ * 「最後に始めた 1 本だけが結果を書き込む」ための世代番号(取得と要約ポーリングで共用)。
+ * gate() で 1 本開始し、返る述語が「自分がまだ最新か」を答える。切替を連続で押したときの
+ * 応答の前後、ジョブ実行中の切替で古いチェーンが後から setState するのを止める。
+ * App の中に if (mine !== gen.current) と書くとテストで固定できないので、純関数に切り出す。
+ */
+export function latestGate(): () => () => boolean {
+  let n = 0;
+  return () => {
+    const mine = ++n;
+    return () => mine === n;
+  };
+}
+
+/*
  * 切替に出す 1 行。worktree は本体の行の subs に入り、トップレベルには出ない(計画 16 判断 6)。
  * id は ?project= に渡す値で、null = cwd(既定の選択なので URL に書かない)。
  * id を持たない行は「本体の見出しだけ」= 選べない(登録簿に無い本体は解決できるパスが無い)。
@@ -107,6 +130,11 @@ export interface ProjectRow {
   branch?: string;
   /* 起動ディレクトリの行(「現在」の印が付く。worktree から起動していればその行) */
   cwd: boolean;
+  /*
+   * worktree を束ねるためだけに作った本体の見出し行(登録簿に無いので走査していない)。
+   * section が null でも「0 件」ではないため、切替は「アイテムがありません」を出さない。
+   */
+  heading?: true;
   subs: ProjectRow[];
 }
 
@@ -153,7 +181,14 @@ export function projectRows(data: SkillsData): {
     if (!main) {
       // 本体が登録簿に無い(または定義 0 件で Section が無い)ときは見出しだけの行にする。
       // 選べる候補はサーバーが返した id を持つものだけなので、この行に id は付けない
-      main = { section: null, name: fileName(w.mainPath), path: w.mainPath, cwd: false, subs: [] };
+      main = {
+        section: null,
+        name: fileName(w.mainPath),
+        path: w.mainPath,
+        cwd: false,
+        heading: true,
+        subs: [],
+      };
       tops.push(main);
     }
     main.subs.push({
@@ -722,6 +757,9 @@ function itemOfChange(e: ChangeEntry, data: SkillsData): SkillItem | undefined {
  * ① の行を組む。順は 増えた → 変わった → 消えた(記号の強さの順。0.3)。
  * project は、指定があればそのプロジェクトのものだけに絞る(user / plugin はどのプロジェクトの
  * セッションにも効くので常に残す)。'all' は絞らない。
+ * CLAUDE.md だけは Section 経由の逆引きに載せない ── skill / command / agent が 1 件も無い
+ * プロジェクトには Section が無く、逆引きが必ず失敗して変化そのものが消えるため(計画 16 Phase D)。
+ * 選んだプロジェクト(worktree なら本体も)の配下かどうかで判定する。
  */
 export function changeRows(data: SkillsData, project: ProjectSel): ChangeRow[] {
   const ch = data.changes;
@@ -746,9 +784,14 @@ export function changeRows(data: SkillsData, project: ProjectSel): ChangeRow[] {
     ...build('del', ch.removed),
   ];
   if (project === 'all') return rows;
-  return rows.filter(
-    (r) => r.entry.source !== 'project' || (project !== null && r.section?.id === project.id),
-  );
+  const sel = data.selected;
+  const underSelected = (p: string) =>
+    isUnder(p, sel.path) || (!!sel.mainPath && isUnder(p, sel.mainPath));
+  return rows.filter((r) => {
+    if (r.entry.source !== 'project') return true;
+    if (r.entry.kind === 'claude-md') return underSelected(r.entry.path);
+    return project !== null && r.section?.id === project.id;
+  });
 }
 
 /* 変化のあるプロジェクトの数(全プロジェクトの見出し「n 件 · m プロジェクト」用) */

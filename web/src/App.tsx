@@ -12,6 +12,7 @@ import {
 import {
   asViewMode,
   flatten,
+  latestGate,
   migrateLegacyParams,
   resolveProject,
   type FlatItem,
@@ -88,25 +89,42 @@ export default function App() {
   };
 
   /*
-   * 取得の世代番号。切替を連続で押すと応答が前後し得るので、直近の要求でない応答は捨てる。
-   * 要求した id と応答の selected.id の比較にはしない ── 未知の id をサーバーが cwd に
-   * 落とした正当な応答まで「不一致」で捨ててしまう(計画 16 Phase B)。
+   * 取得の世代(util の latestGate)。切替を連続で押すと応答が前後し得るので、直近の要求でない
+   * 応答は捨てる。要求した id と応答の selected.id の比較にはしない ── 未知の id をサーバーが
+   * cwd に落とした正当な応答まで「不一致」で捨ててしまう(計画 16 Phase B)。
+   * 失敗も同じ世代で見る: A → B と切り替えて A だけ失敗したとき、B の正しいデータが入っているのに
+   * エラー画面へ固定されないように(成功したら前のエラーは消す)。
    */
-  const gen = useRef(0);
+  const gate = useMemo(() => latestGate(), []);
   const reload = useCallback(async () => {
     clearMdCache();
-    const mine = ++gen.current;
-    const next = await fetchSkills(projectParam);
-    if (mine !== gen.current) return;
-    setData(next);
-  }, [projectParam]);
+    const isLatest = gate();
+    try {
+      const next = await fetchSkills(projectParam);
+      if (!isLatest()) return;
+      setData(next);
+      setError('');
+    } catch (e) {
+      if (isLatest()) setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [gate, projectParam]);
+
+  /*
+   * poll(要約ジョブ)から呼ぶ再取得。reload そのものを依存にすると ?project= を変えるたびに
+   * ポーリングが張り直され、しかもジョブ実行中の切替では古い poll が旧 projectParam を
+   * 閉じ込めた reload を後から実行して画面が前のプロジェクトへ戻る。identity を切り離す。
+   */
+  const reloadRef = useRef(reload);
+  useEffect(() => {
+    reloadRef.current = reload;
+  }, [reload]);
 
   /* 言語切替: 全体が再レンダーされ、builtin 説明・AI要約の言語も変わるので再取得する */
   const changeLang = (l: Lang) => {
     if (l === lang) return;
     setLang(l);
     setLangState(l);
-    reload().catch(() => {});
+    void reload();
   };
 
   /* トークンは mutation にしか要らないので初回だけ(GET /api/skills には不要) */
@@ -120,7 +138,7 @@ export default function App() {
    * 突き合わせずに済ませる。前例は言語切替(changeLang → reload)
    */
   useEffect(() => {
-    reload().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    void reload();
   }, [reload]);
 
   const all: FlatItem[] = useMemo(() => (data ? flatten(data.sections) : []), [data]);
@@ -194,9 +212,16 @@ export default function App() {
   const [aiError, setAiError] = useState('');
   const pollTimer = useRef<number>(0);
 
+  /*
+   * ポーリングの世代。チェーンは 1 本だけ生かす: cleanup 後や再開後に戻ってきた古い応答が
+   * timeout を張り直す(= 止まらないチェーンが増える)のを止める。取得の世代とは別に持つ。
+   */
+  const pollGate = useMemo(() => latestGate(), []);
   const poll = useCallback(async () => {
+    const isLatest = pollGate();
     try {
       const st = await fetchSummaryStatus();
+      if (!isLatest()) return;
       if (!st.finished) {
         setAiBusy(true);
         setAiLabel(t('ai.progress', { done: st.done, total: st.total }));
@@ -212,18 +237,24 @@ export default function App() {
             }),
           );
         }
-        await reload();
+        /* 再取得は常に最新の ?project= で行う(ジョブ中に切り替えても前のプロジェクトへ戻さない) */
+        await reloadRef.current();
       }
     } catch {
       /* サーバー停止など。次の操作で復帰 */
     }
+    if (!isLatest()) return;
     setAiBusy(false);
-  }, [reload]);
+  }, [pollGate]);
 
   useEffect(() => {
-    poll();
-    return () => window.clearTimeout(pollTimer.current);
-  }, [poll]);
+    void poll();
+    return () => {
+      window.clearTimeout(pollTimer.current);
+      // 進行中のチェーンを世代ごと無効化する(戻ってきても timeout を張らない)
+      pollGate();
+    };
+  }, [poll, pollGate]);
 
   /* 非ポーリング時のラベルはレンダー時に計算する(言語切替にも追従) */
   const idleAiLabel = !data

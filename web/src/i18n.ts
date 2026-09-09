@@ -294,8 +294,11 @@ const en = {
   'proj.empty': 'no items in this project',
   /* 起動ディレクトリの印(計画 16 判断 7)。cwd は既定の選択にすぎず、区別はこのラベルだけ */
   'proj.current': 'current',
-  /* 0 件の理由。選んでいるのに何も出ない理由をその場に置く */
-  'proj.emptyReason': 'no {path}/.claude',
+  /*
+   * 0 件の理由。選んでいるのに何も出ない理由をその場に置く。サーバーは .claude の有無を
+   * 確かめていない(settings.local.json だけの .claude は普通にある)ので、走査の事実だけを言う
+   */
+  'proj.emptyReason': 'no skills, commands or agents in {path}/.claude',
   /*
    * worktree を選んでいるときの 1 行(計画 16 Phase C)。skill は worktree 自身の .claude、
    * メモリは本体に収束する(公式仕様: 同じリポジトリの worktree は 1 つの置き場を共有する)
@@ -303,7 +306,7 @@ const en = {
   'proj.worktreeOf': 'worktree of {name} · memory shared with it',
   /* worktree が 0 件になる理由は「無い」ではなく「本体にはあるが持ち込まれていない」 */
   'proj.emptyReasonWorktree':
-    'no {path}/.claude — a worktree gets one only if .claude is tracked by git',
+    'no skills, commands or agents in {path}/.claude — a worktree gets them only if .claude is tracked by git',
   /* ① 増えた・変わった(diff 文法: + / ~ / −。design-system 0.3) */
   'chg.title': 'Changed',
   'chg.count': '{n} changes',
@@ -878,10 +881,10 @@ const ja: Record<MsgKey, string> = {
   'proj.others': '他のプロジェクト',
   'proj.empty': 'このプロジェクトにはアイテムがありません',
   'proj.current': '現在',
-  'proj.emptyReason': '{path}/.claude が無い',
+  'proj.emptyReason': '{path}/.claude に skill / command / agent がない',
   'proj.worktreeOf': '{name} の worktree · メモリは本体と共有',
   'proj.emptyReasonWorktree':
-    '{path}/.claude が無い — .claude/ が git 未追跡だと、本体にあってもここには無い',
+    '{path}/.claude に skill / command / agent がない — .claude/ が git 未追跡だと、本体にあってもここには無い',
   'chg.title': '増えた・変わった',
   'chg.count': '{n} 件',
   'chg.since': '{d}に既読にしてから',

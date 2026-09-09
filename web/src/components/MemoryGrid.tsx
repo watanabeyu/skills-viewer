@@ -67,7 +67,8 @@ export function MemoryList({
   reload,
 }: MemoryListProps) {
   const all = data.memory || [];
-  const sections = sectionsFor(all, project);
+  /* 一覧は選んだプロジェクト(サーバーが置き場を解決した起点)に帰属するものだけ(計画 16 Phase A) */
+  const sections = sectionsFor(data, project);
   const single = sections.length === 1 ? sections[0] : null;
   return (
     <div className="dv">
@@ -114,7 +115,7 @@ function TitleBlock({
   /* 選んでいるのがどのプロジェクトかはサーバーの応答(selected)が正。0 件のプロジェクトでも名前が出る */
   const name = isAll ? '' : sec?.projectName || data.selected.name;
   const indexPath = sec ? sec.note.replace(/[\\/]+$/, '') + '/MEMORY.md' : '';
-  const { openError, onOpenEditor } = useOpenEditor(indexPath);
+  const { openError, onOpenEditor } = useOpenEditor(indexPath, data.selected.id);
   return (
     <div className="dv-title">
       <div className="dv-title-row">

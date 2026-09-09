@@ -14,6 +14,7 @@ import type {
   MemoryType,
   Section,
   SkillItem,
+  SkillsData,
 } from './api';
 import { matches, refMatches, sortMemory, type MemorySortKey, type RefFilter } from './util';
 
@@ -138,20 +139,26 @@ export function memoryRows(sec: MemorySection, f: ListFilter): SkillItem[] {
 
 /*
  * 一覧に出すセクション。プロジェクト単位(README 6.2)なので、ヘッダーの切替(?project=)に従う:
- *   'all'    = 全セクション(プロジェクト不明・共有ストアもここでだけ見える)
- *   null     = cwd にアイテムが無い場合。memory は cwd 判定(isCurrent)で別に持てるので isCurrent だけ
- *   Section  = そのプロジェクトの実パス(Section.note)に帰属するセクション。cwd なら isCurrent も含める
- *              (autoMemoryDirectory の置き場は projectPath を持たず isCurrent だけで結び付くため)
+ *   'all'          = 全セクション(プロジェクト不明・共有ストアもここでだけ見える)
+ *   それ以外(Section / null)= サーバーが計算した対象(SkillsData.selected)に帰属するセクション
+ *
+ * 判定は Section ではなく selected を基準にする(計画 16 Phase A)。サーバーは選んだプロジェクトを
+ * 起点に置き場を解決するので、isCurrent は「cwd」ではなく「選んだプロジェクト(+ その本体)」の印。
+ * cwd を特別扱いすると、user scope の autoMemoryDirectory(projectPath なし)や
+ * .claude/ を追跡している worktree を cwd 以外から選んだときに一覧だけが空になる。
+ *   - projectPath === selected.path         そのプロジェクトの置き場
+ *   - projectPath === selected.mainPath     worktree を選んだとき、memory は本体に収束する
+ *   - projectPath === null && isCurrent      置き場を逆引きできない autoMemoryDirectory / 共有ストア
  */
-export function sectionsFor(
-  memory: MemorySection[],
-  project: Section | 'all' | null,
-): MemorySection[] {
+export function sectionsFor(data: SkillsData, project: Section | 'all' | null): MemorySection[] {
+  const memory = data.memory || [];
   if (project === 'all') return memory;
-  if (!project) return memory.filter((m) => m.isCurrent);
+  const sel = data.selected;
   return memory.filter(
     (m) =>
-      (project.isCurrent && m.isCurrent) || (!!m.projectPath && m.projectPath === project.note),
+      m.projectPath === sel.path ||
+      m.projectPath === sel.mainPath ||
+      (m.projectPath === null && !!m.isCurrent),
   );
 }
 

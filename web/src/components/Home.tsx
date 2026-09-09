@@ -17,6 +17,7 @@ import {
   claudeMdCounts,
   contextRows,
   contextTotal,
+  emptyReasonKey,
   fileName,
   flatten,
   KIND_FILTERS,
@@ -261,9 +262,7 @@ export function ActiveBlock({
              * 言い分ける(計画 16 Phase C)
              */}
             <div className="trow-empty meta">
-              {t(data.selected.mainPath ? 'proj.emptyReasonWorktree' : 'proj.emptyReason', {
-                path: data.selected.path,
-              })}
+              {t(emptyReasonKey(data.selected), { path: data.selected.path })}
             </div>
           </div>
         )}

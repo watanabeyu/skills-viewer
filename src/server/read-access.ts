@@ -9,28 +9,23 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { isUnder, resolveAutoMemoryDir, samePath, worktreesForProjects } from './memory';
+import { isUnder, resolveAutoMemoryDir, samePath } from './memory';
 import { claudeMdPaths } from './claude-md';
-import { listProjects } from './scan';
 import { ApiError } from './errors';
 
 /*
- * 許可範囲の母集団になるプロジェクト(計画 16 判断 4)。cwd だけでなく ~/.claude.json に
- * 登録済みのプロジェクトまで広げる: ホーム ② が「選んだプロジェクトで claude を起動したら
- * 何が入るか」を答えるようになり、cwd 以外のプロジェクトの CLAUDE.md と自動メモリも画面に出る
- * ── 出しておいて本文が読めない(/api/file・エディタで開くが失敗する)のでは意味がない。
- * 広がる先は利用者自身の登録簿に閉じていて、任意のパスは入らない。
- * cwd を明示的に足すのは listProjects が HOME を落とすため(ホーム直下で起動したときに
- * user scope の置き場が許可から外れるのを防ぐ)。
- * scan.ts への import は memory.ts が listProjects を使うのと同じ向きで、循環しない。
- *
- * 計画 16 Phase C で linked worktree も加える: worktree は登録の有無に依らず選べる
- * (index.ts の projectCandidates と同じ集合)ので、選べるのに CLAUDE.md が読めない状態を作らない。
- * 列挙の起点は登録簿の各プロジェクトの本体で、git コマンドは呼ばず .git のファイルを読むだけ。
+ * 許可範囲の母集団になるプロジェクト(計画 16 判断 4、レビュー 1 周目で縮めた)。
+ * cwd と「いま選んでいるプロジェクト」の 2 つだけ ── ホーム ② が「選んだプロジェクトで claude を
+ * 起動したら何が入るか」を答えるので、選んだものの CLAUDE.md と自動メモリは読めなければならない。
+ * 逆に、選んでいないプロジェクトまで広げてはいけない: autoMemoryDirectory は各プロジェクトの
+ * .claude/settings.json(clone に含まれる commit 済みのファイル)からも読むため、登録簿の全件を
+ * 母集団にすると「clone しただけの悪意あるリポジトリが ~/Documents を許可範囲に足す」ことができる
+ * (下限ガードは HOME 自身とその祖先しか弾けないので、HOME 直下の兄弟は守れない)。
+ * 選択は resolveSelectedProject が候補との一致だけで決めるので、任意のパスはここに入らない。
+ * この関数は登録簿(listProjects)も worktree 列挙も呼ばない ── 登録簿を読むのは選択の解決だけ。
  */
-function accessRoots(cwd: string): string[] {
-  const projects = [...new Set([path.resolve(cwd), ...listProjects(cwd)])];
-  return [...new Set([...projects, ...worktreesForProjects(projects).map((w) => w.path)])];
+function accessRoots(cwd: string, selectedPath?: string): string[] {
+  return [...new Set([path.resolve(cwd), ...(selectedPath ? [path.resolve(selectedPath)] : [])])];
 }
 
 /* realpath 解決(存在しないパスは not-found に正規化) */
@@ -76,9 +71,9 @@ function underAutoMemory(real: string, root: string): boolean {
   return !!dir && real !== dir && isUnder(real, dir);
 }
 
-/* 登録済みプロジェクトのどれかの置き場の配下か。解決は解決値ごとに memo 済みなので安い */
-function underAnyAutoMemory(real: string, cwd: string): boolean {
-  return accessRoots(cwd).some((root) => underAutoMemory(real, root));
+/* cwd / 選んだプロジェクトの置き場の配下か。解決は解決値ごとに memo 済みなので安い */
+function underAnyAutoMemory(real: string, cwd: string, selectedPath?: string): boolean {
+  return accessRoots(cwd, selectedPath).some((root) => underAutoMemory(real, root));
 }
 
 const underDotClaude = (real: string) => real.includes(path.sep + '.claude' + path.sep);
@@ -112,7 +107,11 @@ function isClaudeMdLayerFile(target: string, root: string): boolean {
  * 字句一致で即 true にすると、経路に `.claude` を含む symlink が別のリポジトリを指している場合に
  * /api/file が拒否する同じパスを /api/diff が通してしまう(clone してきたリポジトリが仕込める)。
  */
-export function allowedPath(abs: string, cwd: string = process.cwd()): boolean {
+export function allowedPath(
+  abs: string,
+  cwd: string = process.cwd(),
+  selectedPath?: string,
+): boolean {
   let real: string;
   try {
     real = fs.realpathSync(abs);
@@ -124,9 +123,9 @@ export function allowedPath(abs: string, cwd: string = process.cwd()): boolean {
      * 全候補の realpath を無駄に走らせるだけ)。消えた CLAUDE.md の差分を出したいなら、
      * 走査側に「存在で絞らない列挙」を足す必要がある ── 許可の広がりを伴うので別途。
      */
-    return underDotClaude(abs) || underAnyAutoMemory(abs, cwd);
+    return underDotClaude(abs) || underAnyAutoMemory(abs, cwd, selectedPath);
   }
-  return allowed(real, cwd);
+  return allowed(real, cwd, selectedPath);
 }
 
 /*
@@ -134,26 +133,30 @@ export function allowedPath(abs: string, cwd: string = process.cwd()): boolean {
  * CLAUDE.local.md は通常 gitignore される私的なファイルで、.claude 配下の定義ファイルとは
  * 機微度が違う(README は memory 棚卸しについて「見出しだけを送る」と約束している)。
  *
- * 自動メモリの置き場だけは表示用と同じ「登録済みプロジェクト全部」に広げる(計画 16 判断 4):
+ * 自動メモリの置き場だけは表示用と同じ「cwd と選んだプロジェクト」に広げる(計画 16 判断 4):
  * 選んだプロジェクトの memory 棚卸しは本文を CLI に送るため(cwd の分は従来から送っている)。
  * CLAUDE.md 群はここに入れない ── 表示だけという README Security の約束を保つ。
  */
-export function assertAiReadableMd(p: string, cwd: string = process.cwd()): string {
+export function assertAiReadableMd(
+  p: string,
+  cwd: string = process.cwd(),
+  selectedPath?: string,
+): string {
   const real = realpathOrThrow(p);
   if (!real.endsWith('.md')) throw new ApiError('not-md', real);
-  if (!underDotClaude(real) && !underAnyAutoMemory(real, cwd))
+  if (!underDotClaude(real) && !underAnyAutoMemory(real, cwd, selectedPath))
     throw new ApiError('not-readable-path', real);
   return real;
 }
 
 /*
- * 表示用の集合 = .claude 配下 ∪ 登録済みプロジェクトの置き場配下 ∪ 同じ集合の CLAUDE.md 群。
+ * 表示用の集合 = .claude 配下 ∪ cwd / 選んだプロジェクトの置き場配下 ∪ 同じ 2 root の CLAUDE.md 群。
  * 置き場を先に一巡してから CLAUDE.md 群を見るのは、置き場の解決が memo 済みで安いのに対し、
- * CLAUDE.md 群はプロジェクトごとに existsSync + realpath を伴うため。
+ * CLAUDE.md 群は root ごとに existsSync + realpath を伴うため。
  */
-const allowed = (real: string, cwd: string) => {
+const allowed = (real: string, cwd: string, selectedPath?: string) => {
   if (underDotClaude(real)) return true;
-  const roots = accessRoots(cwd);
+  const roots = accessRoots(cwd, selectedPath);
   return (
     roots.some((root) => underAutoMemory(real, root)) ||
     roots.some((root) => isClaudeMdLayerFile(real, root))
@@ -161,10 +164,14 @@ const allowed = (real: string, cwd: string) => {
 };
 
 /* 読み取りは plugin 配下も許可(.claude 配下 + 自動メモリの置き場配下 + CLAUDE.md 群の .md のみ) */
-export function assertReadableMd(p: string, cwd: string = process.cwd()): string {
+export function assertReadableMd(
+  p: string,
+  cwd: string = process.cwd(),
+  selectedPath?: string,
+): string {
   const real = realpathOrThrow(p);
   if (!real.endsWith('.md')) throw new ApiError('not-md', real);
-  if (!allowed(real, cwd)) throw new ApiError('not-readable-path', real);
+  if (!allowed(real, cwd, selectedPath)) throw new ApiError('not-readable-path', real);
   return real;
 }
 
@@ -173,9 +180,9 @@ export function assertReadableMd(p: string, cwd: string = process.cwd()): string
  * export はテスト用(openInEditor はエディタを実起動するのでテストから直接は呼べない。
  * テスト欠落の穴埋め: tests/read-access.test.ts)。ロジックは変えていない。
  */
-export function assertOpenablePath(p: string, cwd: string): string {
+export function assertOpenablePath(p: string, cwd: string, selectedPath?: string): string {
   const real = realpathOrThrow(p);
-  if (!allowed(real, cwd)) throw new ApiError('not-openable-path', real);
+  if (!allowed(real, cwd, selectedPath)) throw new ApiError('not-openable-path', real);
   return real;
 }
 
@@ -198,8 +205,12 @@ function detectEditor(): { cmd: string | null } {
   return (editorCache = { cmd: null });
 }
 
-export function openInEditor({ src }: { src: string }, cwd: string = process.cwd()) {
-  const real = assertOpenablePath(src, cwd);
+export function openInEditor(
+  { src }: { src: string },
+  cwd: string = process.cwd(),
+  selectedPath?: string,
+) {
+  const real = assertOpenablePath(src, cwd, selectedPath);
   const { cmd } = detectEditor();
   if (cmd) {
     spawn(cmd, [real], { detached: true, stdio: 'ignore' }).unref();

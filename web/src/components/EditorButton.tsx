@@ -30,8 +30,10 @@ function EditorIcon() {
  * 設定(⚙)の URL スキームで開く。OS デフォルト設定時のみサーバー側で開く。
  * path が空のときは呼び出し側がボタンごと出さない前提(built-in など開けない項目の扱いを踏襲)なので、
  * ここでは path の空チェックはしない。
+ * selected は選んでいるプロジェクト(SkillsData.selected.id)。サーバー側で開く経路も
+ * 読み取り許可(cwd + 選んだプロジェクト)に乗るので必ず送る(計画 16)。
  */
-export function useOpenEditor(path: string) {
+export function useOpenEditor(path: string, selected: string) {
   // 操作起点の失敗はボタンの脇に 1 行で出す(alert は使わない)
   const [openError, setOpenError] = useState('');
   const onOpenEditor = async () => {
@@ -42,7 +44,7 @@ export function useOpenEditor(path: string) {
       return;
     }
     try {
-      await openSkill(path);
+      await openSkill(path, selected);
     } catch (e) {
       setOpenError(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
     }

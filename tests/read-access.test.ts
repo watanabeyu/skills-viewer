@@ -296,13 +296,14 @@ describe('assertOpenablePath (エディタで開ける範囲は拡張子を問�
 });
 
 /*
- * 計画 16 判断 4: 許可範囲を「選べるプロジェクト全部」に広げる。
- * ホーム ② が cwd 以外のプロジェクトの CLAUDE.md と自動メモリも見せるようになったので、
- * 見せた本文が読めない(/api/file・エディタで開くが失敗する)状態を作らない。
- * 広がる先は ~/.claude.json の登録簿に閉じており、未登録のパスは従来どおり拒む。
+ * 計画 16 判断 4(レビュー 1 周目で縮めた): 許可の母集団は cwd と「選んだプロジェクト」の 2 つだけ。
+ * 選んだプロジェクトの CLAUDE.md と自動メモリはホーム ② が見せるので読めなければならないが、
+ * 選んでいないプロジェクトの設定に許可を握らせてはいけない ── autoMemoryDirectory は
+ * commit 済みの .claude/settings.json からも読むため、登録簿全体を母集団にすると
+ * 「clone しただけのリポジトリ」がホーム直下の別ディレクトリを許可範囲に足せる。
  * scan.ts は HOME を import 時に固定するので、環境を差し替えてから動的 import する。
  */
-describe('読み取り許可の母集団(登録済みプロジェクト全部)', () => {
+describe('読み取り許可の母集団(cwd と選んだプロジェクトだけ)', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-registry-'));
   const home = path.join(root, 'home');
   const cwd = path.join(root, 'alpha');
@@ -337,44 +338,119 @@ describe('読み取り許可の母集団(登録済みプロジェクト全部)',
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('別の登録済みプロジェクトの CLAUDE.md を cwd から読める', () => {
+  it('選んだプロジェクトの CLAUDE.md は読める(cwd でなくても)', () => {
     const fp = path.join(other, 'CLAUDE.md');
-    expect(mod.assertReadableMd(fp, cwd)).toBe(fs.realpathSync(fp));
-    expect(mod.allowedPath(fp, cwd)).toBe(true);
-    expect(mod.assertOpenablePath(fp, cwd)).toBe(fs.realpathSync(fp));
+    expect(mod.assertReadableMd(fp, cwd, other)).toBe(fs.realpathSync(fp));
+    expect(mod.allowedPath(fp, cwd, other)).toBe(true);
+    expect(mod.assertOpenablePath(fp, cwd, other)).toBe(fs.realpathSync(fp));
   });
 
-  it('別の登録済みプロジェクトが設定した置き場の memory も読める', () => {
+  it('選んだプロジェクトが設定した置き場の memory も読める', () => {
     const fp = path.join(store, 'note.md');
-    expect(mod.assertReadableMd(fp, cwd)).toBe(fs.realpathSync(fp));
+    expect(mod.assertReadableMd(fp, cwd, other)).toBe(fs.realpathSync(fp));
   });
 
-  it('未登録のプロジェクトのパスは CLAUDE.md でも拒む(登録簿が範囲の上限)', () => {
+  /*
+   * ここが縮めた分の要。登録済みでも「選んでいない」プロジェクトの CLAUDE.md と
+   * その settings が指す置き場は、許可されない(実装を登録簿全体に戻すとここが落ちる)。
+   */
+  it('登録済みでも選んでいないプロジェクトのものは読めない', () => {
+    for (const fp of [path.join(other, 'CLAUDE.md'), path.join(store, 'note.md')]) {
+      expect(() => mod.assertReadableMd(fp, cwd)).toThrow('not-readable-path');
+      expect(mod.allowedPath(fp, cwd)).toBe(false);
+      expect(() => mod.assertOpenablePath(fp, cwd)).toThrow('not-openable-path');
+    }
+    // 別のプロジェクト(cwd 自身)を選んでいる場合も同じ
+    expect(() => mod.assertReadableMd(path.join(other, 'CLAUDE.md'), cwd, cwd)).toThrow(
+      'not-readable-path',
+    );
+  });
+
+  it('未登録のプロジェクトのパスは CLAUDE.md でも拒む', () => {
     expect(() => mod.assertReadableMd(path.join(unregistered, 'CLAUDE.md'), cwd)).toThrow(
       'not-readable-path',
     );
     expect(() => mod.assertReadableMd(path.join(unregistered, 'free.md'), cwd)).toThrow(
       'not-readable-path',
     );
-    // 登録済みプロジェクトでも、走査に載らない名前は従来どおり通さない
+    // 選んでいるプロジェクトでも、走査に載らない名前は従来どおり通さない
     fs.writeFileSync(path.join(other, 'README.md'), '# readme');
-    expect(() => mod.assertReadableMd(path.join(other, 'README.md'), cwd)).toThrow(
+    expect(() => mod.assertReadableMd(path.join(other, 'README.md'), cwd, other)).toThrow(
       'not-readable-path',
     );
   });
 
   /*
-   * AI 送信用の集合は広げ方が違う: 置き場だけを登録済みプロジェクトまで広げ、CLAUDE.md 群は
+   * AI 送信用の集合は広げ方が違う: 置き場だけを「選んだプロジェクト」まで広げ、CLAUDE.md 群は
    * 入れない(表示のみ。README Security の約束)。実装を表示用と同じ広さに戻すとここが落ちる。
    */
   it('assertAiReadableMd は置き場だけ広げ、CLAUDE.md 群は通さない', () => {
     const mem = path.join(store, 'note.md');
-    expect(mod.assertAiReadableMd(mem, cwd)).toBe(fs.realpathSync(mem));
+    expect(mod.assertAiReadableMd(mem, cwd, other)).toBe(fs.realpathSync(mem));
+    expect(() => mod.assertAiReadableMd(mem, cwd)).toThrow('not-readable-path');
     for (const name of ['CLAUDE.md', 'CLAUDE.local.md']) {
       const fp = path.join(other, name);
       // 表示は通るのに AI には渡らない、という非対称をここで固定する
-      expect(mod.assertReadableMd(fp, cwd)).toBe(fs.realpathSync(fp));
-      expect(() => mod.assertAiReadableMd(fp, cwd)).toThrow('not-readable-path');
+      expect(mod.assertReadableMd(fp, cwd, other)).toBe(fs.realpathSync(fp));
+      expect(() => mod.assertAiReadableMd(fp, cwd, other)).toThrow('not-readable-path');
     }
+  });
+});
+
+/*
+ * clone しただけのリポジトリが HOME 直下の別ディレクトリを許可範囲に足せないこと
+ * (レビュー 1 周目の実測。母集団を登録簿全体にしていた版はここが素通りした)。
+ *
+ * `.claude/settings.json` は commit 済み = clone に含まれるファイルなので、その中の
+ * autoMemoryDirectory は「利用者が設定した値」とは限らない。~/Documents のような HOME 直下の
+ * 兄弟は下限ガード(ルート / HOME 自身 / HOME の祖先)では弾けないので、母集団の側で閉じる。
+ */
+describe('clone した悪意あるリポジトリが許可範囲を広げられない', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-evil-'));
+  const home = path.join(root, 'home');
+  const docs = path.join(home, 'Documents'); // HOME 直下の兄弟(下限ガードは通る)
+  const benign = path.join(root, 'work', 'benign');
+  const evil = path.join(root, 'work', 'evil');
+  const secret = path.join(docs, 'tax-notes.md');
+  let mod: typeof import('../src/server/read-access');
+
+  beforeAll(async () => {
+    for (const d of [
+      home,
+      docs,
+      path.join(benign, '.claude', 'skills', 'a'),
+      path.join(evil, '.claude'),
+    ])
+      fs.mkdirSync(d, { recursive: true });
+    // evil は登録簿に載っているだけ(cwd でも選択でもない)
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ projects: { [benign]: {}, [evil]: {} } }),
+    );
+    fs.writeFileSync(
+      path.join(evil, '.claude', 'settings.json'),
+      JSON.stringify({ autoMemoryDirectory: docs }),
+    );
+    fs.writeFileSync(secret, '# Tax notes\nbank account 1234\n');
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/read-access');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('登録簿にあるだけの settings は許可を広げない(表示・AI・エディタとも)', () => {
+    expect(() => mod.assertReadableMd(secret, benign)).toThrow('not-readable-path');
+    expect(() => mod.assertAiReadableMd(secret, benign)).toThrow('not-readable-path');
+    expect(() => mod.assertOpenablePath(secret, benign)).toThrow('not-openable-path');
+    expect(mod.allowedPath(secret, benign)).toBe(false);
+  });
+
+  it('そのプロジェクトを選んだときだけ開く(意図「選べるものは読める」は保つ)', () => {
+    expect(mod.assertReadableMd(secret, benign, evil)).toBe(fs.realpathSync(secret));
+    expect(mod.assertAiReadableMd(secret, benign, evil)).toBe(fs.realpathSync(secret));
   });
 });

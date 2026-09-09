@@ -1,7 +1,17 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MemorySection, MemoryVerdict, SkillItem } from '../src/shared/types';
 import type { KindFilter, UseFilter } from '../web/src/util';
-import { itemKey } from '../web/src/api';
+import {
+  diagnoseSkill,
+  fetchDiff,
+  fetchFile,
+  fetchSkills,
+  flowSkill,
+  itemKey,
+  openSkill,
+  summarizeSkill,
+  triageMemory,
+} from '../web/src/api';
 import {
   KIND_FILTERS,
   USE_FILTERS,
@@ -32,10 +42,13 @@ import {
   contextRows,
   contextTotal,
   duplicateNames,
+  emptyReasonKey,
   labelOfUseFilter,
+  latestGate,
   migrateLegacyParams,
   projectRows,
   resolveProject,
+  selectedSection,
   sessionSections,
   type FlatItem,
 } from '../web/src/util';
@@ -655,6 +668,102 @@ describe('resolveProject (選択の解決。計画 16 判断 3: サーバーの 
 });
 
 /*
+ * selectedSection は resolveProject と違い ?project= を見ない(= 'all' でも Section を返す)。
+ * memory 一覧のように「1 プロジェクト分の単位」が要る画面がこちらを使うので、その差を固定する。
+ */
+describe('selectedSection (?project= に依らない「選んだプロジェクトの Section」)', () => {
+  const onBeta = dataOf({
+    selected: { id: projB.id, path: '/w/beta', name: 'beta', isCwd: false },
+  });
+
+  it('応答の selected.id で引く(projB を計算した応答なら projB)', () => {
+    expect(selectedSection(onBeta)).toBe(projB);
+  });
+
+  it("'all' を選んでいても Section を返す(resolveProject はここで 'all' を返す)", () => {
+    expect(resolveProject('all', onBeta)).toBe('all');
+    expect(selectedSection(onBeta)).toBe(projB);
+  });
+
+  it('定義が 0 件のプロジェクトは Section が無いので null', () => {
+    const empty = dataOf({
+      sections: [userSec, pluginSec, builtinSec],
+      selected: { id: 'proj--w-gamma', path: '/w/gamma', name: 'gamma', isCwd: false },
+    });
+    expect(selectedSection(empty)).toBeNull();
+  });
+});
+
+/*
+ * 0 件の理由の言い分け。worktree だけ理由が違う(.claude/ が git 未追跡なら本体にあってもここには無い)。
+ * 分岐を Home.tsx の中に書くとテストで固定できないので util に置いてある。
+ */
+describe('emptyReasonKey (0 件の理由の言い分け)', () => {
+  it('mainPath があれば worktree 用の理由', () => {
+    const wt = {
+      id: 'p',
+      path: '/w/alpha-wt',
+      name: 'alpha-wt',
+      isCwd: false,
+      mainPath: '/w/alpha',
+    };
+    expect(emptyReasonKey(wt)).toBe('proj.emptyReasonWorktree');
+  });
+
+  it('mainPath が無ければ通常の理由', () => {
+    expect(emptyReasonKey({ id: 'p', path: '/w/gamma', name: 'gamma', isCwd: false })).toBe(
+      'proj.emptyReason',
+    );
+  });
+
+  /*
+   * サーバーは .claude の有無そのものを確かめていない(settings.local.json だけの .claude は普通にある)。
+   * 「.claude が無い」と断定していないことを両言語で見張る
+   */
+  it('文言は「.claude が無い」と断定せず、走査の事実(定義が無い)だけを言う', () => {
+    for (const lang of ['en', 'ja'] as const) {
+      setLang(lang);
+      for (const key of ['proj.emptyReason', 'proj.emptyReasonWorktree'] as const) {
+        const msg = t(key, { path: '/w/gamma' });
+        expect(msg).toContain('/w/gamma/.claude');
+        expect(msg).not.toMatch(/^no \/w\/gamma\/\.claude/);
+        expect(msg).not.toContain('/w/gamma/.claude が無い');
+      }
+    }
+  });
+});
+
+/*
+ * 取得の世代(App の reload と要約ポーリングが共有する)。「最後に始めた 1 本だけが結果を書き込む」を
+ * App の中の if で書くと DOM テスト基盤が無いぶん固定できないので、純関数に切り出してある。
+ */
+describe('latestGate (最後に始めた 1 本だけが結果を書き込む)', () => {
+  it('後から始めた方だけが最新(A を start → B を start)', () => {
+    const gate = latestGate();
+    const a = gate();
+    const b = gate();
+    expect(a()).toBe(false);
+    expect(b()).toBe(true);
+  });
+
+  it('単発なら最新のまま(何度聞いても true)', () => {
+    const gate = latestGate();
+    const a = gate();
+    expect(a()).toBe(true);
+    expect(a()).toBe(true);
+  });
+
+  it('世代は gate ごとに独立(取得とポーリングが互いを無効化しない)', () => {
+    const fetchGate = latestGate();
+    const pollGate = latestGate();
+    const f = fetchGate();
+    pollGate();
+    pollGate();
+    expect(f()).toBe(true);
+  });
+});
+
+/*
  * 切替の行(計画 16 Phase C)。worktree は本体の下に字下げして 1 度だけ出す。
  * sections はサーバーの形のままなので、寄せるのを web がやめると同じプロジェクトが
  * 2 行(本体の下とトップレベル)に並ぶ ── その重複をここで機械的に落とす。
@@ -754,16 +863,56 @@ describe('projectRows (worktree を本体の下へ寄せる)', () => {
  * setParam('project', null) で行っていたため、消えたことをソースで見張る
  * (i18n.test.ts の未使用キー検査と同じ、機械で落とすための検査)。
  */
+const appSource = async (): Promise<string> => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  return fs.readFileSync(path.join(import.meta.dirname, '..', 'web', 'src', 'App.tsx'), 'utf8');
+};
+
 describe('?project= を web が書き換えないこと(計画 16 判断 3)', () => {
   it('App が project パラメータを消す経路を持たない', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, '..', 'web', 'src', 'App.tsx'),
-      'utf8',
-    );
     // setParam は必ず replace で URL を書き戻す。project を渡す呼び出しがあってはならない
-    expect(src).not.toMatch(/setParam\(\s*'project'/);
+    expect(await appSource()).not.toMatch(/setParam\(\s*'project'/);
+  });
+
+  /*
+   * setParam だけを見ていると、別の書き換え経路(params.set / navigate の直書き)が増えても
+   * 気づけない。'project' を渡す呼び出しの一覧そのものを固定して、構造の変化を機械で落とす:
+   * 読むのは params.get の 1 か所、書くのは切替(onSelect)が組む next の 2 か所だけ。
+   */
+  it("'project' を渡す呼び出しは「読む 1 + 切替で組む 2」だけ", async () => {
+    const src = await appSource();
+    const callers = [...src.matchAll(/([\w.]+)\(\s*'project'/g)].map((m) => m[1]).sort();
+    expect(callers).toEqual(['next.delete', 'next.set', 'params.get']);
+  });
+});
+
+/*
+ * 要約ジョブのポーリングは reload の identity に依存させない(計画 16 レビュー 1 周目)。
+ * 依存に入れると ?project= を変えるたびにポーリングが張り直され、さらにジョブ実行中の切替では
+ * 古いチェーンが「前の projectParam を閉じ込めた reload」を後から実行して画面が前のプロジェクトへ戻る。
+ * DOM テスト基盤が無いので、依存配列そのものをソースで固定する。
+ */
+describe('App の取得とポーリングの結線', () => {
+  it('poll の依存は世代(pollGate)だけで、再取得は ref 越しに最新の reload を呼ぶ', async () => {
+    const src = await appSource();
+    const deps = src.match(/const poll = useCallback\([\s\S]*?\n {2}\}, \[([^\]]*)\]\);/);
+    expect(deps?.[1]).toBe('pollGate');
+    expect(src).toContain('await reloadRef.current();');
+  });
+
+  /*
+   * 取得の失敗も世代で見る。A → B と切り替えて A だけ失敗したとき、B の正しいデータが
+   * 入っているのにエラー画面へ固定されると、切替では復帰できない(成功時に消すこと)。
+   */
+  it('reload は自分で失敗を捕まえ、最新の要求のときだけ setError する', async () => {
+    const src = await appSource();
+    const body = src.match(/const reload = useCallback\([\s\S]*?\n {2}\}, \[[^\]]*\]\);/)?.[0];
+    expect(body).toBeTruthy();
+    expect(body).toContain("setError('')");
+    expect(body).toMatch(/if \(isLatest\(\)\) setError\(/);
+    // 呼び出し側の .catch(setError) 頼み(世代を見ない)に戻っていないこと
+    expect(src).not.toMatch(/reload\(\)\.catch\(/);
   });
 });
 
@@ -857,6 +1006,59 @@ describe('changeMarkOf / changeRows (① 増えた・変わった)', () => {
 
   it('差分が無ければ空(① は「変化なし」の 1 行に畳む)', () => {
     expect(changeRows(dataOf(), 'all')).toEqual([]);
+  });
+
+  /*
+   * CLAUDE.md は Section を経由して絞らない。skill / command / agent が 1 件も無いプロジェクトには
+   * Section が無く、逆引き(projectOfChange)が必ず失敗するので、Section 基準に戻すと
+   * 「変化そのものは出る」(計画 16 Phase D)が守れず行が消える。
+   */
+  it('CLAUDE.md は Section を持たないプロジェクトでも、選んだプロジェクト配下なら残る', () => {
+    const cmdChanges: SnapshotChanges = {
+      added: [],
+      updated: [
+        { name: 'CLAUDE.md', kind: 'claude-md', path: '/w/gamma/CLAUDE.md', source: 'project' },
+        {
+          name: 'CLAUDE.md',
+          kind: 'claude-md',
+          path: '/w/beta/.claude/CLAUDE.md',
+          source: 'project',
+        },
+      ],
+      removed: [],
+    };
+    // gamma は定義が 0 件(Section が無い)。選択は selected 側にだけある
+    const onGamma = dataOf({
+      changes: cmdChanges,
+      sections: [userSec, pluginSec, builtinSec],
+      selected: { id: 'proj--w-gamma', path: '/w/gamma', name: 'gamma', isCwd: false },
+    });
+    const rows = changeRows(onGamma, null);
+    expect(rows.map((r) => r.entry.path)).toEqual(['/w/gamma/CLAUDE.md']);
+    // 逆引きできないので出所チップは project のまま(プロジェクト名は付かない)
+    expect(rows[0].scopeLabel).toBe('project');
+  });
+
+  it('worktree を選ぶと本体の CLAUDE.md も残る(選択の配下は selected.path + mainPath)', () => {
+    const cmdChanges: SnapshotChanges = {
+      added: [],
+      updated: [
+        { name: 'CLAUDE.md', kind: 'claude-md', path: '/w/alpha/CLAUDE.md', source: 'project' },
+        { name: 'CLAUDE.md', kind: 'claude-md', path: '/w/beta/CLAUDE.md', source: 'project' },
+      ],
+      removed: [],
+    };
+    const onWt = dataOf({
+      changes: cmdChanges,
+      selected: {
+        id: 'proj--w-alpha-wt',
+        path: '/w/alpha-wt',
+        name: 'alpha-wt',
+        isCwd: false,
+        mainPath: '/w/alpha',
+      },
+    });
+    expect(changeRows(onWt, null).map((r) => r.entry.path)).toEqual(['/w/alpha/CLAUDE.md']);
   });
 
   it('memory の変化は MemorySection.projectPath 経由でプロジェクトを引く', () => {
@@ -1054,5 +1256,70 @@ describe('labelOfUseFilter (使用実績フィルタのラベル)', () => {
 
   it('USE_FILTERS は all → used → unused の順(select の並び)', () => {
     expect(USE_FILTERS).toEqual(['all', 'used', 'unused']);
+  });
+});
+
+/*
+ * API クライアントが送る「どのプロジェクトを選んでいるか」(計画 16)。
+ * 読み取り許可は cwd + 選んだプロジェクトに絞られているので、起点を落とすと
+ * 選んだプロジェクトの CLAUDE.md / memory 本文だけが開けなくなる ── 画面上は
+ * 「読み取り対象外のパス」1 行になり、型では落ちないのでここで結線を固定する。
+ */
+describe('API クライアントが送る読み取りの起点', () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const stub = () =>
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response);
+    });
+  beforeEach(() => {
+    calls.length = 0;
+    stub();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const body = () => JSON.parse(String(calls[0].init!.body));
+
+  it('fetchSkills は ?project= を付ける / 空なら付けない / URL エンコードする', async () => {
+    await fetchSkills('proj--w-beta');
+    expect(calls[0].url).toBe('/api/skills?lang=en&project=proj--w-beta');
+    calls.length = 0;
+    await fetchSkills(null);
+    expect(calls[0].url).toBe('/api/skills?lang=en');
+    calls.length = 0;
+    await fetchSkills('proj-/w/a b');
+    expect(calls[0].url).toBe('/api/skills?lang=en&project=proj-%2Fw%2Fa%20b');
+  });
+
+  it('本文と前版の GET も起点を送る(&project=)', async () => {
+    await fetchFile('/w/beta/CLAUDE.md', 'proj--w-beta');
+    expect(calls[0].url).toBe('/api/file?src=%2Fw%2Fbeta%2FCLAUDE.md&project=proj--w-beta');
+    calls.length = 0;
+    await fetchDiff('/w/beta/CLAUDE.md', 'proj--w-beta');
+    expect(calls[0].url).toBe('/api/diff?src=%2Fw%2Fbeta%2FCLAUDE.md&project=proj--w-beta');
+  });
+
+  it('本文を読む mutation は selected を payload に載せる', async () => {
+    await openSkill('/w/beta/.claude/skills/bar/SKILL.md', 'proj--w-beta');
+    expect(body().selected).toBe('proj--w-beta');
+    calls.length = 0;
+    await summarizeSkill('/w/beta/.claude/skills/bar/SKILL.md', 'bar', 'proj--w-beta');
+    expect(body()).toMatchObject({ name: 'bar', selected: 'proj--w-beta' });
+    calls.length = 0;
+    await diagnoseSkill('/w/beta/.claude/skills/bar/SKILL.md', 'bar', 'proj--w-beta');
+    expect(body().selected).toBe('proj--w-beta');
+    calls.length = 0;
+    await flowSkill('/w/beta/.claude/skills/bar/SKILL.md', 'bar', 'proj--w-beta');
+    expect(body().selected).toBe('proj--w-beta');
+  });
+
+  it('memory の棚卸しは置き場の id と起点を別々に送る(取り違えを固定する)', async () => {
+    await triageMemory('-w-beta', 'proj--w-beta', ['note.md'], true);
+    expect(body()).toMatchObject({
+      project: '-w-beta',
+      selected: 'proj--w-beta',
+      files: ['note.md'],
+      force: true,
+    });
   });
 });

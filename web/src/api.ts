@@ -24,6 +24,7 @@ export type {
   MemoryType,
   MemoryVerdict,
   RelationType,
+  SelectedProject,
   SkillDiagnosis,
   SkillFlow,
   SkillFlowStep,
@@ -59,15 +60,25 @@ export const fetchSkills = (project?: string | null) =>
   req<SkillsData>(
     '/api/skills?lang=' + getLang() + (project ? '&project=' + encodeURIComponent(project) : ''),
   );
-export const fetchFile = (src: string) =>
-  req<{ content: string }>('/api/file?src=' + encodeURIComponent(src)).then((r) => r.content);
+/*
+ * 読み取り許可は「cwd + 選んだプロジェクト」に絞られているので、本文を読む GET は
+ * どれを選んでいるか(= SkillsData.selected.id)を必ず添える。省略するとサーバーは
+ * cwd に落とすため、選んだプロジェクトの CLAUDE.md / memory 本文だけが開けなくなる。
+ */
+const withProject = (url: string, project: string) =>
+  url + (project ? '&project=' + encodeURIComponent(project) : '');
+
+export const fetchFile = (src: string, project: string) =>
+  req<{ content: string }>(withProject('/api/file?src=' + encodeURIComponent(src), project)).then(
+    (r) => r.content,
+  );
 export const fetchSummaryStatus = () => req<SummaryJob>('/api/summary-status');
 /*
  * 前版(HEAD)の内容。git 管理外・履歴なし・user scope は { available: false } で返り、
  * 理解画面はそのとき「前版との diff」ボタンを出さない(計画 15 C1 / E1)
  */
-export const fetchDiff = (src: string) =>
-  req<DiffResponse>('/api/diff?src=' + encodeURIComponent(src));
+export const fetchDiff = (src: string, project: string) =>
+  req<DiffResponse>(withProject('/api/diff?src=' + encodeURIComponent(src), project));
 
 /*
  * mutation は表示言語と AI モデル設定も送る(言語は AI 生成・builtin 説明の解決、
@@ -82,10 +93,14 @@ function mutate<T>(path: string, payload: Record<string, unknown>): Promise<T> {
   });
 }
 
-export const openSkill = (src: string) =>
-  mutate<{ ok: true; editor: string }>('/api/open', { src });
-export const summarizeSkill = (src: string, name: string) =>
-  mutate<{ ok: true; summary: string }>('/api/summarize', { src, name });
+/*
+ * src を読む mutation(エディタで開く / 要約 / 診断 / フロー)も、読み取り許可が
+ * 「cwd + 選んだプロジェクト」に絞られているので selected(= SkillsData.selected.id)を送る。
+ */
+export const openSkill = (src: string, selected: string) =>
+  mutate<{ ok: true; editor: string }>('/api/open', { src, selected });
+export const summarizeSkill = (src: string, name: string, selected: string) =>
+  mutate<{ ok: true; summary: string }>('/api/summarize', { src, name, selected });
 export const summarizeAll = (force = false) => mutate<SummaryJob>('/api/summarize-all', { force });
 /* 用途グループの生成/再生成(環境全体で 1 回の haiku 呼び出し。完了までブロック) */
 export const generateGroups = () => mutate<{ ok: true }>('/api/group-generate', {});
@@ -100,13 +115,18 @@ export const triageMemory = (project: string, selected: string, files?: string[]
   mutate<{ ok: true }>('/api/memory-triage', { project, selected, files, force });
 /* What's Changed の「既読にする」: 現在の状態を次回比較の基準として保存 */
 export const ackChanges = () => mutate<{ ok: true }>('/api/changes-ack', {});
-export const diagnoseSkill = (src: string, name: string) =>
+export const diagnoseSkill = (src: string, name: string, selected: string) =>
   mutate<{ ok: true } & import('../../src/shared/types').SkillDiagnosis>('/api/diagnose', {
     src,
     name,
+    selected,
   });
-export const flowSkill = (src: string, name: string) =>
-  mutate<{ ok: true } & import('../../src/shared/types').SkillFlow>('/api/flow', { src, name });
+export const flowSkill = (src: string, name: string, selected: string) =>
+  mutate<{ ok: true } & import('../../src/shared/types').SkillFlow>('/api/flow', {
+    src,
+    name,
+    selected,
+  });
 
 /* ---- item key / URL id ---- */
 

@@ -96,7 +96,8 @@ function TitleBlock({ data, file }: { data: SkillsData; file?: ClaudeMdFile }) {
   /* 段はサーバーが選んだプロジェクトで計算したものなので、チップもその名前を出す(計画 16 判断 3) */
   const projectLabel = data.selected.name;
   const kinds = presentKinds(data.claudeMd);
-  const { openError, onOpenEditor } = useOpenEditor(file?.path || '');
+  /* CLAUDE.md は .claude の外なので、読み取り許可の起点(選んだプロジェクト)を必ず渡す(計画 16) */
+  const { openError, onOpenEditor } = useOpenEditor(file?.path || '', data.selected.id);
   return (
     <div className="dv-title">
       <div className="dv-title-row">
@@ -326,7 +327,7 @@ function FileRow({
 function BodyGrid({ data, file }: { data: SkillsData; file: ClaudeMdFile }) {
   // 4 MiB 超は本文を取りに行かない(サーバーも読んでいない)。管理ポリシーと同じ扱いにする
   const withheld = !!file.bodyWithheld || !!file.tooLarge;
-  const { raw, error } = useMdText(withheld ? '' : file.path);
+  const { raw, error } = useMdText(withheld ? '' : file.path, data.selected.id);
   const parsed = raw === null ? null : splitFrontmatter(raw);
   const body = parsed ? parsed.body : null;
   const layer = layerOf(data.claudeMd, file);
@@ -365,6 +366,7 @@ function BodyGrid({ data, file }: { data: SkillsData; file: ClaudeMdFile }) {
         parsed={parsed}
         error={error}
         withheld={withheld}
+        selected={data.selected.id}
       />
     </div>
   );
@@ -417,6 +419,7 @@ function FilePanel({
   parsed,
   error,
   withheld,
+  selected,
 }: {
   file: ClaudeMdFile;
   path: string;
@@ -424,6 +427,8 @@ function FilePanel({
   parsed: { frontmatter: string | null; body: string } | null;
   error: string;
   withheld: boolean;
+  /* 選んでいるプロジェクト(SkillsData.selected.id)。前版の取得も読み取り許可に乗る */
+  selected: string;
 }) {
   const [prev, setPrev] = useState<DiffResponse | null>(null);
   const [showDiff, setShowDiff] = useState(false);
@@ -434,7 +439,7 @@ function FilePanel({
     setShowDiff(false);
     setMore(false);
     if (withheld) return;
-    fetchDiff(file.path)
+    fetchDiff(file.path, selected)
       .then((r) => {
         if (alive) setPrev(r);
       })
@@ -442,7 +447,7 @@ function FilePanel({
     return () => {
       alive = false;
     };
-  }, [file.path, withheld]);
+  }, [file.path, withheld, selected]);
 
   const preview = parsed ? splitPreview(parsed.body) : null;
   const shown = preview ? (more || !preview.rest ? parsed!.body : preview.head) : '';
