@@ -195,12 +195,34 @@ describe('@import の展開', () => {
   });
 
   /* 参照 1 件ごとに realpath + stat が走るので、扇形に広い CLAUDE.md で件数を打ち切る */
-  it('1 ファイルから拾う参照の件数に上限がある', () => {
+  it('1 ファイルから拾う参照は 200 件で打ち切る', () => {
     write(
       path.join(root, 'CLAUDE.md'),
       Array.from({ length: 500 }, (_, i) => `@./n${i}.md`).join('\n'),
     );
-    expect(layer('project').files[0].imports.length).toBeLessThanOrEqual(200);
+    const ims = layer('project').files[0].imports;
+    expect(ims).toHaveLength(200);
+    // 打ち切るのは末尾。先頭から順に拾うので、本文の印との対応がずれない
+    expect(ims[0].ref).toBe('./n0.md');
+    expect(ims[199].ref).toBe('./n199.md');
+  });
+
+  /*
+   * 走査 1 回ぶんの総数の上限。ファイル単位の上限だけだと、rules 段が .claude/rules/*.md を
+   * 件数の制限なく回すので「200 本 × 200 件」で元の木阿弥になる(レビュー 3 周目の実測:
+   * 40,000 要素 / 8.6MB / 1.2 秒)。予算は段をまたいで共有する。
+   */
+  it('@import 行の総数は走査全体で 500 件に収まる(段をまたいで共有する)', () => {
+    // rules 段に 200 本、それぞれ 200 参照。ファイル単位の上限だけなら 40,000 件になる
+    for (let i = 0; i < 200; i++) {
+      write(
+        path.join(root, '.claude', 'rules', `r${i}.md`),
+        Array.from({ length: 200 }, (_, j) => `@./miss${j}.md`).join('\n'),
+      );
+    }
+    const scan = claudeMdLayers({ home, root, managedPath });
+    const total = scan.layers.flatMap((l) => l.files).reduce((n, f) => n + f.imports.length, 0);
+    expect(total).toBe(500);
   });
 
   it('存在しない参照は exists: false で残す(コストは 0)', () => {
@@ -257,13 +279,42 @@ describe('@import の展開', () => {
     expect(im.tokens).toBe(0);
   });
 
-  /* 公式は 4 MiB 超の CLAUDE.md を読まない。viewer もそこに揃える */
+  /*
+   * 公式は 4 MiB 超の CLAUDE.md を読まない。viewer もそこに揃える。
+   * 「超えたら読まない」だけでなく「未満なら読む」も見る ── 片側だけだと上限を
+   * 小さくする退行(以前の 256KB に戻す等)が素通りする。
+   */
   it('4 MiB を超える大きさは too-large で読まない', () => {
     write(path.join(root, 'big.md'), 'x'.repeat(4 * 1024 * 1024 + 16));
     write(path.join(root, 'CLAUDE.md'), '@./big.md');
     const im = layer('project').files[0].imports[0];
     expect(im.skipped).toBe('too-large');
     expect(im.tokens).toBe(0);
+  });
+
+  it('4 MiB 未満は上限に掛からず展開する(300KB)', () => {
+    write(path.join(root, 'mid.md'), 'x'.repeat(300 * 1024));
+    write(path.join(root, 'CLAUDE.md'), '@./mid.md');
+    const im = layer('project').files[0].imports[0];
+    expect(im.skipped).toBeUndefined();
+    expect(im.tokens).toBeGreaterThan(0);
+  });
+
+  /*
+   * 本体側にも同じ上限を掛ける(以前は @import 先にしか掛かっていなかった)。
+   * ただし段から消してはいけない: claudeMdRefs は段の files から現在のキーを作るので、
+   * 消すと差分追跡が「CLAUDE.md が消えた」と誤って出す。存在は残してコストだけ 0 にする。
+   */
+  it('本体が 4 MiB を超える段は読まないが、存在は残す(tok は 0)', () => {
+    write(path.join(root, 'CLAUDE.md'), 'x'.repeat(4 * 1024 * 1024 + 16));
+    const l = layer('project');
+    expect(l.tokens).toBe(0);
+    expect(l.files).toHaveLength(1);
+    expect(l.files[0].tooLarge).toBe(true);
+    expect(l.files[0].headings).toEqual([]);
+    // 差分追跡のキーからも消えない
+    const scan = claudeMdLayers({ home, root, managedPath });
+    expect(claudeMdRefs(scan, home).map((r) => r.path)).toContain(path.join(root, 'CLAUDE.md'));
   });
 
   it('~ 始まりは home から解決する(~/.claude 配下は境界の中)', () => {
@@ -283,7 +334,58 @@ describe('@import の展開', () => {
     expect(im.skipped).toBe('out-of-scope');
     expect(im.exists).toBe(false);
     expect(im.tokens).toBe(0);
-    expect(im.path).not.toBe(fs.realpathSync(outside));
+    // 返すのは「要求されたパスを素直に解決した結果」であって symlink の先ではない。
+    // realpathSync との比較は TMPDIR が symlink かどうかに依存するので使わない
+    expect(im.path).toBe(path.join(home, 'private.md'));
+  });
+
+  /* 境界の中に置いた symlink が外を指す形。realpath 後の再判定で落ちる */
+  it('プロジェクト内の symlink が外を指していても out-of-scope(リンク先のパスも返さない)', () => {
+    const outside = path.join(dir, 'elsewhere', 'secret.md');
+    write(outside, 'private');
+    const link = path.join(root, 'aliased.md');
+    fs.symlinkSync(outside, link);
+    write(path.join(root, 'CLAUDE.md'), '@./aliased.md');
+    const im = layer('project').files[0].imports[0];
+    expect(im.skipped).toBe('out-of-scope');
+    expect(im.exists).toBe(false);
+    expect(im.path).toBe(link);
+  });
+
+  /* 名前だけを見ると .aws/credentials や .ssh/id_rsa が素通りする(レビュー 3 周目の指摘) */
+  it('ドットで始まるディレクトリの配下も開かない', () => {
+    write(path.join(root, '.aws', 'credentials'), 'aws_secret_access_key = x');
+    write(path.join(root, '.ssh', 'id_rsa'), 'PRIVATE KEY');
+    write(path.join(root, 'CLAUDE.md'), '@./.aws/credentials\n@./.ssh/id_rsa');
+    for (const im of layer('project').files[0].imports) {
+      expect(im.skipped).toBe('out-of-scope');
+      expect(im.exists).toBe(false);
+      expect(im.tokens).toBe(0);
+    }
+  });
+
+  /* .claude は境界の定義に使うディレクトリなので、その配下の正当な参照は通す */
+  it('.claude 配下の普通のファイルは開ける(境界そのもののディレクトリ)', () => {
+    write(path.join(home, '.claude', 'rules', 'shared.md'), 'shared body');
+    write(path.join(root, 'CLAUDE.md'), '@~/.claude/rules/shared.md');
+    const im = layer('project').files[0].imports[0];
+    expect(im.skipped).toBeUndefined();
+    expect(im.tokens).toBeGreaterThan(0);
+  });
+
+  /* 境界の中でも秘密が入る場所は開かない(.git 配下・ドットで始まるファイル) */
+  it('.git 配下とドットで始まるファイルは境界の中でも開かない', () => {
+    write(path.join(root, '.git', 'config'), '[core]');
+    write(path.join(root, '.env'), 'SECRET=1');
+    write(path.join(home, '.claude', '.credentials.json'), '{"token":"x"}');
+    write(path.join(root, 'CLAUDE.md'), '@./.git/config\n@./.env\n@~/.claude/.credentials.json');
+    const ims = layer('project').files[0].imports;
+    expect(ims).toHaveLength(3);
+    for (const im of ims) {
+      expect(im.skipped).toBe('out-of-scope');
+      expect(im.exists).toBe(false);
+      expect(im.tokens).toBe(0);
+    }
   });
 });
 

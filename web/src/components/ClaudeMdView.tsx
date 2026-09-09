@@ -321,7 +321,13 @@ function FileRow({
   sub?: boolean;
 }) {
   const ms = Date.parse(file.updatedAt) || 0;
-  const note = file.lazy ? t('cmd.lazyRowNote') : file.bodyWithheld ? t('cmd.withheldRow') : '';
+  const note = file.lazy
+    ? t('cmd.lazyRowNote')
+    : file.bodyWithheld
+      ? t('cmd.withheldRow')
+      : file.tooLarge
+        ? t('cmd.tooLargeRow')
+        : '';
   return (
     <button
       className={
@@ -351,7 +357,8 @@ function FileRow({
 /* ---- 見出しと tok + 本文 ---- */
 
 function BodyGrid({ data, file }: { data: SkillsData; file: ClaudeMdFile }) {
-  const withheld = !!file.bodyWithheld;
+  // 4 MiB 超は本文を取りに行かない(サーバーも読んでいない)。管理ポリシーと同じ扱いにする
+  const withheld = !!file.bodyWithheld || !!file.tooLarge;
   const { raw, error } = useMdText(withheld ? '' : file.path);
   const parsed = raw === null ? null : splitFrontmatter(raw);
   const body = parsed ? parsed.body : null;
@@ -494,7 +501,11 @@ function FilePanel({
         )}
       </div>
       {withheld && (
-        <div className="dv-empty">{t('cmd.withheld', { n: file.tokens.toLocaleString() })}</div>
+        <div className="dv-empty">
+          {file.tooLarge
+            ? t('cmd.tooLarge')
+            : t('cmd.withheld', { n: file.tokens.toLocaleString() })}
+        </div>
       )}
       {!withheld && error && <div className="dv-empty">{t('app.loadFailed', { msg: error })}</div>}
       {!withheld && !error && parsed === null && (

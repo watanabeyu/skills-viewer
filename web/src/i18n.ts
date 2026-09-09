@@ -526,6 +526,7 @@ const en = {
   'cmd.rulesNote': 'no paths: at start · paths: lazy',
   'cmd.lazyRowNote': 'paths: · loaded lazily · not counted',
   'cmd.withheldRow': 'body not shown',
+  'cmd.tooLargeRow': 'over 4 MiB · not loaded',
   'cmd.sections': 'sections · tok',
   'cmd.colHeading': 'heading',
   'cmd.sectionsNone': 'no headings',
@@ -550,6 +551,8 @@ const en = {
   'cmd.fileLazy': 'paths: · loaded lazily · not in the total',
   'cmd.withheld':
     'Managed policy: the body is not shown here. Only its presence and estimated size ({n} tok) are.',
+  'cmd.tooLarge':
+    'This file is over 4 MiB, so Claude Code skips it and it costs nothing per session. The viewer does not read it either.',
   'cmd.noFiles': 'No CLAUDE.md in any layer. Nothing is injected from here.',
   'cmd.crumb': 'CLAUDE.md',
   'common.loading': 'Loading…',
@@ -1084,6 +1087,7 @@ const ja: Record<MsgKey, string> = {
   'cmd.rulesNote': 'paths: 無しは起動時、有りは遅延',
   'cmd.lazyRowNote': 'paths: 付き · 遅延ロード · 合計に含まない',
   'cmd.withheldRow': '本文は出さない',
+  'cmd.tooLargeRow': '4 MiB 超 · 読み込まれない',
   'cmd.sections': '見出しと tok',
   'cmd.colHeading': '見出し',
   'cmd.sectionsNone': '見出しなし',
@@ -1107,6 +1111,8 @@ const ja: Record<MsgKey, string> = {
   'cmd.fileMeta': '{n} tok · {date} 更新',
   'cmd.fileLazy': 'paths: 付き · 遅延ロード · 合計に含まない',
   'cmd.withheld': '管理ポリシーの本文はここでは出さない。存在と概算({n} tok)だけを扱う。',
+  'cmd.tooLarge':
+    'このファイルは 4 MiB を超えるため Claude Code が読み飛ばす。毎セッションのコストは 0。viewer も読まない。',
   'cmd.noFiles': 'どの階層にも CLAUDE.md が無い。ここからは何も注入されない。',
   'cmd.crumb': 'CLAUDE.md',
   'common.loading': '読み込み中…',

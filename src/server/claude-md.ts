@@ -23,6 +23,7 @@ import type { ClaudeMdFile, ClaudeMdImport, ClaudeMdLayer, ClaudeMdScan } from '
 import { estimateTokens } from './lint';
 import { parseFrontmatter } from './scan';
 import { isUnder, realDir, worktreeRootOf } from './memory';
+import { bodyWithoutFrontmatter, importRefs } from '../shared/import-refs';
 
 /*
  * user scope の設定ディレクトリ。HOME/.claude の参照はこのファイルに集約する
@@ -42,9 +43,12 @@ const MAX_IMPORT_DEPTH = 4;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 /*
- * 1 ファイルから拾う参照の件数と、1 段の走査で作る @import 行の総数。
+ * 1 ファイルから拾う参照の件数と、1 回の走査(7 段ぜんぶ)で作る @import 行の総数。
  * 参照 1 件ごとに realpath + stat が走るので、扇形に広い CLAUDE.md で毎リクエスト数千回の
  * fs 呼び出しと数 MB の JSON が出るのを防ぐ(git author に 40 件の予算を置いたのと同じ趣旨)。
+ *
+ * 総数はファイル単位ではなく**走査全体で共有する**。rules 段は .claude/rules/*.md を
+ * 件数の制限なく回すので、ファイル単位の上限だけだと「200 本 × 200 件」で元の木阿弥になる。
  */
 const MAX_IMPORT_REFS_PER_FILE = 200;
 const MAX_IMPORT_ENTRIES = 500;
@@ -56,13 +60,28 @@ const MAX_IMPORT_ENTRIES = 500;
  */
 interface ImportScope {
   roots: string[];
+  /*
+   * 1 回の走査(7 段ぜんぶ)で作る @import 行の残り予算。段をまたいで共有する。
+   * ファイル単位の上限だけだと、rules 段が .claude/rules/*.md を件数の制限なく回すので
+   * 「200 本 × 200 件」で元の木阿弥になる(レビュー 3 周目の実測: 40,000 要素 / 8.6MB / 1.2 秒)。
+   */
+  budget: ImportBudget;
+}
+
+/* 予算切れで打ち切ったかどうか。合計 tok が理由不明のまま小さくなるのを避けるため印を返す */
+interface ImportBudget {
+  left: number;
+  truncated: boolean;
 }
 
 function importScopeOf(root: string | null, home: string): ImportScope {
   const dirs = [userClaudeDir(home), root].filter((d): d is string => !!d);
   // realDir は memory.ts の写像(realpath が取れなければ resolve で代用)。
   // 許可の判定はこの 1 本に揃える — 場所ごとに実パスで見るかが変わると許可と判定がずれる
-  return { roots: [...new Set(dirs.flatMap((d) => [d, realDir(d)]))] };
+  return {
+    roots: [...new Set(dirs.flatMap((d) => [d, realDir(d)]))],
+    budget: { left: MAX_IMPORT_ENTRIES, truncated: false },
+  };
 }
 
 /* 管理ポリシーの置き場(OS ごとの固定パス)。本文は返さず存在と概算だけ扱う */
@@ -72,11 +91,16 @@ function managedPolicyPath(): string {
   return '/etc/claude-code/CLAUDE.md';
 }
 
-function readText(fp: string): string | null {
+/*
+ * 本文の読み取り。'too-large' と null(読めない)を言い分ける:
+ * 大きすぎるファイルは「存在するが読まれない」ので、段から消すと差分追跡が
+ * 「消えた」と誤って出す(claudeMdRefs は段の files から現在のキーを作る)。
+ */
+function readText(fp: string): string | 'too-large' | null {
   try {
-    // 公式も 4 MiB 超の CLAUDE.md は読まない。読む前に大きさで落とす
-    // (毎リクエストの全読みと概算の文字単位ループが効かないように)
-    if (fs.statSync(fp).size > MAX_FILE_BYTES) return null;
+    // 公式も 4 MiB 超の CLAUDE.md は読まない(loads … up to 4 MiB in full and skips a larger file)。
+    // 読む前に大きさで落とす(毎リクエストの全読みと概算の文字単位ループが効かないように)
+    if (fs.statSync(fp).size > MAX_FILE_BYTES) return 'too-large';
     return fs.readFileSync(fp, 'utf8');
   } catch {
     return null; // 権限エラー等で読めない段は「無い」扱いにして一覧全体を落とさない
@@ -112,46 +136,6 @@ function headingsOf(body: string): { text: string; tokens: number }[] {
   return out;
 }
 
-/*
- * @import の解決。除外の規則は公式に合わせる(memory.md「Import parsing skips Markdown code
- * spans and fenced code blocks. … writing `@README` keeps the text literal, while @README
- * outside backticks imports the file」): ``` のフェンス内と ` ` のコードスパン内は拾わず、
- * それ以外の @ トークンは拡張子もスラッシュも無くても参照として扱う。
- *
- * かつては「パスに見えるもの」だけを拾っていたが、それだと公式が読む `@README` `@Makefile` を
- * 落として常時コストを過少に出す。散文の「@alice に聞く」は解決に失敗して exists: false の行に
- * なるだけで、境界の外は下の inImportScope が開かない。
- */
-const trimTail = (s: string): string => {
-  // 正規表現の [.,;:)\]]+$ は「.」の長い連なりでバックトラックし、200KB の 1 行で数秒止まる。
-  // 末尾から数えるだけにして入力長に線形にする
-  let end = s.length;
-  while (end > 0 && '.,;:)]'.includes(s[end - 1])) end--;
-  return s.slice(0, end);
-};
-
-function importRefs(body: string): string[] {
-  const refs: string[] = [];
-  let inFence = false;
-  for (const line of body.split(/\r?\n/)) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    // コードスパンは中身ごと落とす(`@README` は文字どおりの表記で参照ではない)
-    const bare = line.replace(/`[^`]*`/g, ' ');
-    for (const m of bare.matchAll(/(^|\s)@(\S+)/g)) {
-      const ref = trimTail(m[2]);
-      // 参照 1 件の長さの上限。これを超えるものはパスではなく、後段の realpath も無駄になる
-      if (!ref || ref.length > 1024) continue;
-      refs.push(ref);
-      if (refs.length >= MAX_IMPORT_REFS_PER_FILE) return refs;
-    }
-  }
-  return refs;
-}
-
 function resolveImport(ref: string, fromDir: string, home: string): string {
   if (ref.startsWith('~/')) return path.join(home, ref.slice(2));
   if (path.isAbsolute(ref)) return ref;
@@ -174,8 +158,12 @@ function expandImports(
   scope: ImportScope,
   out: ClaudeMdImport[],
 ): void {
-  for (const ref of importRefs(body)) {
-    if (out.length >= MAX_IMPORT_ENTRIES) return;
+  for (const ref of importRefs(body, MAX_IMPORT_REFS_PER_FILE)) {
+    if (scope.budget.left <= 0) {
+      scope.budget.truncated = true;
+      return;
+    }
+    scope.budget.left--;
     const abs = resolveImport(ref, fromDir, home);
     /*
      * 読み取りの境界の外は realpath も stat もしない。CLAUDE.md は clone したリポジトリから
@@ -229,6 +217,10 @@ function expandImports(
       out.push({ ref, path: real, exists: false, depth, tokens: 0 });
       continue;
     }
+    if (raw === 'too-large') {
+      out.push({ ref, path: real, exists: true, depth, tokens: 0, skipped: 'too-large' });
+      continue;
+    }
     out.push({ ref, path: real, exists: true, depth, tokens: estimateTokens(raw) });
     stack.add(real);
     expandImports(raw, path.dirname(real), home, depth + 1, seen, stack, scope, out);
@@ -245,17 +237,20 @@ const inImportScope = (p: string, scope: ImportScope): boolean =>
 
 /*
  * 境界の中でも開かないもの。公式の @import は拡張子を問わない(@package.json も読む)ので
- * .md に絞ることはしないが、秘密が入る場所は外す:
- * - .git 配下(/api/diff も明示的に弾いている)
- * - 名前が . で始まるファイル(~/.claude/.credentials.json、リポジトリの .env)
- * どちらも「参照されたら概算サイズを返す」だけでも渡したくない場所。
+ * .md には絞らないが、秘密が入る場所は外す。判定は**パスの全区切り**を見る:
+ * 名前だけを見ると `<project>/.aws/credentials` や `<project>/.ssh/id_rsa` が素通りする。
+ *
+ * 例外は `.claude` そのもの。境界の定義に使っているディレクトリで、`~/.claude/rules/x.md`
+ * のような正当な参照がここを通る。その配下でも `.` で始まるもの(`.credentials.json`)は外す。
+ *
+ * 本文は返さないので漏れるのは「存在するか」と概算サイズだけだが、`.env` を外した理由
+ * (参照されただけで大きさを渡したくない)は `.aws` `.ssh` にそのまま当てはまる。
  */
 function openableImport(p: string, scope: ImportScope): boolean {
   if (!inImportScope(p, scope)) return false;
-  const parts = p.split(path.sep);
-  if (parts.includes('.git')) return false;
-  const base = parts[parts.length - 1] || '';
-  return !base.startsWith('.');
+  return !p
+    .split(path.sep)
+    .some((seg) => seg.startsWith('.') && seg !== '.claude' && seg !== '.' && seg !== '..');
 }
 
 /* 1 ファイル分の読み取り。本文を返さない段(管理ポリシー)は withhold で切り替える */
@@ -267,6 +262,17 @@ function readFile(
 ): ClaudeMdFile | null {
   const raw = readText(fp);
   if (raw === null) return null;
+  // 大きすぎて読まなかった段。存在は残し、コストは 0(Claude Code も読み飛ばす)
+  if (raw === 'too-large')
+    return {
+      path: fp,
+      ownTokens: 0,
+      tokens: 0,
+      updatedAt: mtime(fp),
+      headings: [],
+      imports: [],
+      tooLarge: true,
+    };
   const ownTokens = estimateTokens(raw);
   const imports: ClaudeMdImport[] = [];
   const seen = new Set<string>();
@@ -279,7 +285,21 @@ function readFile(
     seen.add(fp);
     stack.add(fp);
   }
-  expandImports(raw, path.dirname(fp), home, 1, seen, stack, scope, imports);
+  /*
+   * 参照は frontmatter を外した本文から拾う。web は frontmatter を別枠で描くので印を置けず、
+   * server だけが数えると出現順の突き合わせが 1 つずれる
+   * (.claude/rules/*.md の `description: applies to @types/node` のような値で実際に起きる)。
+   */
+  expandImports(
+    bodyWithoutFrontmatter(raw),
+    path.dirname(fp),
+    home,
+    1,
+    seen,
+    stack,
+    scope,
+    imports,
+  );
   const importTokens = imports.reduce((n, im) => n + im.tokens, 0);
   return {
     path: fp,

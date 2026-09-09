@@ -19,6 +19,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { DiffResponse } from '../shared/types';
 import { ApiError } from './errors';
@@ -41,13 +42,15 @@ export function resolveDiffTarget(
   const raw = path.resolve(src);
   if (!raw.endsWith('.md')) throw new ApiError('not-md', raw);
   /*
-   * ファイル自身は消えていることがあるが、置かれていたディレクトリは普通に残る。
-   * そこを realDir で解決してから判定する: 解決しないと、経路に `.claude` を含む symlink が
-   * 別のリポジトリを指しているとき、その別リポジトリの HEAD を返してしまう
-   * (clone してきたリポジトリが symlink を持ち込める。/api/file は同じパスを拒否する)。
+   * 対象のファイルは消えていることがある(それを出すのがこの API)。だから realpath は
+   * 掛けられないが、**実在する一番深い祖先までは解決する**。そこまで解決しないと、
+   * 経路に `.claude` を含む symlink が別のリポジトリを指しているとき、その別リポジトリの
+   * HEAD を返してしまう(clone してきたリポジトリが symlink を持ち込める。
+   * /api/file は同じパスを拒否するので、許可範囲が食い違う)。
+   * ディレクトリごと消えている場合も想定する ── 1 段だけ解決する realDir では素通りする。
    */
-  const dir = realDir(path.dirname(raw));
-  const abs = path.join(dir, path.basename(raw));
+  const abs = resolveExisting(raw);
+  const dir = path.dirname(abs);
   // .git 配下は git show で読めてしまうので、リポジトリ判定より前に明示的に拒否する
   if (abs.split(path.sep).includes('.git')) throw new ApiError('not-readable-path', abs);
   /*
@@ -56,16 +59,44 @@ export function resolveDiffTarget(
    */
   if (!allowedPath(abs, cwd)) return { reason: 'out-of-scope' };
   // user scope(~/.claude)は全プロジェクトで共有され git 履歴を持たないので差分の対象外。
-  // 比較はケース非依存 FS で case-fold する isUnder に揃える(v0.8.1 の判断)
-  if (isUnder(abs, userClaudeDir())) return { reason: 'user-scope' };
+  // 比較はケース非依存 FS で case-fold する isUnder に揃え、HOME 自身が symlink 経由でも
+  // 同じ答えになるよう解決前後の両方を見る(importScopeOf と同じ扱い)
+  const userDir = userClaudeDir();
+  if (isUnder(abs, userDir) || isUnder(abs, realDir(userDir))) return { reason: 'user-scope' };
   const root = rootOf(dir);
   if (!root) return { reason: 'not-git' };
   const rel = path.relative(root, abs);
   // root は abs の祖先として求めているので通常は起きない。git に `..` を渡さない最後の砦
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel))
     throw new ApiError('not-readable-path', abs);
+  /*
+   * root 自体が境界の外に出ていないか最後に確かめる。root は「`.git` を持つ祖先」なので、
+   * symlink や `gitdir:` を書いたファイルで別のリポジトリに化けうる。
+   * その root の下の同じ相対パスが許可されるかを見れば、化けた場合に落ちる。
+   */
+  if (!allowedPath(path.join(realDir(root), rel), cwd)) return { reason: 'out-of-scope' };
   // git は常に POSIX 区切りの相対パスを期待する(Windows の \ をそのまま渡すと引けない)
   return { root, relPath: rel.split(path.sep).join('/') };
+}
+
+/*
+ * 実在する一番深い祖先まで realpath し、残りの区切りを繋ぎ直す。
+ * 「消えたファイルの過去の内容」を扱いつつ、経路の symlink では境界を越えられないようにする。
+ */
+function resolveExisting(abs: string): string {
+  const rest: string[] = [];
+  let cur = abs;
+  for (let i = 0; i < 64; i++) {
+    const parent = path.dirname(cur);
+    if (parent === cur) break; // ルートまで来た
+    rest.unshift(path.basename(cur));
+    try {
+      return path.join(fs.realpathSync(parent), ...rest);
+    } catch {
+      cur = parent;
+    }
+  }
+  return abs;
 }
 
 /* HEAD 時点の内容。非 git・履歴なし・user scope・git 失敗は available: false */

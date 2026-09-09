@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ClaudeMdFile, ClaudeMdImport, ClaudeMdScan } from '../src/shared/types';
+import type { ImportTree } from '../web/src/claudemd';
 import {
   LAYER_ORDER,
   allFiles,
@@ -289,7 +290,8 @@ describe('importLine / nestedState / importTok — skipped の全種', () => {
 
   it.each(cases)('%s は展開扱いにせず専用の文言を出す', (skipped, direct, nested) => {
     setLang('en');
-    const im = imp('x.md', { skipped, tokens: 0 });
+    // 境界の外はサーバーが解決そのものをしないので exists: false で返る。その形で通す
+    const im = imp('x.md', { skipped, tokens: 0, exists: skipped !== 'out-of-scope' });
     expect(importLine(im)).toContain(direct);
     expect(importLine(im)).not.toContain('expanded here');
     expect(nestedState(im)).toContain(nested);
@@ -313,6 +315,33 @@ describe('importLine / nestedState / importTok — skipped の全種', () => {
     expect(importTok(im)).toBe('—');
   });
 
+  /*
+   * 境界の外は exists: false + skipped で返る。判定の順を間違えると「見つからない」に化け、
+   * out-of-scope の文言が 1 度も表示されない(レビュー 3 周目の指摘)。
+   */
+  it('境界の外は「無い」ではなく「境界の外」と出す', () => {
+    setLang('en');
+    const im = imp('/etc/hosts', { exists: false, skipped: 'out-of-scope', tokens: 0 });
+    expect(importLine(im)).toContain('outside the project');
+    expect(importLine(im)).not.toContain('not found');
+    expect(nestedState(im)).toContain('out of scope');
+  });
+
+  it('importStats は境界の外を missing ではなく skipped に数える', () => {
+    const scan = withFiles({
+      project: [
+        file('/p/CLAUDE.md', {
+          imports: [
+            imp('/etc/hosts', { exists: false, skipped: 'out-of-scope', tokens: 0 }),
+            imp('gone.md', { exists: false, tokens: 0 }),
+            imp('ok.md', { tokens: 40 }),
+          ],
+        }),
+      ],
+    });
+    expect(importStats(scan)).toMatchObject({ expanded: 1, missing: 1, skipped: 1, tokens: 40 });
+  });
+
   it('両言語に文言がある(片方だけだとキーがそのまま出る)', () => {
     for (const lang of ['en', 'ja'] as const) {
       setLang(lang);
@@ -322,5 +351,41 @@ describe('importLine / nestedState / importTok — skipped の全種', () => {
       }
     }
     setLang('en');
+  });
+});
+
+/*
+ * 本文の印とサーバーの展開結果は出現順の index で突き合わせる。片側だけが 1 件多く拾うと
+ * 以降が全部ずれ、実在する @import の行に別のファイルの状態と tok が付く
+ * (サーバーだけ `~~~` を知っていた頃に実際に起きた。レビュー 3 周目の指摘)。
+ */
+describe('splitImports — 本文の印とサーバーの結果の対応', () => {
+  const marks = (body: string, imports: ClaudeMdImport[]) =>
+    splitImports(body, imports)
+      .filter((s): s is { type: 'import'; ref: string; tree?: ImportTree } => s.type === 'import')
+      .map((s) => [s.ref, s.tree?.root.ref ?? null]);
+
+  it('~~~ フェンスの中の @ を印にしない(サーバーも拾わない)', () => {
+    const body = '~~~\n@in-fence.md\n~~~\n@real.md';
+    expect(marks(body, [imp('real.md', { tokens: 7 })])).toEqual([['real.md', 'real.md']]);
+  });
+
+  it('``` の閉じ行に書かれた @ も印にしない', () => {
+    const body = '```\ncode\n``` @sneaky.md\n@real.md';
+    expect(marks(body, [imp('real.md', { tokens: 7 })])).toEqual([['real.md', 'real.md']]);
+  });
+
+  it('コードスパンの中は印にしない', () => {
+    const body = 'mention `@README` here\n@real.md';
+    expect(marks(body, [imp('real.md', { tokens: 7 })])).toEqual([['real.md', 'real.md']]);
+  });
+
+  it('複数の参照は出現順で対応する', () => {
+    const body = '@a.md\ntext @b.md text\n@c.md';
+    expect(marks(body, [imp('a.md'), imp('b.md'), imp('c.md')])).toEqual([
+      ['a.md', 'a.md'],
+      ['b.md', 'b.md'],
+      ['c.md', 'c.md'],
+    ]);
   });
 });

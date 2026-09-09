@@ -14,6 +14,7 @@ import type {
   ClaudeMdScan,
 } from './api';
 import { t, type MsgKey } from './i18n';
+import { isFenceLine, refsOfLine } from '../../src/shared/import-refs';
 
 /* 公式の読み込み順(README 6.6)。サーバーが段を省いた場合(root 無し)も 7 行を保つための順序表 */
 export const LAYER_ORDER: ClaudeMdLayerKind[] = [
@@ -85,8 +86,10 @@ export function importStats(scan: ClaudeMdScan): ImportStats {
   const st: ImportStats = { expanded: 0, missing: 0, skipped: 0, tokens: 0 };
   for (const f of allFiles(scan)) {
     for (const im of f.imports) {
-      if (!im.exists) st.missing++;
-      else if (im.skipped) st.skipped++;
+      // skipped を exists より先に見る: 境界の外は「開かなかった」ので存在を伏せて
+      // exists: false で返る(サーバー)。順序を逆にすると「見つからない」に混ざる
+      if (im.skipped) st.skipped++;
+      else if (!im.exists) st.missing++;
       else {
         st.expanded++;
         st.tokens += im.tokens;
@@ -123,40 +126,34 @@ const NESTED_SKIP: Record<Skip, MsgKey> = {
 
 /* 読まなかったものに tok は出さない(0 と書くと「読んで 0 だった」に見える) */
 export const importTok = (im: ClaudeMdImport): string =>
-  !im.exists || im.skipped ? '—' : im.tokens.toLocaleString();
+  im.skipped || !im.exists ? '—' : im.tokens.toLocaleString();
 
-/* 展開位置の印の文言(直接の import)。配下の状態は nestedState が 1 行ずつ */
+/*
+ * 展開位置の印の文言(直接の import)。配下の状態は nestedState が 1 行ずつ。
+ * 判定は skipped が先: 境界の外は解決そのものをしないので exists: false で返ってくる。
+ * exists を先に見ると「境界の外だから開かなかった」が「見つからない」に化ける。
+ */
 export function importLine(im: ClaudeMdImport): string {
-  if (!im.exists) return t('cmd.importMissing', { ref: im.ref });
   if (im.skipped) return t(IMPORT_SKIP[im.skipped], { ref: im.ref });
+  if (!im.exists) return t('cmd.importMissing', { ref: im.ref });
   return t('cmd.expandedHere', { ref: im.ref, n: im.tokens.toLocaleString() });
 }
 
 export function nestedState(im: ClaudeMdImport): string {
-  if (!im.exists) return t('cmd.nestedMissing');
   if (im.skipped) return t(NESTED_SKIP[im.skipped]);
+  if (!im.exists) return t('cmd.nestedMissing');
   return t('cmd.nestedTok', { n: im.tokens.toLocaleString() });
 }
 
 /* ---- 本文中の @import(展開位置の印) ---- */
 
 /*
- * 1 行に含まれる @import の参照(サーバーの importRefs と同じ規則)。
- * 公式の除外規則はコードスパンとコードフェンス(フェンスは呼び出し側が飛ばす)。
- * サーバーと規則がずれると、本文の印とサーバーの展開結果を出現順で突き合わせている都合で
- * 1 つずつずれる(実在する @import の行に別のファイルの tok が付く)ので、必ず揃える。
+ * 1 行に含まれる @import の参照。規則(フェンス・コードスパン・句読点・長さ)は
+ * src/shared/import-refs.ts が単一ソースで、サーバーの走査と同じものを使う。
+ * ここがずれると、本文の印とサーバーの展開結果を出現順で突き合わせている都合で
+ * 1 つずつずれ、実在する @import の行に別のファイルの tok が付く。
  */
-export function importRefsOfLine(line: string): string[] {
-  const refs: string[] = [];
-  // コードスパンは中身ごと落とす(`@README` は文字どおりの表記で参照ではない)
-  for (const m of line.replace(/`[^`]*`/g, ' ').matchAll(/(^|\s)@(\S+)/g)) {
-    let end = m[2].length;
-    while (end > 0 && '.,;:)]'.includes(m[2][end - 1])) end--;
-    const ref = m[2].slice(0, end);
-    if (ref && ref.length <= 1024) refs.push(ref);
-  }
-  return refs;
-}
+export const importRefsOfLine = refsOfLine;
 
 /*
  * 直接の @import(depth 1)とその配下(深さ優先で続く depth ≥ 2)の組。
@@ -196,7 +193,12 @@ export function splitImports(body: string, imports: ClaudeMdImport[]): BodySegme
     buf = [];
   };
   for (const line of body.split(/\r?\n/)) {
-    if (/^\s*```/.test(line)) inFence = !inFence;
+    // フェンス行そのものは本文として残すが参照は拾わない(サーバーと同じ規則)
+    if (isFenceLine(line)) {
+      inFence = !inFence;
+      buf.push(line);
+      continue;
+    }
     const refs = inFence ? [] : importRefsOfLine(line);
     if (!refs.length) {
       buf.push(line);
@@ -243,7 +245,10 @@ export function outlineOf(file: ClaudeMdFile, body: string | null): OutlineRow[]
       out.push({ type: 'heading', level: h[1].length, text: h[2].trim(), tokens: tok });
       continue;
     }
-    if (/^\s*```/.test(line)) inFence = !inFence;
+    if (isFenceLine(line)) {
+      inFence = !inFence;
+      continue;
+    }
     if (inFence) continue;
     for (const ref of importRefsOfLine(line)) {
       const tree = trees[ii++];

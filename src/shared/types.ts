@@ -417,6 +417,11 @@ export interface ClaudeMdFile {
   lazy?: boolean;
   /* 本文を返さない段(管理ポリシー)。存在と概算だけ扱う */
   bodyWithheld?: boolean;
+  /*
+   * 4 MiB を超えるため読まなかった。Claude Code 自身も読み飛ばすので毎回のコストは 0 だが、
+   * 「無い」とは違う。段から消すと差分追跡で「消えた」と誤って出る
+   */
+  tooLarge?: boolean;
 }
 
 export interface ClaudeMdLayer {

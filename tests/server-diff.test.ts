@@ -126,6 +126,39 @@ describe('resolveDiffTarget(symlink で境界の外へ出られないこと)', (
   });
 });
 
+/*
+ * ディレクトリごと消えている場合。1 段だけ解決する realDir では素通りし、
+ * 字句判定 → symlink 側の .git を root として別リポジトリの HEAD が返っていた
+ * (レビュー 3 周目の実測)。実在する一番深い祖先まで解決することで塞ぐ。
+ */
+describe('resolveDiffTarget(symlink の先のディレクトリが消えていても越えられない)', () => {
+  it('相対 symlink + 消えたサブディレクトリでも out-of-scope', () => {
+    const base = mkTmp('sv-diff-sym2-');
+    const proj = path.join(base, 'proj');
+    const other = path.join(base, 'other');
+    fs.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+    fs.mkdirSync(other, { recursive: true });
+    // clone で持ち込める相対 symlink。指す先は別リポジトリ
+    fs.symlinkSync(path.join('..', '..', 'other'), path.join(proj, '.claude', 'rel'));
+    // other/sub は HEAD にはあるがワーキングツリーには無い、という想定(ディレクトリごと不在)
+    const target = path.join(proj, '.claude', 'rel', 'sub', 'x.md');
+    expect(resolveDiffTarget(target, proj, () => other)).toEqual({ reason: 'out-of-scope' });
+    expect(previousContent(target, proj)).toEqual({ available: false, reason: 'out-of-scope' });
+  });
+
+  /* 境界の中で消えているものは従来どおり通る(この API の存在理由) */
+  it('境界の中で消えたファイルは通る', () => {
+    const proj = mkTmp('sv-diff-gone-');
+    fs.mkdirSync(path.join(proj, '.git'));
+    fs.mkdirSync(path.join(proj, '.claude', 'skills', 'x'), { recursive: true });
+    const gone = path.join(proj, '.claude', 'skills', 'x', 'SKILL.md');
+    expect(resolveDiffTarget(gone, proj)).toEqual({
+      root: fs.realpathSync(proj),
+      relPath: '.claude/skills/x/SKILL.md',
+    });
+  });
+});
+
 describe('resolveDiffTarget(root の決め方)', () => {
   it('通常のリポジトリは .git を持つ最も近い祖先が root', () => {
     const dir = mkTmp('sv-diff-root-');
