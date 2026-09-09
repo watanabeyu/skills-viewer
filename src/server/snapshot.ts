@@ -212,7 +212,8 @@ function gitAuthor(fp: string): { author: string; authoredAt: string } | null {
  * リロードごとに同じコストが乗る ── そこが一番速くあってほしい場面なので上限を置く。
  * 超えた分は author を付けない(README 6.3 の「無ければ更新日だけ」に自然に縮退する)。
  */
-const GIT_AUTHOR_MAX = 40;
+// export はテスト用(件数上限を固定するテストが値をハードコードしないため)。値は変えていない
+export const GIT_AUTHOR_MAX = 40;
 /* 全体の時間上限。巨大リポジトリやネットワーク FS で 1 件が遅いときに待受を止めないため */
 const GIT_AUTHOR_BUDGET_MS = 600;
 
@@ -221,7 +222,8 @@ const GIT_AUTHOR_BUDGET_MS = 600;
  * removed を先に回す: 消えたファイルは mtime が残っておらず、git が唯一の情報源なので、
  * 上限に当たったときに真っ先に落ちるのが一番惜しい。
  */
-function attachGitAuthors(changes: SnapshotChanges): void {
+// export はテスト用(git を実プロセスとして起動するので execFileSync をモックして検証する。ロジックは変えていない)
+export function attachGitAuthors(changes: SnapshotChanges): void {
   rootMemo.clear();
   const started = Date.now();
   let calls = 0;

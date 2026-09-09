@@ -80,10 +80,17 @@ export interface ImportStats {
   tokens: number;
   /* 最初に展開した @import(帯の注記用) */
   first?: ClaudeMdImport;
+  /*
+   * 件数の上限で走査を打ち切ったか(サーバーの ClaudeMdScan.importsTruncated)。
+   * 打ち切った先は要素が無いので expanded / missing / skipped のどれにも現れず、合計 tok も
+   * その分だけ小さい。帯で「ここから先は数えていない」と言うために集計へ持ち上げる。
+   */
+  truncated?: true;
 }
 
 export function importStats(scan: ClaudeMdScan): ImportStats {
   const st: ImportStats = { expanded: 0, missing: 0, skipped: 0, tokens: 0 };
+  if (scan.importsTruncated) st.truncated = true;
   for (const f of allFiles(scan)) {
     for (const im of f.imports) {
       // skipped を exists より先に見る: 境界の外は「開かなかった」ので存在を伏せて

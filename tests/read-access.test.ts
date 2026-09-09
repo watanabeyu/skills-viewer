@@ -2,7 +2,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { allowedPath, assertAiReadableMd, assertReadableMd } from '../src/server/read-access';
+import {
+  allowedPath,
+  assertAiReadableMd,
+  assertOpenablePath,
+  assertReadableMd,
+} from '../src/server/read-access';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-read-access-'));
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -239,5 +244,53 @@ describe('allowedPath (消えた CLAUDE.md の非対称)', () => {
   it('存在していれば <project>/CLAUDE.md は許可される(走査が列挙するため)', () => {
     fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), '# root');
     expect(allowedPath(path.join(cwd, 'CLAUDE.md'), cwd)).toBe(true);
+  });
+});
+
+/*
+ * assertOpenablePath は openInEditor の入口だが、エディタを実起動するので openInEditor 経由では
+ * テストできない。assertReadableMd と違って拡張子を問わない(settings.json も開ける)のが要点で、
+ * ここを壊すと「.md しか開けなくなる」か「境界の外まで開けてしまう」のどちらかに倒れる。
+ * 判断: production の非公開関数を export した(read-access.ts、report 参照)。ロジックは変えていない。
+ */
+describe('assertOpenablePath (エディタで開ける範囲は拡張子を問わない)', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-openable-'));
+  afterAll(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const put = (rel: string, content = 'x') => {
+    const fp = path.join(cwd, rel);
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, content);
+    return fp;
+  };
+
+  it('.claude 配下は .md 以外(settings.json)も開ける', () => {
+    const fp = put('.claude/settings.json', '{}');
+    expect(assertOpenablePath(fp, cwd)).toBe(fs.realpathSync(fp));
+  });
+
+  it('autoMemoryDirectory 配下も開ける', () => {
+    const autoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-openable-automem-'));
+    const memCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-openable-memcwd-'));
+    fs.mkdirSync(path.join(memCwd, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(memCwd, '.claude', 'settings.local.json'),
+      JSON.stringify({ autoMemoryDirectory: autoDir }),
+    );
+    const fp = path.join(autoDir, 'handoff.md');
+    fs.writeFileSync(fp, '本文');
+    expect(assertOpenablePath(fp, memCwd)).toBe(fs.realpathSync(fp));
+    fs.rmSync(autoDir, { recursive: true, force: true });
+    fs.rmSync(memCwd, { recursive: true, force: true });
+  });
+
+  it('境界の外は not-openable-path で拒否する', () => {
+    const fp = put('free.txt');
+    expect(() => assertOpenablePath(fp, cwd)).toThrow('not-openable-path');
+  });
+
+  it('存在しないパスは not-found', () => {
+    expect(() => assertOpenablePath(path.join(cwd, '.claude', 'no-such.json'), cwd)).toThrow(
+      'not-found',
+    );
   });
 });

@@ -132,6 +132,13 @@ function ContextBlock({
                   <span className="nm">
                     {l.name}
                     {r.over && <span className="warn-inline">{t('ctx.over')}</span>}
+                    {/*
+                     * @import を件数の上限で打ち切った回は、この行の tok と上の合計がその分だけ
+                     * 小さい。理由は CLAUDE.md 画面の帯に 1 行で出るので、ここは印だけ置く
+                     */}
+                    {r.key === 'claudeMd' && data.claudeMd.importsTruncated && (
+                      <span className="warn-inline">{t('ctx.claudeMdTruncated')}</span>
+                    )}
                   </span>
                   <span className="meta">{l.note}</span>
                 </span>

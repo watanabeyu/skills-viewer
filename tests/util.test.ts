@@ -32,6 +32,7 @@ import {
   contextRows,
   contextTotal,
   duplicateNames,
+  labelOfUseFilter,
   migrateLegacyParams,
   resolveProject,
   sessionSections,
@@ -876,5 +877,33 @@ describe('asKindFilter / asUseFilter (URL クエリの検証)', () => {
     const uses: UseFilter[] = ['all', 'used', 'unused'];
     expect([...KIND_FILTERS].sort()).toEqual([...kinds].sort());
     expect([...USE_FILTERS].sort()).toEqual([...uses].sort());
+  });
+});
+
+/*
+ * labelOfUseFilter は今まで i18n の未使用キー番犬(i18n.test.ts)に引っかかることでしか
+ * 守られておらず、対応そのもの(all/used/unused → どのキーか)は未検証だった。
+ * USE_FILTERS の順序(select の並び)は上の網羅テストが sort してしまうので別に固定する。
+ */
+describe('labelOfUseFilter (使用実績フィルタのラベル)', () => {
+  it('3 値それぞれが異なる非空文字列を返す', () => {
+    const labels = USE_FILTERS.map(labelOfUseFilter);
+    expect(labels.every((l) => l.length > 0)).toBe(true);
+    expect(new Set(labels).size).toBe(3);
+  });
+
+  it('en / ja のどちらでも kind. / filter. のキー名がそのまま出ない(訳抜け検出)', () => {
+    for (const lang of ['en', 'ja'] as const) {
+      setLang(lang);
+      for (const v of USE_FILTERS) {
+        const label = labelOfUseFilter(v);
+        expect(label.startsWith('kind.')).toBe(false);
+        expect(label.startsWith('filter.')).toBe(false);
+      }
+    }
+  });
+
+  it('USE_FILTERS は all → used → unused の順(select の並び)', () => {
+    expect(USE_FILTERS).toEqual(['all', 'used', 'unused']);
   });
 });

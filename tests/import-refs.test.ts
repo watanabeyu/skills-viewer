@@ -52,15 +52,28 @@ describe('isFenceLine — ``` と ~~~ の両方', () => {
 
 describe('importRefs — 本文全体', () => {
   it('フェンスの内側は拾わず、フェンス行そのものも見ない', () => {
-    expect(importRefs('```\n@in.md\n```\n@after.md')).toEqual(['after.md']);
-    expect(importRefs('~~~\n@in.md\n~~~\n@after.md')).toEqual(['after.md']);
+    expect(importRefs('```\n@in.md\n```\n@after.md').refs).toEqual(['after.md']);
+    expect(importRefs('~~~\n@in.md\n~~~\n@after.md').refs).toEqual(['after.md']);
     // 閉じフェンス行に書かれた @ も拾わない
-    expect(importRefs('```\ncode\n``` @sneaky.md\n@after.md')).toEqual(['after.md']);
+    expect(importRefs('```\ncode\n``` @sneaky.md\n@after.md').refs).toEqual(['after.md']);
   });
 
-  it('件数の上限で打ち切る', () => {
+  /*
+   * 上限で切ったことは呼び出し側へ返す。切った分は @import 行そのものが作られず、
+   * 合計 tok がその分だけ小さくなるので、黙って過少に出さないための印になる。
+   */
+  it('件数の上限で打ち切り、切ったことを返す', () => {
     const body = Array.from({ length: 10 }, (_, i) => `@./n${i}.md`).join('\n');
-    expect(importRefs(body, 3)).toEqual(['./n0.md', './n1.md', './n2.md']);
+    expect(importRefs(body, 3)).toEqual({
+      refs: ['./n0.md', './n1.md', './n2.md'],
+      truncated: true,
+    });
+  });
+
+  it('ちょうど上限ぴったりなら切っていない(境界)', () => {
+    const body = Array.from({ length: 3 }, (_, i) => `@./n${i}.md`).join('\n');
+    expect(importRefs(body, 3).truncated).toBe(false);
+    expect(importRefs(body, 3).refs).toHaveLength(3);
   });
 });
 

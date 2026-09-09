@@ -212,6 +212,54 @@ describe('computeChanges(形式移行)', () => {
   });
 });
 
+/*
+ * since / ackedAt: 「前回既読にしてから」の起点。ホーム ①「いつ既読にしてから」の表示は
+ * これが無いと出せない。ackChanges(既読にする)が基準に時刻を刻み、次回の computeChanges が
+ * それを since として返す ── ただし、この機能追加より前に保存された v2 基準には ackedAt が
+ * 無いので、その場合は since を付けずに欠ける(README のとおり「起点を持たない古い基準では省略」)。
+ */
+describe('computeChanges / ackChanges (since / ackedAt)', () => {
+  /* 実環境の ~/.cache/skills-viewer/snapshot.json には触らない(file は注入する) */
+  const setup = () => {
+    const dir = mkTmp('snap-since-');
+    const fp = path.join(dir, 'SKILL.md');
+    fs.writeFileSync(fp, 'body');
+    return { dir, fp, snapFile: path.join(dir, 'cache', 'snapshot.json') };
+  };
+
+  it('ackChanges で保存した基準には ackedAt(既読にした時刻)が入る', () => {
+    const { fp, snapFile } = setup();
+    const sections = [sec([item({ path: fp })])];
+    const before = Date.now();
+    ackChanges(sections, [], [], snapFile);
+    const saved = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
+    expect(saved.ackedAt).toBeDefined();
+    expect(Date.parse(saved.ackedAt)).toBeGreaterThanOrEqual(before);
+  });
+
+  it('前回既読にした ackedAt が、次回の computeChanges の changes.since として返る', () => {
+    const { fp, snapFile } = setup();
+    const sections = [sec([item({ path: fp })])];
+    computeChanges(sections, [], [], snapFile); // 初回: 基準だけ保存(まだ既読の概念は無いが ackedAt は刻む)
+    const saved1 = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
+    expect(saved1.ackedAt).toBeDefined();
+    fs.writeFileSync(fp, 'changed');
+    const changes = computeChanges(sections, [], [], snapFile);
+    expect(changes?.since).toBe(saved1.ackedAt);
+  });
+
+  it('ackedAt を持たない旧い v2 基準では since を付けない(この追加より前に保存されたファイル)', () => {
+    const { fp, snapFile } = setup();
+    fs.mkdirSync(path.dirname(snapFile), { recursive: true });
+    // ackedAt が実装される前に保存された v2 ファイルを模す
+    fs.writeFileSync(snapFile, JSON.stringify({ v: 2, entries: {} }));
+    const sections = [sec([item({ path: fp })])];
+    const changes = computeChanges(sections, [], [], snapFile);
+    expect(changes?.added).toHaveLength(1); // 差分自体は出る
+    expect(changes?.since).toBeUndefined();
+  });
+});
+
 /* git が無い環境ではスキップ(機能そのものが git 依存で、失敗時は author 無しに倒れる) */
 const hasGit = (() => {
   try {

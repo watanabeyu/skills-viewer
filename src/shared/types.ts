@@ -437,6 +437,13 @@ export interface ClaudeMdScan {
   /* 注入順。無い段も files: [] で残る */
   layers: ClaudeMdLayer[];
   tokens: number;
+  /*
+   * @import の件数の上限(1 ファイル 200 件 / 走査全体 500 件)で展開を止めたときだけ立つ。
+   * 打ち切った先の @import は要素自体を作らないので、tokens が理由不明のまま小さく出る。
+   * 「常時コストを正しく出す」のが売りの画面が黙って数字を削らないよう、印を返して画面に出す。
+   * どちらの上限かは分けない ── 利用者が取る行動(参照を減らす)は同じで、上限の値は README にある。
+   */
+  importsTruncated?: true;
 }
 
 /*

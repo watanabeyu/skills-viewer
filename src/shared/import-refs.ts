@@ -51,8 +51,12 @@ export function bodyWithoutFrontmatter(raw: string): string {
   return nl < 0 ? '' : raw.slice(nl + 1);
 }
 
-/* 本文全体から参照を順に拾う(フェンスの内側は見ない) */
-export function importRefs(body: string, limit = Infinity): string[] {
+/*
+ * 本文全体から参照を順に拾う(フェンスの内側は見ない)。
+ * 上限で切ったかどうかも返す: 切った分は @import 行そのものが作られず、合計 tok が
+ * その分だけ小さくなるので、黙って過少に出さないために呼び出し側へ伝える必要がある。
+ */
+export function importRefs(body: string, limit = Infinity): { refs: string[]; truncated: boolean } {
   const refs: string[] = [];
   let inFence = false;
   for (const line of body.split(/\r?\n/)) {
@@ -62,9 +66,9 @@ export function importRefs(body: string, limit = Infinity): string[] {
     }
     if (inFence) continue;
     for (const ref of refsOfLine(line)) {
+      if (refs.length >= limit) return { refs, truncated: true };
       refs.push(ref);
-      if (refs.length >= limit) return refs;
     }
   }
-  return refs;
+  return { refs, truncated: false };
 }

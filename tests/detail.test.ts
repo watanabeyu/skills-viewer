@@ -3,11 +3,12 @@ import {
   delegatesOf,
   historyOf,
   hookParts,
+  makeResolve,
   shortPath,
   toolName,
   touchesOf,
 } from '../web/src/detail';
-import type { SnapshotChanges } from '../src/shared/types';
+import type { SkillItem, SnapshotChanges } from '../src/shared/types';
 
 describe('touchesOf (allowed-tools からの機械判定)', () => {
   it('指定が無ければ全ツール(null)で、書き込みも外部も判定しない', () => {
@@ -123,5 +124,69 @@ describe('hookParts / shortPath', () => {
     // 名前が前方一致するだけの別ディレクトリは剥がさない
     expect(shortPath('/w/p2/a.md', '/w/p')).toBe('/w/p2/a.md');
     expect(shortPath('', '/w/p')).toBe('');
+  });
+});
+
+/*
+ * makeResolve: skill 名を既知アイテムに解決する(委譲先・フロー図の calls 用)。
+ * 「他プロジェクトの同名を拾わない」が壊れると、そのセッションから実際には呼べない
+ * 別プロジェクトの同名 skill にリンクが張られてしまう(誤誘導)。
+ */
+type ResolveItem = SkillItem & { secId: string; source: string };
+const ritem = (over: Partial<ResolveItem>): ResolveItem => ({
+  name: 'foo',
+  description: '',
+  argumentHint: '',
+  version: '',
+  kind: 'skill',
+  path: '/p.md',
+  files: [],
+  secId: 'proj-a',
+  source: 'project',
+  ...over,
+});
+
+describe('makeResolve (skill 名 → 既知アイテムの解決)', () => {
+  it('同一プロジェクト内の同名を最優先で当てる', () => {
+    const self = ritem({ name: 'x', secId: 'proj-a', source: 'project' });
+    const sameProj = ritem({ name: 'foo', secId: 'proj-a', source: 'project' });
+    const user = ritem({ name: 'foo', secId: 'user', source: 'user' });
+    const resolve = makeResolve(self, [self, sameProj, user]);
+    expect(resolve('foo')).toBe(sameProj);
+  });
+
+  it('他プロジェクトの同名は対象外(そのセッションからは呼べない)', () => {
+    const self = ritem({ name: 'x', secId: 'proj-a', source: 'project' });
+    const otherProj = ritem({ name: 'foo', secId: 'proj-b', source: 'project' });
+    const resolve = makeResolve(self, [self, otherProj]);
+    expect(resolve('foo')).toBeUndefined();
+  });
+
+  it('同一プロジェクトに無ければ user / plugin / built-in を当てる', () => {
+    const self = ritem({ name: 'x', secId: 'proj-a', source: 'project' });
+    const otherProj = ritem({ name: 'foo', secId: 'proj-b', source: 'project' });
+    const user = ritem({ name: 'foo', secId: 'user', source: 'user' });
+    const resolve = makeResolve(self, [self, otherProj, user]);
+    expect(resolve('foo')).toBe(user);
+  });
+
+  it('`plugin:name` 形式は短い名前でも当たる', () => {
+    const self = ritem({ name: 'x', secId: 'proj-a', source: 'project' });
+    const plug = ritem({ name: 'myplugin:foo', secId: 'plugin', source: 'plugin' });
+    const resolve = makeResolve(self, [self, plug]);
+    expect(resolve('foo')).toBe(plug);
+  });
+
+  it('先頭の / は剥がして探す', () => {
+    const self = ritem({ name: 'x', secId: 'proj-a', source: 'project' });
+    const sameProj = ritem({ name: 'foo', secId: 'proj-a', source: 'project' });
+    const resolve = makeResolve(self, [self, sameProj]);
+    expect(resolve('/foo')).toBe(sameProj);
+  });
+
+  it('どこにも見つからなければ undefined', () => {
+    const self = ritem({ name: 'x', secId: 'proj-a', source: 'project' });
+    const resolve = makeResolve(self, [self]);
+    expect(resolve('nope')).toBeUndefined();
   });
 });

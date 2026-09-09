@@ -158,7 +158,10 @@ function expandImports(
   scope: ImportScope,
   out: ClaudeMdImport[],
 ): void {
-  for (const ref of importRefs(body, MAX_IMPORT_REFS_PER_FILE)) {
+  const found = importRefs(body, MAX_IMPORT_REFS_PER_FILE);
+  // 1 ファイル単位で切った分も「数えていない」ことに変わりはないので同じ印を立てる
+  if (found.truncated) scope.budget.truncated = true;
+  for (const ref of found.refs) {
     if (scope.budget.left <= 0) {
       scope.budget.truncated = true;
       return;
@@ -435,7 +438,15 @@ export function claudeMdLayers(
       parentLayer(root, home, scope),
     );
   }
-  return { layers, tokens: layers.reduce((n, l) => n + l.tokens, 0) };
+  return {
+    layers,
+    tokens: layers.reduce((n, l) => n + l.tokens, 0),
+    // 予算切れで打ち切ったなら上限の件数を添える。合計 tok が小さく出た理由を画面が言えるように
+    // (件数は画面の文面にも出すので、定数を web 側へ写さずここから渡す)
+    // 上限(1 ファイル 200 件 / 走査全体 500 件)のどちらかで切ったら立てる。
+    // どちらの上限かは利用者の行動(参照を減らす)を変えないので、値は分けない
+    ...(scope.budget.truncated ? { importsTruncated: true as const } : {}),
+  };
 }
 
 /*

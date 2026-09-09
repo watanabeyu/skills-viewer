@@ -172,6 +172,8 @@ function Facts({ data }: { data: SkillsData }) {
             {t('cmd.importIssues', { n: st.missing + st.skipped })}
           </span>
         )}
+        {/* 件数の上限で走査を止めた回。以降の @import は要素すら無いので、上の合計 tok が小さい */}
+        {st.truncated && <span className="warn-inline">{t('cmd.importTruncated')}</span>}
       </FactCell>
     </div>
   );

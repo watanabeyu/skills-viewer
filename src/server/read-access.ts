@@ -128,8 +128,12 @@ export function assertReadableMd(p: string, cwd: string = process.cwd()): string
   return real;
 }
 
-/* エディタで開くのは .claude 配下(settings.json 等も含む)と自動メモリの置き場配下、CLAUDE.md 群 */
-function assertOpenablePath(p: string, cwd: string): string {
+/*
+ * エディタで開くのは .claude 配下(settings.json 等も含む)と自動メモリの置き場配下、CLAUDE.md 群。
+ * export はテスト用(openInEditor はエディタを実起動するのでテストから直接は呼べない。
+ * テスト欠落の穴埋め: tests/read-access.test.ts)。ロジックは変えていない。
+ */
+export function assertOpenablePath(p: string, cwd: string): string {
   const real = realpathOrThrow(p);
   if (!allowed(real, cwd)) throw new ApiError('not-openable-path', real);
   return real;

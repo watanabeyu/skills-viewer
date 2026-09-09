@@ -225,6 +225,63 @@ describe('@import の展開', () => {
     expect(total).toBe(500);
   });
 
+  /*
+   * 打ち切ると 501 件目以降は要素すら作らないので、合計 tok が理由不明のまま小さくなる。
+   * 「常時コストを正しく出す」のが売りの画面なので、削ったことは走査の返り値で言う。
+   */
+  it('総数の上限で打ち切ったら走査の返り値に印を立てる', () => {
+    for (let i = 0; i < 200; i++) {
+      write(
+        path.join(root, '.claude', 'rules', `r${i}.md`),
+        Array.from({ length: 200 }, (_, j) => `@./miss${j}.md`).join('\n'),
+      );
+    }
+    expect(claudeMdLayers({ home, root, managedPath }).importsTruncated).toBe(true);
+  });
+
+  /*
+   * 1 ファイル単位(200 件)で切った分も「数えていない」ことに変わりはない。
+   * 総数の上限だけを印にしていた頃は、1 枚に 200 件超を書いた CLAUDE.md で
+   * 合計 tok が理由不明のまま小さく出ていた。
+   */
+  it('1 ファイルの上限で切った場合も印を立てる(総数は上限内)', () => {
+    write(
+      path.join(root, 'CLAUDE.md'),
+      Array.from({ length: 201 }, (_, j) => `@./miss${j}.md`).join('\n'),
+    );
+    const scan = claudeMdLayers({ home, root, managedPath });
+    expect(scan.importsTruncated).toBe(true);
+    // 総数は 200 件で、走査全体の上限(500)には当たっていない
+    expect(scan.layers.flatMap((l) => l.files).reduce((m, f) => m + f.imports.length, 0)).toBe(200);
+  });
+
+  /* 打ち切っていないときは印を付けない(通常時の表示を 1 文字も変えないため) */
+  it('上限に当たらなければ印は付かない', () => {
+    write(path.join(root, 'inc.md'), '# included\nhello');
+    write(path.join(root, 'CLAUDE.md'), '# project\n@./inc.md');
+    const scan = claudeMdLayers({ home, root, managedPath });
+    expect(scan.importsTruncated).toBeUndefined();
+    expect('importsTruncated' in scan).toBe(false);
+  });
+
+  /*
+   * 予算をちょうど使い切っただけでは打ち切っていない(501 件目を見に行って初めて削る)。
+   * ここで印を立てると、上限内に収まった走査に「数字が欠けている」と嘘の警告を出す。
+   */
+  it('ちょうど 500 件なら印は付かない(境界)', () => {
+    const counts = [200, 200, 100];
+    counts.forEach((n, i) =>
+      write(
+        path.join(root, '.claude', 'rules', `r${i}.md`),
+        Array.from({ length: n }, (_, j) => `@./miss${j}.md`).join('\n'),
+      ),
+    );
+    const scan = claudeMdLayers({ home, root, managedPath });
+    const total = scan.layers.flatMap((l) => l.files).reduce((m, f) => m + f.imports.length, 0);
+    expect(total).toBe(500);
+    expect(scan.importsTruncated).toBeUndefined();
+  });
+
   it('存在しない参照は exists: false で残す(コストは 0)', () => {
     write(path.join(root, 'CLAUDE.md'), '@./missing.md');
     const f = layer('project').files[0];
