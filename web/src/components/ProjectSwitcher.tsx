@@ -5,8 +5,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { Section, SkillsData } from '../api';
-import { fileName, type ProjectSel } from '../util';
+import type { SkillsData } from '../api';
+import { projectRows, type ProjectRow, type ProjectSel } from '../util';
 import { t } from '../i18n';
 import { SourceDot } from './Rows';
 
@@ -65,30 +65,50 @@ export function ProjectSwitcher({
   }, [openMenu]);
 
   const projects = data.sections.filter((s) => s.source === 'project');
-  const current = projects.find((s) => s.isCurrent) || null;
-  const others = projects.filter((s) => !s.isCurrent);
-  const cwdName = current?.projectName || fileName(data.cwd);
+  const { current, others } = projectRows(data);
   const pick = (id: string | null) => {
     setOpenMenu(false);
     onSelect(id);
   };
-  const row = (
-    s: Section | null,
-    label: string,
-    path: string,
-    id: string | null,
-    /* 起動ディレクトリの行。cwd は既定の選択にすぎないので、特別扱いはこの印だけ(計画 16 判断 7) */
-    cwd = false,
-  ) => (
-    <button key={id ?? 'cwd'} className="di" onClick={() => pick(id)}>
-      <span className="l1">
-        <SourceDot source="project" />
-        {label}
-        {cwd && <span className="proj-cur">{t('proj.current')}</span>}
-        {s === null && id === null && <span className="meta"> · {t('proj.empty')}</span>}
-      </span>
-      <span className="l2">{path}</span>
-    </button>
+  /*
+   * 1 行。sub = worktree(本体の下に字下げ)。id を持たない行は選べない本体の見出しなので
+   * ボタンにしない(押しても解決できる候補が無い)。
+   * 起動ディレクトリの行は「現在」の印だけで区別する(cwd は既定の選択にすぎない。判断 7)。
+   */
+  const row = (r: ProjectRow, sub = false) => {
+    const inner = (
+      <>
+        <span className="l1">
+          <SourceDot source="project" />
+          {r.name}
+          {r.cwd && <span className="proj-cur">{t('proj.current')}</span>}
+          {r.section === null && <span className="meta"> · {t('proj.empty')}</span>}
+        </span>
+        {/*
+         * worktree はディレクトリ名よりブランチで覚えているので、あれば 2 行目の先頭に出す
+         * (区切りは meta の行と同じ ·)。本体の行は branch を持たないので従来どおりパスだけ
+         */}
+        <span className="l2">{r.branch ? r.branch + ' · ' + r.path : r.path}</span>
+      </>
+    );
+    const cls = 'di' + (sub ? ' sub' : '');
+    const id = r.id;
+    return id === undefined ? (
+      <div key={r.path} className={cls + ' plain'}>
+        {inner}
+      </div>
+    ) : (
+      <button key={r.path} className={cls} onClick={() => pick(id)}>
+        {inner}
+      </button>
+    );
+  };
+  /* 本体の行 + その worktree(字下げ) */
+  const group = (r: ProjectRow) => (
+    <div key={r.path} className="proj-grp">
+      {row(r)}
+      {r.subs.map((s) => row(s, true))}
+    </div>
   );
   return (
     <span className="proj" ref={ref}>
@@ -114,9 +134,9 @@ export function ProjectSwitcher({
       </button>
       {openMenu && (
         <div className="drop proj-drop">
-          {row(current, cwdName, current?.note || data.cwd, null, true)}
+          {current && group(current)}
           {others.length > 0 && <div className="dh">{t('proj.others')}</div>}
-          {others.map((s) => row(s, s.projectName || '', s.note, s.id))}
+          {others.map(group)}
           <div className="dsep" />
           <button className="di" onClick={() => pick('all')}>
             <span className="l1">

@@ -35,6 +35,7 @@ export type {
   Section,
   SkillsData,
   SummaryJob,
+  Worktree,
 } from '../../src/shared/types';
 
 let token = '';

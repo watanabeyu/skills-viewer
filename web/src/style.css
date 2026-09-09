@@ -1250,6 +1250,19 @@ select,
 .proj-drop .di .l1 svg {
   color: var(--sub);
 }
+/*
+ * worktree の行は本体の下に字下げする(計画 16 Phase C)。幅は目分量ではなく
+ * 「本体の行で名前が始まる位置」= 行の左余白 + 印(--dot-size)+ l1 の gap から出す
+ */
+.proj-drop .di.sub {
+  padding-left: calc(14px + var(--dot-size) + 8px);
+}
+/* 選べない本体(登録簿に無く定義も 0 件)の行は worktree の見出しなので、押せる見た目にしない */
+.proj-drop .di.plain,
+.proj-drop .di.plain:hover {
+  cursor: default;
+  background: none;
+}
 .dot {
   display: inline-block;
   width: var(--dot-size);

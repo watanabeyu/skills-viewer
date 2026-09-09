@@ -9,7 +9,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { isUnder, resolveAutoMemoryDir, samePath } from './memory';
+import { isUnder, resolveAutoMemoryDir, samePath, worktreesForProjects } from './memory';
 import { claudeMdPaths } from './claude-md';
 import { listProjects } from './scan';
 import { ApiError } from './errors';
@@ -23,9 +23,14 @@ import { ApiError } from './errors';
  * cwd を明示的に足すのは listProjects が HOME を落とすため(ホーム直下で起動したときに
  * user scope の置き場が許可から外れるのを防ぐ)。
  * scan.ts への import は memory.ts が listProjects を使うのと同じ向きで、循環しない。
+ *
+ * 計画 16 Phase C で linked worktree も加える: worktree は登録の有無に依らず選べる
+ * (index.ts の projectCandidates と同じ集合)ので、選べるのに CLAUDE.md が読めない状態を作らない。
+ * 列挙の起点は登録簿の各プロジェクトの本体で、git コマンドは呼ばず .git のファイルを読むだけ。
  */
 function accessRoots(cwd: string): string[] {
-  return [...new Set([path.resolve(cwd), ...listProjects(cwd)])];
+  const projects = [...new Set([path.resolve(cwd), ...listProjects(cwd)])];
+  return [...new Set([...projects, ...worktreesForProjects(projects).map((w) => w.path)])];
 }
 
 /* realpath 解決(存在しないパスは not-found に正規化) */

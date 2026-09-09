@@ -81,7 +81,95 @@ export const currentSection = (sections: Section[]): Section | null =>
  */
 export function resolveProject(param: string | null, data: SkillsData): ProjectSel {
   if (param === 'all') return 'all';
-  return data.sections.find((s) => s.source === 'project' && s.id === data.selected.id) || null;
+  return selectedSection(data);
+}
+
+/* 選んだプロジェクトの Section(0 件なら無い)。'all' に依らない単位が要る画面(hook)はこちら */
+export const selectedSection = (data: SkillsData): Section | null =>
+  data.sections.find((s) => s.source === 'project' && s.id === data.selected.id) || null;
+
+/*
+ * 切替に出す 1 行。worktree は本体の行の subs に入り、トップレベルには出ない(計画 16 判断 6)。
+ * id は ?project= に渡す値で、null = cwd(既定の選択なので URL に書かない)。
+ * id を持たない行は「本体の見出しだけ」= 選べない(登録簿に無い本体は解決できるパスが無い)。
+ */
+export interface ProjectRow {
+  /* 一致する Section。定義が 0 件のプロジェクト / worktree では null */
+  section: Section | null;
+  name: string;
+  path: string;
+  id?: string | null;
+  /*
+   * worktree のチェックアウト中のブランチ(detached HEAD では付かない)。
+   * worktree はディレクトリ名よりブランチで覚えているので、2 行目に出して行を見分けられるようにする。
+   * 本体の行は持たない。
+   */
+  branch?: string;
+  /* 起動ディレクトリの行(「現在」の印が付く。worktree から起動していればその行) */
+  cwd: boolean;
+  subs: ProjectRow[];
+}
+
+/*
+ * 切替の行の組み立て(計画 16 Phase C)。sections はサーバーの形のままなので、
+ * worktrees の path と一致する Section をトップレベルから外し、本体の行の下へ寄せる
+ * ── .claude/ を git で追跡しているリポジトリでは同じスキル群が 2 行に並んでしまうため。
+ * worktree は登録の有無に依らず(= Section が無くても)行になる。
+ * 先頭は cwd を含む組(cwd が worktree なら本体の組)で、残りは「他のプロジェクト」。
+ */
+export function projectRows(data: SkillsData): {
+  current: ProjectRow | null;
+  others: ProjectRow[];
+} {
+  const worktrees = data.worktrees || [];
+  const wtPaths = new Set(worktrees.map((w) => w.path));
+  const projects = data.sections.filter((s) => s.source === 'project');
+  const cwdSection = currentSection(data.sections);
+  const cwdPath = cwdSection?.note || data.cwd;
+  const tops: ProjectRow[] = [];
+  // cwd の行。cwd 自身が worktree のときはここでは作らない(本体の下に 1 度だけ出す)
+  if (!wtPaths.has(cwdPath))
+    tops.push({
+      section: cwdSection,
+      name: cwdSection?.projectName || fileName(data.cwd),
+      path: cwdPath,
+      id: null,
+      cwd: true,
+      subs: [],
+    });
+  for (const s of projects) {
+    if (s === cwdSection || wtPaths.has(s.note)) continue;
+    tops.push({
+      section: s,
+      name: s.projectName || '',
+      path: s.note,
+      id: s.id,
+      cwd: false,
+      subs: [],
+    });
+  }
+  for (const w of worktrees) {
+    let main = tops.find((t) => t.path === w.mainPath);
+    if (!main) {
+      // 本体が登録簿に無い(または定義 0 件で Section が無い)ときは見出しだけの行にする。
+      // 選べる候補はサーバーが返した id を持つものだけなので、この行に id は付けない
+      main = { section: null, name: fileName(w.mainPath), path: w.mainPath, cwd: false, subs: [] };
+      tops.push(main);
+    }
+    main.subs.push({
+      section: projects.find((s) => s.note === w.path) || null,
+      name: w.name,
+      path: w.path,
+      // cwd の worktree は既定の選択なので、他の行と同じく URL に書かない
+      id: w.path === cwdPath ? null : w.id,
+      ...(w.branch ? { branch: w.branch } : {}),
+      cwd: w.path === cwdPath,
+      subs: [],
+    });
+  }
+  const idx = tops.findIndex((t) => t.cwd || t.subs.some((s) => s.cwd));
+  const current = idx < 0 ? null : tops[idx];
+  return { current, others: tops.filter((t) => t !== current) };
 }
 
 /*

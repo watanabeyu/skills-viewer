@@ -16,8 +16,10 @@ import type {
   Lang,
   MemorySection,
   Section,
+  SelectedProject,
   SessionContext,
   SkillsData,
+  Worktree,
 } from '../shared/types';
 import { listProjects, projectSectionId, scanSections } from './scan';
 import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
@@ -27,6 +29,7 @@ import {
   resolveAutoMemoryDir,
   scanMemory,
   usageAvailableFor,
+  worktreesForProjects,
 } from './memory';
 import {
   cleanupLegacyBackups,
@@ -282,11 +285,45 @@ function primeMemoryRoots(cwd: string): void {
 }
 
 /*
- * ?project=<id> の解決候補。今は登録済みプロジェクト(+ cwd)そのままだが、
- * 計画 16 Phase C で worktree を足すので、候補を組み立てる場所を 1 か所にしておく。
+ * 登録済みプロジェクトの本体から列挙した linked worktree(id 付き。計画 16 Phase C)。
+ * 切替の候補・selected.mainPath・応答の worktrees が必ず同じ集合を見るよう 1 か所に置く。
+ * id をサーバーが作るのは、web がパスから組み立てると規則が二重定義になるため(判断 2)。
+ */
+export function projectWorktrees(cwd: string): Worktree[] {
+  return worktreesForProjects(listProjects(cwd)).map((w) => ({
+    id: projectSectionId(w.path),
+    ...w,
+  }));
+}
+
+/*
+ * ?project=<id> の解決候補 = 登録済みプロジェクト(+ cwd)∪ そこから列挙した worktree。
+ * worktree を足すのは、「claude を起動して登録された」かつ「.claude/ に 1 件以上ある」ものしか
+ * 登録簿に出ないため ── 登録の有無に依らず選べるようにする(計画 16 判断 5・6)。
+ * 足すのは列挙した path だけで、生のパスは入らない。
  */
 export function projectCandidates(cwd: string): string[] {
-  return listProjects(cwd);
+  return [...new Set([...listProjects(cwd), ...projectWorktrees(cwd).map((w) => w.path)])];
+}
+
+/*
+ * 応答の selected(この GET が文脈を計算した対象)。worktree を選んでいるときは本体のパスも
+ * 返す: skill は worktree 自身の .claude、メモリは本体に収束する、という組み合わせの理由を
+ * 画面が 1 行で言えるようにするため(計画 16 Phase C)。collect から切り出しているのはテストのため。
+ */
+export function selectedProject(
+  cwd: string,
+  selectedPath: string,
+  worktrees: Worktree[],
+): SelectedProject {
+  const wt = worktrees.find((w) => w.path === selectedPath);
+  return {
+    id: projectSectionId(selectedPath),
+    path: selectedPath,
+    name: path.basename(selectedPath),
+    isCwd: selectedPath === path.resolve(cwd),
+    ...(wt ? { mainPath: wt.mainPath } : {}),
+  };
 }
 
 /*
@@ -324,8 +361,10 @@ export function triageTarget(
  * cwd はその既定値でしかないが、①(changes)と起動時サマリは cwd 起点のまま(判断 8)。
  */
 function collect(cwd: string, lang: Lang, selectedPath: string): SkillsData {
-  const selectedId = projectSectionId(selectedPath);
-  const isCwd = selectedPath === path.resolve(cwd);
+  const worktrees = projectWorktrees(cwd);
+  const selected = selectedProject(cwd, selectedPath, worktrees);
+  const selectedId = selected.id;
+  const isCwd = selected.isCwd;
   primeMemoryRoots(selectedPath);
   const sections = scanSections(cwd, lang);
   const usageAvailable = attributeUsage(sections);
@@ -377,12 +416,9 @@ function collect(cwd: string, lang: Lang, selectedPath: string): SkillsData {
   return {
     generatedAt: new Date().toISOString(),
     cwd,
-    selected: {
-      id: selectedId,
-      path: selectedPath,
-      name: path.basename(selectedPath),
-      isCwd,
-    },
+    selected,
+    // 切替が本体の下へ寄せるための一覧。sections 自体は変えない(計画 16 判断 6)
+    ...(worktrees.length ? { worktrees } : {}),
     sections,
     aiStale,
     aiAvailable,

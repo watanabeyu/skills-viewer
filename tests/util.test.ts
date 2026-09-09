@@ -34,6 +34,7 @@ import {
   duplicateNames,
   labelOfUseFilter,
   migrateLegacyParams,
+  projectRows,
   resolveProject,
   sessionSections,
   type FlatItem,
@@ -650,6 +651,100 @@ describe('resolveProject (選択の解決。計画 16 判断 3: サーバーの 
       selected: { id: 'proj--w-gamma', path: '/w/gamma', name: 'gamma', isCwd: false },
     });
     expect(resolveProject('proj--w-gamma', empty)).toBeNull();
+  });
+});
+
+/*
+ * 切替の行(計画 16 Phase C)。worktree は本体の下に字下げして 1 度だけ出す。
+ * sections はサーバーの形のままなので、寄せるのを web がやめると同じプロジェクトが
+ * 2 行(本体の下とトップレベル)に並ぶ ── その重複をここで機械的に落とす。
+ */
+describe('projectRows (worktree を本体の下へ寄せる)', () => {
+  const wtSec = secOf({
+    id: 'proj--w-alpha-wt',
+    source: 'project',
+    projectName: 'alpha-wt',
+    note: '/w/alpha-wt',
+    items: [base({ path: '/w/alpha-wt/.claude/skills/foo/SKILL.md' })],
+  });
+  const wt = {
+    id: wtSec.id,
+    path: '/w/alpha-wt',
+    name: 'alpha-wt',
+    branch: 'feat/a',
+    mainPath: '/w/alpha',
+  };
+
+  it('worktree の Section はトップレベルから外れ、本体の subs に入る(重複しない)', () => {
+    const d = dataOf({ sections: [...sections, wtSec], worktrees: [wt] });
+    const { current, others } = projectRows(d);
+    // cwd(= 本体 alpha)の組。worktree はその下に 1 行だけ
+    expect(current?.path).toBe('/w/alpha');
+    expect(current?.subs.map((r) => r.path)).toEqual(['/w/alpha-wt']);
+    expect(current?.subs[0].section).toBe(wtSec);
+    // トップレベル(現在の組 + 他のプロジェクト)に worktree のパスは 1 つも無い
+    expect([current, ...others].map((r) => r?.path)).toEqual(['/w/alpha', '/w/beta']);
+  });
+
+  it('登録も定義も無い worktree でも行になり、id はサーバーが返した値を使う', () => {
+    const { current } = projectRows(dataOf({ worktrees: [wt] }));
+    expect(current?.subs).toEqual([
+      {
+        section: null,
+        name: 'alpha-wt',
+        path: '/w/alpha-wt',
+        id: wtSec.id,
+        branch: 'feat/a',
+        cwd: false,
+        subs: [],
+      },
+    ]);
+  });
+
+  /*
+   * worktree はディレクトリ名よりブランチで覚えているので、行にブランチを載せる
+   * (切替では 2 行目に「<branch> · <path>」で出す)。detached HEAD では付かない。
+   */
+  it('worktree の行に branch が載る(detached HEAD では付かない)', () => {
+    const { current } = projectRows(dataOf({ worktrees: [wt] }));
+    expect(current?.subs[0].branch).toBe('feat/a');
+    // 本体の行は branch を持たない(ブランチはチェックアウト単位の事実で、行の見分けにだけ使う)
+    expect(current?.branch).toBeUndefined();
+    const { current: detached } = projectRows(
+      dataOf({ worktrees: [{ id: wt.id, path: wt.path, name: wt.name, mainPath: wt.mainPath }] }),
+    );
+    expect(detached?.subs[0]).not.toHaveProperty('branch');
+  });
+
+  it('cwd が worktree なら本体の組が先頭に来て、「現在」の印はその worktree の行に付く', () => {
+    const d = dataOf({
+      cwd: '/w/alpha-wt',
+      sections: [{ ...wtSec, isCurrent: true }, projA, userSec, pluginSec, builtinSec],
+      selected: {
+        id: wtSec.id,
+        path: '/w/alpha-wt',
+        name: 'alpha-wt',
+        isCwd: true,
+        mainPath: '/w/alpha',
+      },
+      worktrees: [wt],
+    });
+    const { current, others } = projectRows(d);
+    expect(current?.path).toBe('/w/alpha'); // 先頭は cwd を含む組(= 本体)
+    expect(current?.cwd).toBe(false);
+    expect(current?.subs[0].cwd).toBe(true);
+    // cwd は既定の選択なので URL に書かない(id は null)
+    expect(current?.subs[0].id).toBeNull();
+    // cwd の行がトップレベルにも出る(= 重複する)ことは無い
+    expect([current, ...others].some((r) => r?.path === '/w/alpha-wt')).toBe(false);
+  });
+
+  it('本体に行が無い(未登録・定義 0 件)ときは選べない見出しの行を作る', () => {
+    const orphan = { ...wt, mainPath: '/w/gamma' };
+    const { others } = projectRows(dataOf({ worktrees: [orphan] }));
+    const head = others.find((r) => r.path === '/w/gamma');
+    expect(head?.id).toBeUndefined(); // 解決できる候補が無いので押せない
+    expect(head?.subs.map((r) => r.path)).toEqual(['/w/alpha-wt']);
   });
 });
 

@@ -17,6 +17,7 @@ import {
   claudeMdCounts,
   contextRows,
   contextTotal,
+  fileName,
   flatten,
   KIND_FILTERS,
   kindMatches,
@@ -205,6 +206,15 @@ export function ActiveBlock({
         <span className="pill">{t('act.count', { n: total })}</span>
         <span className="meta">{t(narrow ? 'act.subShort' : 'act.sub')}</span>
         {!usage && <span className="meta">· {t('act.noUsage')}</span>}
+        {/*
+         * 選んでいるものが worktree なら、その組み合わせ(skill は worktree 自身の .claude、
+         * メモリは本体と共有)の理由をここで 1 行言う(計画 16 Phase C)
+         */}
+        {data.selected.mainPath && (
+          <span className="meta">
+            · {t('proj.worktreeOf', { name: fileName(data.selected.mainPath) })}
+          </span>
+        )}
         <span className="hd-r">
           {/* 全件要約(claude CLI)。不在なら押せない理由を脇に出す。失敗も alert でなくここに 1 行 */}
           <InlineError msg={summary.error} />
@@ -245,9 +255,15 @@ export function ActiveBlock({
               meta={`${data.selected.name} · ${t('act.count', { n: 0 })} · ${t('proj.empty')}`}
               tok={0}
             />
-            {/* 0 件の理由。切替で別プロジェクトを選んだときも「なぜ空か」がその場で分かるように */}
+            {/*
+             * 0 件の理由。切替で別プロジェクトを選んだときも「なぜ空か」がその場で分かるように。
+             * worktree は理由が違う(.claude/ が git 未追跡なら本体にあってもここには無い)ので
+             * 言い分ける(計画 16 Phase C)
+             */}
             <div className="trow-empty meta">
-              {t('proj.emptyReason', { path: data.selected.path })}
+              {t(data.selected.mainPath ? 'proj.emptyReasonWorktree' : 'proj.emptyReason', {
+                path: data.selected.path,
+              })}
             </div>
           </div>
         )}

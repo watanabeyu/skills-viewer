@@ -8,7 +8,7 @@
 
 import type { SkillsData } from '../api';
 import { hookParts, shortPath } from '../detail';
-import { currentSection, sessionSections, type FlatItem } from '../util';
+import { selectedSection, sessionSections, type FlatItem } from '../util';
 import { DICTS, t, type MsgKey } from '../i18n';
 import { FactCell, HistoryLines } from './FactsBand';
 import { SourcePill } from './Rows';
@@ -32,8 +32,12 @@ export function HookView({
 }) {
   const { event, matcher } = hookParts(it.name);
   const sec = data.sections.find((s) => s.id === it.secId);
-  // 「同じセッション」= この hook のプロジェクト(user / plugin なら cwd のプロジェクト)+ user + plugin + built-in
-  const project = sec?.source === 'project' ? sec : currentSection(data.sections);
+  /*
+   * 「同じセッション」= この hook のプロジェクト + user + plugin + built-in。
+   * user / plugin の hook は特定のプロジェクトに属さないので、単位は cwd ではなく
+   * 「選んだプロジェクト」に揃える(計画 16 判断 1。ホーム ③ と同じ母集団)
+   */
+  const project = sec?.source === 'project' ? sec : selectedSection(data);
   const ids = new Set(sessionSections(data.sections, project).map((s) => s.id));
   const hooks = all.filter((x) => x.kind === 'hook' && ids.has(x.secId));
   const where =

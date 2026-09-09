@@ -57,6 +57,87 @@ export function mainWorktreeOf(dir: string): string | null {
   return path.resolve(dir, gitdir, '..', '..', '..');
 }
 
+/* 本体(メインワークツリー)に紐づく linked worktree 1 件。web と共有しないので型はここに置く */
+export interface WorktreeEntry {
+  /* worktree のルート(gitdir に書かれた `.git` の親) */
+  path: string;
+  /* path の basename(表示用) */
+  name: string;
+  /* チェックアウト中のブランチ。detached HEAD では付かない */
+  branch?: string;
+}
+
+/*
+ * mainDir に紐づく linked worktree の一覧。mainWorktreeOf と同じ流儀で git コマンドは呼ばず、
+ * `<mainDir>/.git/worktrees/<name>/` のファイルだけを読む(git が書いた事実そのもの)。
+ *   - gitdir: worktree 側の `.git` のパス。その親ディレクトリが worktree のルート
+ *   - HEAD:   `ref: refs/heads/<branch>`(detached なら sha なので branch は付けない)
+ * 消した worktree の残骸(prune 前は gitdir が残る)は実体が無いので落とす。
+ * 読めない・形が違うものはその 1 件だけスキップする(一覧全体を落とさない)。
+ */
+export function worktreesOf(mainDir: string): WorktreeEntry[] {
+  const base = path.join(mainDir, '.git', 'worktrees');
+  let dirs: fs.Dirent[];
+  try {
+    dirs = fs.readdirSync(base, { withFileTypes: true }).filter((d) => d.isDirectory());
+  } catch {
+    return []; // worktree が 1 つも無ければこのディレクトリ自体が無い(通常の状態)
+  }
+  const out: WorktreeEntry[] = [];
+  for (const d of dirs) {
+    let gitdir: string;
+    try {
+      gitdir = fs.readFileSync(path.join(base, d.name, 'gitdir'), 'utf8').trim();
+    } catch {
+      continue; // gitdir が無い / 読めない管理ディレクトリ
+    }
+    if (!gitdir) continue;
+    // git は通常フルパスを書くが、相対で書かれていても壊れないよう mainDir を起点に解決する
+    const root = path.dirname(path.resolve(mainDir, gitdir));
+    try {
+      if (!fs.statSync(root).isDirectory()) continue;
+    } catch {
+      continue; // ディレクトリごと消された worktree(git worktree prune 前の残骸)
+    }
+    let branch: string | undefined;
+    try {
+      const m = fs
+        .readFileSync(path.join(base, d.name, 'HEAD'), 'utf8')
+        .trim()
+        .match(/^ref:\s*refs\/heads\/(.+)$/);
+      if (m) branch = m[1].trim();
+    } catch {
+      /* HEAD が読めなくても worktree 自体は列挙する(ブランチ不明として扱う) */
+    }
+    out.push({ path: root, name: path.basename(root), ...(branch ? { branch } : {}) });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/*
+ * 登録済みプロジェクト群から辿れる linked worktree(重複なし。計画 16 判断 5)。
+ * 登録簿にはリポジトリのサブディレクトリや worktree 自身も入るので、まず repoRootOf で本体へ
+ * 畳んでから本体ごとに 1 回だけ列挙する(同じ本体を登録の数だけ readdir しない)。
+ * 列挙の起点が登録簿に閉じているので、任意のパスがここから増えることはない。
+ */
+export function worktreesForProjects(projects: string[]): (WorktreeEntry & { mainPath: string })[] {
+  const mains = new Set<string>();
+  for (const p of projects) {
+    const main = repoRootOf(p);
+    if (main) mains.add(main);
+  }
+  const out: (WorktreeEntry & { mainPath: string })[] = [];
+  const seen = new Set<string>();
+  for (const main of [...mains].sort()) {
+    for (const wt of worktreesOf(main)) {
+      if (seen.has(wt.path)) continue; // 同じ worktree に 2 つの本体から辿り着くことは無いが念のため
+      seen.add(wt.path);
+      out.push({ ...wt, mainPath: main });
+    }
+  }
+  return out;
+}
+
 /*
  * dir が属するリポジトリのルート(memory の slug を決める単位)。mainWorktreeOf が
  * 非 null を返すまで path.dirname で親へ遡り、ルートまで見つからなければ null。

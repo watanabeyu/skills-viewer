@@ -481,6 +481,25 @@ export interface SelectedProject {
   name: string;
   /* 起動ディレクトリそのものか。既定の選択がこれ */
   isCwd: boolean;
+  /*
+   * 選んだものが linked worktree のとき、その本体(メインワークツリー)のパス。
+   * skill は worktree 自身の .claude、メモリは本体に収束する ── なぜそうなるかを
+   * 画面に 1 行で言うために持つ(計画 16 Phase C)。worktree でなければ付かない。
+   */
+  mainPath?: string;
+}
+
+/* 本体から列挙した linked worktree(計画 16 判断 5)。登録の有無に依らず切替の候補になる */
+export interface Worktree {
+  /* Section.id と同じ規則。id は必ずサーバーが作る(web でパスから組み立てない = 判断 2) */
+  id: string;
+  path: string;
+  /* path の basename(表示用) */
+  name: string;
+  /* チェックアウト中のブランチ。detached HEAD では付かない */
+  branch?: string;
+  /* この worktree の本体(メインワークツリー)のパス。切替はこの下に字下げして並べる */
+  mainPath: string;
 }
 
 export interface SkillsData {
@@ -488,6 +507,12 @@ export interface SkillsData {
   cwd: string;
   /* この応答の ② を計算した対象。cwd は既定の選択にすぎない(計画 16) */
   selected: SelectedProject;
+  /*
+   * 登録済みプロジェクトの本体から列挙した linked worktree。1 件も無ければ省略。
+   * sections は変えない(worktree の Section はそのまま)。切替が path で突き合わせて
+   * 本体の下へ寄せるので、同じプロジェクトが 2 か所に出ることはない(計画 16 判断 6)。
+   */
+  worktrees?: Worktree[];
   sections: Section[];
   aiStale: number;
   /*
