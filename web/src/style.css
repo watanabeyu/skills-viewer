@@ -185,6 +185,81 @@
   --ctx-k-tracking: 0;
   --bar-radius: 2px;
   --mem-tools-pad: 0 32px;
+
+  /*
+   * ---- 理解画面と hook 画面(計画 15 Phase E1)。値は docs/design/0.9.0/{Ledger,Console}Understand.dc.html /
+   * *Hook.dc.html / *States.dc.html の inline style を実測 ----
+   */
+  /* 名前の行: h1 20 / 600、チップとの間 10。Ledger は地に直接(パネルにしない) */
+  --h1-size: 20px;
+  --h1-font: var(--font-body);
+  --dv-title-gap: 10px;
+  --dv-title-pad: 0;
+  --dv-title-border: none;
+  --dv-title-bg: transparent;
+  --dv-summary-size: 15px;
+  --dv-desc-size: 13px;
+  --body-lh: 1.5;
+  --crumb-size: 13px;
+  /* 理解画面のブロック = 罫線付きの箱(地)。見出し帯は面 40px、罫線あり */
+  --dblk-border: 1px solid var(--border);
+  --dblk-bg: var(--bg);
+  --dblk-hd-h: 40px;
+  --dblk-hd-pad: 0 16px;
+  --dblk-hd-rule-pad: 0 16px;
+  --dblk-hd-bg: var(--panel);
+  --dblk-hd-border: 1px solid var(--border);
+  --dblk-body-pad: 0;
+  /* 事実の帯: 4 マス、各 12px 16px、見出し 12px/600 副文色、値 13px */
+  --fact-pad: 12px 16px;
+  --fact-k-font: var(--font-body);
+  --fact-k-size: 12px;
+  --fact-k-weight: 600;
+  --fact-k-transform: none;
+  --fact-k-tracking: 0;
+  --fact-k-color: var(--sub);
+  --fact-v-size: 13px;
+  --fact-v-font: var(--font-body);
+  /* 発動・触るもの: 110px のキー列 + 値、行 36px、キーは面 */
+  --kv-k-w: 110px;
+  --kv-row-h: 36px;
+  --kv-pad: 0 16px;
+  --kv-colgap: 0;
+  --kv-k-bg: var(--panel);
+  --kv-k-color: var(--sub);
+  --kv-k-font: var(--font-body);
+  --kv-k-size: 13px;
+  --kv-k-tracking: 0;
+  --kv-diag-pad: 10px 16px;
+  --kv-diag-gap: 8px;
+  --instr-size: 12px;
+  --btn-sm-h: 28px;
+  /* 流れ: 図の周り 24 / 24 / 28。線は罫線(強)1.5px、proc は面 + 罫線、ひし形は地 + 罫線(強) */
+  --fc-pad: 24px 24px 28px;
+  --fc-wire: var(--border-strong);
+  --fc-wire-w: 1.5px;
+  --fc-label: var(--sub);
+  --fc-halo: var(--bg);
+  --fc-proc-bg: var(--panel);
+  --fc-proc-border: var(--border);
+  --fc-proc-bw: 1.5px;
+  --fc-dec-bg: var(--bg);
+  --fc-dec-border: var(--border-strong);
+  --fc-dec-dash: 0;
+  --fc-title-size: 13px;
+  --fc-title-weight: 600;
+  --fc-title-font: var(--font-body);
+  --fc-detail-size: 12px;
+  --fc-detail-color: var(--sub);
+  --fc-cap-bg: var(--bg);
+  --fc-cap-border: var(--border);
+  /* 全文: frontmatter 10px 16px 面、本文 4px 16px 16px / 14px */
+  --fm-pad: 10px 16px;
+  --fm-bg: var(--panel);
+  --md-pad: 4px 16px 16px;
+  --md-size: 14px;
+  /* hook 一覧の行 40px */
+  --hook-row-h: 40px;
 }
 
 /*
@@ -343,6 +418,68 @@
   --ctx-k-tracking: 0.08em;
   --bar-radius: 1px;
   --mem-tools-pad: 0;
+
+  /* ---- 理解画面と hook 画面。*Understand.dc.html / *Hook.dc.html の Console 実測 ---- */
+  --h1-size: 18px;
+  --h1-font: var(--font-mono);
+  --dv-title-gap: 8px;
+  --dv-title-pad: 16px 18px;
+  --dv-title-border: 1px solid var(--border);
+  --dv-title-bg: var(--panel);
+  --body-lh: 1.6;
+  --crumb-size: 12px;
+  /* ブロック = 面のパネル。見出しはパネルの中(12px 16px)、罫線なし */
+  --dblk-bg: var(--panel);
+  --dblk-hd-h: auto;
+  --dblk-hd-pad: 12px 16px 6px;
+  --dblk-hd-rule-pad: 12px 16px;
+  --dblk-hd-bg: transparent;
+  --dblk-hd-border: none;
+  --dblk-body-pad: 0 16px 12px;
+  --fact-pad: 10px 14px;
+  --fact-k-font: var(--font-mono);
+  --fact-k-size: 11px;
+  --fact-k-weight: 400;
+  --fact-k-transform: uppercase;
+  --fact-k-tracking: 0.08em;
+  --fact-v-size: 12px;
+  --fact-v-font: var(--font-mono);
+  --kv-row-h: 32px;
+  --kv-pad: 0;
+  --kv-colgap: 16px;
+  --kv-k-bg: transparent;
+  --kv-k-color: var(--meta);
+  --kv-k-font: var(--font-mono);
+  --kv-k-size: 11.5px;
+  --kv-k-tracking: 0.04em;
+  --kv-diag-pad: 6px 0;
+  --kv-diag-gap: 6px;
+  --instr-size: 11.5px;
+  --btn-sm-h: 22px;
+  /* 図: 塗りなしの矩形 1px、ひし形は副文色の破線、線は補足色 1px、等幅ラベル */
+  --fc-pad: 8px 0 8px;
+  --fc-wire: var(--meta);
+  --fc-wire-w: 1px;
+  --fc-label: var(--meta);
+  --fc-halo: var(--panel);
+  --fc-proc-bg: transparent;
+  --fc-proc-border: var(--border-strong);
+  --fc-proc-bw: 1px;
+  --fc-dec-bg: transparent;
+  --fc-dec-border: var(--sub);
+  --fc-dec-dash: 4 3;
+  --fc-title-size: 12.5px;
+  --fc-title-weight: 400;
+  --fc-title-font: var(--font-mono);
+  --fc-detail-size: 11px;
+  --fc-detail-color: var(--meta);
+  --fc-cap-bg: transparent;
+  --fc-cap-border: var(--border-strong);
+  --fm-pad: 10px 12px;
+  --fm-bg: transparent;
+  --md-pad: 8px 16px 14px;
+  --md-size: 13px;
+  --hook-row-h: 32px;
 }
 
 /*
@@ -419,25 +556,19 @@ select,
 .set-label,
 .set-note,
 .kbadge,
-.badge,
-.inv-badge,
 .tbadge,
 .vbadge,
-.unused-badge,
 .unread-badge,
 .warn-badge,
 .orphan-badge,
 .g-manual,
-.grp-badge,
 .chg-title,
 .scope-mini,
-.rel-chip .rt,
 .card .nm,
 .card .meta,
 .ccard .nm,
 .ccard .cn,
 .d-name,
-.m-upd,
 .tabs,
 .modal h3,
 .drop .di .l1,
@@ -451,18 +582,18 @@ select,
 .foot .u,
 .foot .note,
 .instr-t,
-.diag-imp-t,
-.diag-verdict,
-.fc-title,
-.fc-num,
-.fc-gate,
-.fc-term,
-.fc-dec .fc-q,
 .triage-row .nm,
 .triage-cta .ttl,
 .mem-modal-name,
 .f-row .rk,
-.spark-label,
+.fk,
+.kv .k,
+.fc-title,
+.fc-q,
+.fc-cap,
+.crumb,
+.hname,
+.tree-row,
 .stale-note,
 .issue,
 .empty {
@@ -536,13 +667,6 @@ select,
   outline: none;
   font-family: var(--font-ui);
 }
-.controls {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-}
 .chip {
   padding: 6px 14px;
   border-radius: var(--radius-chip);
@@ -572,9 +696,6 @@ select,
 .sec-h.sub .lbl {
   text-transform: none;
   letter-spacing: 0.02em;
-}
-.sub-grp {
-  padding-left: 14px;
 }
 .left-col .sec-h.sub {
   padding-left: 6px;
@@ -610,177 +731,7 @@ select,
   margin: 0 auto 16px;
   line-height: 1.7;
 }
-/* 詳細画面の所属グループバッジ(source バッジと違い色は中立) */
-.grp-badge {
-  background: var(--raised);
-  color: var(--sub);
-}
 
-/* AI フロー図解: フローチャート(zero-dep。ノードは CSS、配線は実測 SVG) */
-.flow-tab {
-  padding-top: 14px;
-}
-.fc-scroll {
-  overflow-x: auto;
-  padding: 4px 0 8px;
-}
-/* 3レーン: 左=ループ矢印 / 中央=本線 / 右=中断カプセル */
-.fc {
-  position: relative;
-  display: grid;
-  grid-template-columns: 44px minmax(300px, 1fr) auto;
-  row-gap: 26px;
-  min-width: 440px;
-  max-width: 640px;
-  margin: 4px 0 12px;
-}
-.fc-wires {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  pointer-events: none;
-}
-.fc-wires text {
-  font-family: var(--font-ui);
-}
-.fc-l {
-  min-height: 1px;
-}
-.fc-m {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-.fc-r {
-  display: flex;
-  align-items: center;
-  padding-left: 14px;
-}
-.fc-start {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--text);
-  position: relative;
-  z-index: 1;
-}
-.fc-proc {
-  border: 1.5px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 8px 16px 9px;
-  min-width: 210px;
-  max-width: 320px;
-  position: relative;
-  z-index: 1;
-}
-.fc-proc.human {
-  border-color: var(--border-strong);
-  background: var(--raised);
-}
-.fc-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.fc-num {
-  flex: none;
-  width: 19px;
-  height: 19px;
-  border-radius: 50%;
-  background: var(--text);
-  color: var(--bg);
-  font-size: 10.5px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.fc-proc.human .fc-num {
-  background: var(--sub);
-}
-.fc-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text);
-}
-.fc-gate {
-  margin-left: auto;
-  padding-left: 8px;
-  font-size: 10.5px;
-  font-weight: 700;
-  color: var(--sub);
-  white-space: nowrap;
-}
-.fc-detail {
-  font-size: 11.5px;
-  color: var(--sub);
-  margin: 3px 0 0 27px;
-  line-height: 1.5;
-}
-.fc-calls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin: 6px 0 0 27px;
-}
-/* 判断ノード(ひし形)。clip-path 2枚重ねで枠線を出す */
-.fc-dec {
-  position: relative;
-  width: 224px;
-  height: 62px;
-  z-index: 1;
-}
-.fc-dec .fc-shape {
-  position: absolute;
-  inset: 0;
-  background: var(--meta);
-  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-}
-.fc-dec .fc-shape::after {
-  content: '';
-  position: absolute;
-  inset: 1.5px;
-  background: var(--bg);
-  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
-}
-.fc-dec .fc-q {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 42px;
-  font-size: 11.5px;
-  font-weight: 700;
-  text-align: center;
-  line-height: 1.3;
-  color: var(--text);
-  overflow: hidden;
-}
-/* 終端カプセル(右レーン=中断 / 本線末尾=完了) */
-.fc-term {
-  font-size: 11.5px;
-  font-weight: 700;
-  line-height: 1.4;
-  border-radius: var(--radius-chip);
-  padding: 4px 13px;
-  white-space: nowrap;
-  position: relative;
-  z-index: 1;
-}
-.fc-term.abort {
-  background: var(--danger-tint);
-  color: var(--danger);
-  border: 1px solid var(--danger-tint);
-}
-.fc-term.done {
-  background: var(--raised);
-  color: var(--good);
-  border: 1px solid var(--border);
-}
 .ctrl-sep {
   width: 1px;
   height: 18px;
@@ -1091,19 +1042,9 @@ select,
 }
 
 /* 同名定義 + diff */
-.same-actions {
-  margin-left: auto;
-  display: inline-flex;
-  gap: 6px;
-}
 .pbtn.sm {
   font-size: 11px;
   padding: 3px 10px;
-}
-.pbtn.sm.on {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--bg);
 }
 .diff-wrap {
   margin-top: 10px;
@@ -1155,73 +1096,6 @@ select,
   text-align: center;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-}
-
-/* 起動経路バッジ(実測 or AI 判定。✦ 付きは AI 判定) */
-.inv-badge {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2.5px 8px;
-  border-radius: var(--radius-chip);
-  white-space: nowrap;
-  flex: none;
-}
-.inv-human {
-  color: var(--text);
-  background: var(--raised);
-}
-.inv-agent {
-  color: var(--text);
-  background: var(--raised);
-}
-.inv-both {
-  color: var(--text);
-  background: var(--raised);
-}
-.inv-ai {
-  opacity: 0.85;
-}
-
-/* 関連スキルチップ(design README §概要タブ 3) */
-.rel-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.rel-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-chip);
-  padding: 7px 12px;
-  cursor: pointer;
-}
-.rel-chip:hover {
-  background: var(--panel);
-}
-.rel-chip .rt {
-  font-size: 9.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--meta);
-}
-.rel-chip .rn {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text);
-}
-.rel-chip.missing {
-  border-style: dashed;
-  cursor: default;
-}
-.rel-chip.missing .rn {
-  color: var(--meta);
-}
-.rel-chip.missing .rm {
-  font-size: 9.5px;
-  color: var(--sub);
 }
 
 /* master / detail */
@@ -1308,30 +1182,6 @@ select,
 .back:hover {
   background: var(--panel);
 }
-.meta-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 20px;
-  position: relative;
-  flex-wrap: wrap;
-}
-.badge {
-  font-size: 10.5px;
-  font-weight: 700;
-  padding: 4px 11px;
-  border-radius: var(--radius-chip);
-}
-.m-ver {
-  font-size: 11px;
-  color: var(--meta);
-  font-family: var(--font-mono);
-}
-.m-upd {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--meta);
-}
 .pbtn {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1387,17 +1237,6 @@ select,
   color: var(--sub);
   margin: 0;
   white-space: pre-wrap;
-}
-.ex-block {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  background: var(--raised);
-  border-radius: var(--radius);
-  padding: 10px 13px;
-  color: var(--sub);
-  margin-bottom: 8px;
-  overflow-x: auto;
-  white-space: pre;
 }
 .f-row {
   display: flex;
@@ -1642,17 +1481,6 @@ select,
 }
 
 /* ---- 診断 (v0.3.0): 未使用バッジ・lint 警告・トークンコスト ---- */
-/* 休眠状態を表すため、invocation バッジ(緑/紫/アンバー)やスコープ色とかぶらないスレートグレー */
-.unused-badge {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2.5px 8px;
-  border-radius: var(--radius-chip);
-  white-space: nowrap;
-  flex: none;
-  color: var(--warn);
-  background: var(--warn-tint);
-}
 .warn-badge {
   font-size: 9.5px;
   font-weight: 700;
@@ -1779,26 +1607,6 @@ select,
   color: var(--warn);
 }
 
-/* 詳細画面の直近30日スパークライン */
-.spark-wrap {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  margin: 2px 0 6px;
-}
-.spark rect {
-  fill: var(--border);
-}
-.spark rect.on {
-  fill: var(--text);
-  fill-opacity: 0.6;
-}
-.spark-label {
-  font-size: 10.5px;
-  color: var(--meta);
-  white-space: nowrap;
-}
-
 /*
  * ---- 操作起点のインライン表示(v0.9.0 で alert ダイアログを全廃した受け皿)----
  * 押したボタンの隣に 1 行だけ出す。失敗は危険色 + ⚠、注記(claude CLI 不在など)は補足色。
@@ -1817,44 +1625,12 @@ select,
   color: var(--meta);
 }
 
-/* ---- AI 発動診断 ---- */
-.diag-block {
-  margin: 8px 0 4px;
-}
 .diag-box {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
   padding: 12px 14px;
   margin-bottom: 10px;
-}
-.diag-verdict {
-  font-size: 12.5px;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-.diag-verdict.good {
-  color: var(--good);
-}
-.diag-verdict.weak {
-  color: var(--warn);
-}
-.diag-imp-t {
-  font-size: 10.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--meta);
-  margin: 10px 0 4px;
-}
-.diag-improved {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--sub);
-  margin: 0 0 10px;
-  background: var(--raised);
-  border-radius: var(--radius);
-  padding: 10px 12px;
 }
 
 /* ---- memory (plan 10): 値は docs/plans/design/{Main,Detail,Triage}.dc.html の <style> から実測転記 ----
@@ -3256,4 +3032,696 @@ button.ctx-row:hover {
   .trow .c-tok {
     display: none;
   }
+}
+
+/*
+ * ---- 理解画面と hook 画面(計画 15 Phase E1)。骨格は design-system 1.3、寸法はトークン(先頭の :root) ----
+ * 1 列: 名前と要約 → 事実の帯(4 マス)→ 発動 → 触るもの → 流れ → 全文。右カラムもタブも持たない。
+ * 色は必ずトークン。押せるものは罫線か下線、押せないものは罫線なし(0.4)。
+ */
+
+/* ヘッダーのパンくず(プロジェクト / 名前)。プロジェクト切替と同じ位置に出る(1.1) */
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--crumb-size);
+  min-width: 0;
+}
+.crumb-p {
+  color: var(--sub);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.crumb-p:hover {
+  color: var(--text);
+}
+.crumb-cur {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 下線リンク(委譲先・同名の定義・図の中の委譲。本文色、下線は補足色)。button でも a でも同じ見た目 */
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--meta);
+  cursor: pointer;
+}
+.link:hover {
+  text-decoration-color: var(--text);
+}
+/* 補足色の小さな下線リンク(diff の開閉・続きを表示) */
+.linkbtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--meta);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.linkbtn:hover,
+.linkbtn.on {
+  color: var(--text);
+}
+.ellip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.good {
+  color: var(--good);
+}
+.btn.sm {
+  height: var(--btn-sm-h);
+}
+.btn.on {
+  background: var(--raised);
+}
+
+/* 縦積み。ブロック間はセクション間隔(Ledger 32 / Console 24) */
+.dv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--section-gap);
+  padding-bottom: 48px;
+}
+
+/* 名前とチップ、右端に「エディタで開く」。その下に ✦ 要約(15px)と description(13px 副文色) */
+.dv-title {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--dv-title-pad);
+  border: var(--dv-title-border);
+  border-radius: var(--radius);
+  background: var(--dv-title-bg);
+}
+.dv-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dv-title-gap);
+  flex-wrap: wrap;
+}
+.dv-title h1 {
+  margin: 0;
+  font-family: var(--h1-font);
+  font-size: var(--h1-size);
+  font-weight: 600;
+  word-break: break-all;
+}
+.dv-title-r {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.dv-summary,
+.dv-desc {
+  margin: 0;
+  font-family: var(--font-body);
+  line-height: var(--body-lh);
+  white-space: pre-wrap;
+}
+.dv-summary {
+  font-size: var(--dv-summary-size);
+  color: var(--text);
+}
+.dv-desc {
+  font-size: var(--dv-desc-size);
+  color: var(--sub);
+}
+
+/* ブロック(発動 / 触るもの / 流れ / 全文 / hook のコマンドと一覧) */
+.dblk {
+  border: var(--dblk-border);
+  border-radius: var(--radius);
+  background: var(--dblk-bg);
+  overflow: hidden;
+}
+.dblk-hd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: var(--dblk-hd-h);
+  padding: var(--dblk-hd-pad);
+  background: var(--dblk-hd-bg);
+  border-bottom: var(--dblk-hd-border);
+}
+/* 本文と罫線で区切る見出し(全文・見出しツリー) */
+.dblk-hd.rule {
+  padding: var(--dblk-hd-rule-pad);
+  border-bottom: 1px solid var(--border);
+}
+.dblk-hd h2 {
+  margin: 0;
+  font-family: var(--h2-font);
+  font-size: var(--h2-size);
+  font-weight: var(--h2-weight);
+  text-transform: var(--h2-transform);
+  letter-spacing: var(--h2-tracking);
+  color: var(--h2-color);
+  white-space: nowrap;
+}
+.dblk-hd > .meta {
+  min-width: 0;
+}
+/* パスなど長い注記は折り返さず縮める(右端のボタンを同じ行に残す) */
+.dblk-hd > .meta.ellip {
+  flex: 1 1 0;
+}
+.dblk-hd .hd-r {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.dv-empty {
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--meta);
+}
+.dv-diff {
+  padding: 8px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.facts-wrap .dv-diff {
+  border: var(--dblk-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--dblk-bg);
+}
+.facts-wrap .dv-diff + * {
+  margin-top: 0;
+}
+.facts-wrap:has(.dv-diff) .facts {
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+/* 事実の帯: 4 マスのグリッド。幅 1280 未満でも 4 マスのまま(0.8) */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: var(--fact-pad);
+  border-right: 1px solid var(--border);
+  font-size: var(--fact-v-size);
+  color: var(--sub);
+}
+.fact:last-child {
+  border-right: none;
+}
+.fk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--fact-k-font);
+  font-size: var(--fact-k-size);
+  font-weight: var(--fact-k-weight);
+  text-transform: var(--fact-k-transform);
+  letter-spacing: var(--fact-k-tracking);
+  color: var(--fact-k-color);
+  white-space: nowrap;
+}
+/* マスの主値: 等幅 16px/500(使用回数・イベント名) */
+.fv {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+.fv .meta {
+  font-size: 11px;
+  font-weight: 400;
+}
+.fv-sub {
+  font-family: var(--fact-v-font);
+  font-size: var(--fact-v-size);
+  color: var(--sub);
+}
+.fv-path {
+  font-size: 12px;
+  color: var(--text);
+}
+.fv-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.fv-files {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.fv-files span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fact .mono {
+  font-size: 12px;
+}
+.fact .warn-inline {
+  margin-left: 0;
+}
+/* スパークライン: 幅 120 × 高さ 16、棒 3px、本文色 60%(1.4) */
+.spark {
+  display: block;
+}
+.spark rect {
+  fill: var(--text);
+  fill-opacity: 0.6;
+}
+
+/* キーと値の表(発動 / 触るもの)。キー列 110px、行 36 / 32、最後の行は罫線なし */
+.kv {
+  display: grid;
+  grid-template-columns: var(--kv-k-w) minmax(0, 1fr);
+  column-gap: var(--kv-colgap);
+  padding: var(--dblk-body-pad);
+  font-size: 13px;
+  color: var(--text);
+}
+.kv > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--kv-row-h);
+  padding: var(--kv-pad);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.kv > span:nth-last-child(-n + 2) {
+  border-bottom: none;
+}
+.kv .k {
+  font-family: var(--kv-k-font);
+  font-size: var(--kv-k-size);
+  letter-spacing: var(--kv-k-tracking);
+  color: var(--kv-k-color);
+  background: var(--kv-k-bg);
+  white-space: nowrap;
+  align-self: stretch;
+}
+.kv .v-mono {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  word-break: break-all;
+}
+.kv .v-text {
+  font-size: 12.5px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.kv .v-wrap {
+  flex-wrap: wrap;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+/* 複数行の値(description の判定 + lint、診断)。行の上下に余白を取り、中は縦積み */
+.kv .v-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.kv .v-col .v-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 20px;
+}
+.kv .v-verdict {
+  font-size: 12px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+.kv .v-del {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-right: 8px;
+}
+.kv .lint-row {
+  padding: 0;
+  font-size: 12.5px;
+}
+.kv .v-diag {
+  padding: var(--kv-diag-pad);
+  gap: var(--kv-diag-gap);
+}
+.diag-sum {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.diag-sum .sub {
+  font-size: 12.5px;
+}
+.diag-tools .grow {
+  flex: 1;
+  min-width: 0;
+}
+/* 指示文の全文(1 行に省略しない)。先頭の事実ヘッダは補足色 */
+.instr-pre {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: var(--instr-size);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* ---- 流れ: 幅 680 の 3 レーン(左 180 = ループ / 中 300 = 本線 / 右 200 = 中断)。0.6 の記法 ---- */
+.fc-body {
+  padding: var(--fc-pad);
+  overflow-x: auto;
+}
+.fc-scroll {
+  display: flex;
+  justify-content: center;
+}
+.fc {
+  position: relative;
+  display: grid;
+  grid-template-columns: 180px 300px 200px;
+  row-gap: 28px;
+  width: 680px;
+  flex: none;
+}
+.fc-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.fc-wires text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.fc-l {
+  min-height: 1px;
+}
+.fc-m {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.fc-r {
+  display: flex;
+  align-items: center;
+  padding-left: 62px;
+}
+/* 終端(開始 / 終了 = 200 × 32、中断 = 100 × 32)。角丸の横長、副文色 */
+.fc-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 200px;
+  height: 32px;
+  padding: 0 12px;
+  border: var(--fc-proc-bw) solid var(--fc-cap-border);
+  border-radius: 16px;
+  background: var(--fc-cap-bg);
+  font-size: 12px;
+  color: var(--sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+  z-index: 1;
+}
+.fc-cap.abort {
+  display: inline-block;
+  width: auto;
+  min-width: 100px;
+  max-width: 138px;
+  line-height: 30px;
+  text-align: center;
+}
+/* 処理 = 四角 300 × 48〜。タイトル 13/600(Console は等幅 12.5)、補足 12 副文色 */
+.fc-proc {
+  box-sizing: border-box;
+  width: 300px;
+  min-height: 48px;
+  padding: 7px 14px;
+  border: var(--fc-proc-bw) solid var(--fc-proc-border);
+  border-radius: var(--radius);
+  background: var(--fc-proc-bg);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  position: relative;
+  z-index: 1;
+}
+.fc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fc-title {
+  font-family: var(--fc-title-font);
+  font-size: var(--fc-title-size);
+  font-weight: var(--fc-title-weight);
+  color: var(--text);
+  line-height: 1.35;
+}
+.fc-detail {
+  font-size: var(--fc-detail-size);
+  color: var(--fc-detail-color);
+  line-height: 1.45;
+}
+.fc-calls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: var(--fc-detail-size);
+}
+.fc-calls .link {
+  font-size: var(--fc-detail-size);
+}
+/* 判断 = ひし形 200 × 64(human ゲートは人のアイコンを添えて 220)。塗りと縁はトークン */
+.fc-dec {
+  position: relative;
+  width: 200px;
+  height: 64px;
+  z-index: 1;
+}
+.fc-dec.human {
+  width: 220px;
+}
+.fc-dec .fc-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.fc-dec .fc-shape polygon {
+  fill: var(--fc-dec-bg);
+  stroke: var(--fc-dec-border);
+  stroke-width: var(--fc-proc-bw);
+  stroke-dasharray: var(--fc-dec-dash);
+}
+.fc-dec .fc-q {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 36px;
+  font-family: var(--fc-title-font);
+  font-size: var(--fc-title-size);
+  font-weight: var(--fc-title-weight);
+  text-align: center;
+  line-height: 1.3;
+  color: var(--text);
+  overflow: hidden;
+}
+.fc-person {
+  flex: none;
+  color: var(--text);
+}
+
+/* 未生成時の見出しツリー(States モック): 行 28px、根 16 / 子 34 のインデント、等幅 12.5 */
+.tree-row {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.tree-row:last-child {
+  border-bottom: none;
+}
+.tree-row.d1,
+.tree-row.d2,
+.tree-row.d3 {
+  color: var(--sub);
+}
+.tree-row.d1 {
+  padding-left: 34px;
+}
+.tree-row.d2 {
+  padding-left: 52px;
+}
+.tree-row.d3 {
+  padding-left: 70px;
+}
+.tree-row.meta {
+  color: var(--meta);
+}
+
+/* ---- 全文: frontmatter(等幅 12 / 1.7、副文色)+ 本文(先頭だけ見せて続きを表示) ---- */
+.fm {
+  margin: 0;
+  padding: var(--fm-pad);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--sub);
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--fm-bg);
+  border-bottom: 1px solid var(--border);
+}
+.md-full {
+  padding: var(--md-pad);
+}
+.md-full .md-body {
+  font-size: var(--md-size);
+  line-height: 1.6;
+}
+.md-full .md-body h1,
+.md-full .md-body h2 {
+  border: 0;
+  padding: 0;
+}
+.md-full .md-body h1 {
+  font-size: 15px;
+  margin: 16px 0 4px;
+}
+.md-full .md-body h2 {
+  font-size: 14px;
+  margin: 16px 0 4px;
+}
+.md-full .md-body h3 {
+  font-size: 13.5px;
+  margin: 14px 0 4px;
+}
+.md-full .md-body p {
+  margin: 0 0 6px;
+}
+.md-full .linkbtn {
+  margin-top: 8px;
+}
+
+/* ---- hook 画面: コマンド(等幅 12.5 / 1.7)と同じセッションの hook 一覧(160 / 80 / 1fr / 90) ---- */
+.hook-cmd {
+  margin: 0;
+  padding: 12px 16px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
+.hrow {
+  display: grid;
+  grid-template-columns: 160px 80px minmax(0, 1fr) 90px;
+  align-items: center;
+  justify-items: start;
+  gap: 12px;
+  width: 100%;
+  min-height: var(--hook-row-h);
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+}
+.hrow:last-child {
+  border-bottom: none;
+}
+.hrow:hover {
+  background: var(--row-hover);
+}
+.hrow.thead {
+  min-height: 30px;
+  background: var(--thead-bg);
+  border-bottom: 1px solid var(--thead-border);
+  color: var(--thead-color);
+  font-family: var(--thead-font);
+  font-size: var(--thead-size);
+  font-weight: 500;
+  text-transform: var(--thead-transform);
+  letter-spacing: var(--thead-tracking);
+  cursor: default;
+}
+.hrow.thead:hover {
+  background: var(--thead-bg);
+}
+.hrow > span {
+  min-width: 0;
+  max-width: 100%;
+}
+.hname {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.hrow.cur .hname {
+  font-weight: 700;
+}
+.hcmd {
+  font-size: 12px;
+  color: var(--sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

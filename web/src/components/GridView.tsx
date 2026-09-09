@@ -31,15 +31,8 @@ import { InlineError, InlineNote } from './Inline';
 import { ChangesBlock } from './ChangesBlock';
 import { GroupHeading, ItemRow, GroupHead, TableHead, useNarrow } from './Rows';
 
-/* 理解画面(E1 で組み替えるまで v0.8 のまま)が使うバッジ類は Rows に移した。参照元を変えないための再輸出 */
-export {
-  GroupHeading,
-  InvocationBadge,
-  KindBadge,
-  SectionHeading,
-  UnusedBadge,
-  WarnBadge,
-} from './Rows';
+/* memory 画面(Phase F で組み替える)が使うバッジは Rows にある。参照元を変えないための再輸出 */
+export { KindBadge } from './Rows';
 
 const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
 const SORT_KEYS: [SortKey, MsgKey][] = [

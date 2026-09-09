@@ -3,6 +3,7 @@ import { Link, Route, Routes, useLocation, useNavigate, useSearchParams } from '
 import {
   fetchSkills,
   fetchSummaryStatus,
+  fromId,
   generateGroups,
   initToken,
   summarizeAll,
@@ -121,6 +122,9 @@ export default function App() {
   }, [reload]);
 
   const all: FlatItem[] = useMemo(() => (data ? flatten(data.sections) : []), [data]);
+  /* 理解画面ではプロジェクト切替の位置がパンくず(プロジェクト / 名前)になる(design-system 1.1) */
+  const detailId = location.pathname.match(/^\/skills\/([^/]+)/)?.[1];
+  const detailItem = detailId ? all.find((x) => x.key === fromId(detailId)) : undefined;
   const project = useMemo(
     () => (data ? resolveProject(projectParam, data.sections) : null),
     [data, projectParam],
@@ -290,20 +294,30 @@ export default function App() {
         <h1>
           <Link to={{ pathname: '/', search: params.toString() }}>Skills Viewer</Link>
         </h1>
-        {data && (
-          <ProjectSwitcher
-            data={data}
-            project={project}
-            onSelect={(id) => {
-              const next = new URLSearchParams(params);
-              if (id === null) next.delete('project');
-              else next.set('project', id);
-              if (id !== 'all') next.delete('by');
-              navigate({ pathname: '/', search: next.toString() });
-            }}
-          />
+        {data && detailItem ? (
+          <span className="crumb">
+            <Link className="crumb-p" to={{ pathname: '/', search: params.toString() }}>
+              {detailItem.scopeLabel}
+            </Link>
+            <span className="meta">/</span>
+            <span className="crumb-cur">{detailItem.name}</span>
+          </span>
+        ) : (
+          data && (
+            <ProjectSwitcher
+              data={data}
+              project={project}
+              onSelect={(id) => {
+                const next = new URLSearchParams(params);
+                if (id === null) next.delete('project');
+                else next.set('project', id);
+                if (id !== 'all') next.delete('by');
+                navigate({ pathname: '/', search: next.toString() });
+              }}
+            />
+          )
         )}
-        {data && project === 'all' && (
+        {data && !detailItem && project === 'all' && (
           <span className="meta">
             {t('proj.allSub', {
               n: data.sections.filter((s) => s.source === 'project').length,
@@ -389,19 +403,7 @@ export default function App() {
             />
             <Route
               path="/skills/:id"
-              element={
-                <DetailView
-                  data={data}
-                  all={all}
-                  q={q}
-                  sort={sort}
-                  view={project === 'all' ? by : 'source'}
-                  kind={kind}
-                  use={use}
-                  onOpen={openSkill}
-                  reload={reload}
-                />
-              }
+              element={<DetailView data={data} all={all} onOpen={openSkill} reload={reload} />}
             />
             {/* memory 一覧(Phase F で組み替える。v0.8 の view=memory の後継) */}
             <Route

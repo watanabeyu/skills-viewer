@@ -1,12 +1,13 @@
 /* API クライアント。型は server と共通の src/shared/types.ts が単一ソース */
 
-import type { SkillItem, SkillsData, SummaryJob } from '../../src/shared/types';
+import type { DiffResponse, SkillItem, SkillsData, SummaryJob } from '../../src/shared/types';
 import { apiErrorMessage, getLang } from './i18n';
 import { loadAiModel } from './settings';
 
 export type {
   ChangeEntry,
   ClaudeMdScan,
+  DiffResponse,
   FeedbackBodyPlan,
   ItemKind,
   Invocation,
@@ -48,6 +49,12 @@ export const fetchSkills = () => req<SkillsData>('/api/skills?lang=' + getLang()
 export const fetchFile = (src: string) =>
   req<{ content: string }>('/api/file?src=' + encodeURIComponent(src)).then((r) => r.content);
 export const fetchSummaryStatus = () => req<SummaryJob>('/api/summary-status');
+/*
+ * 前版(HEAD)の内容。git 管理外・履歴なし・user scope は { available: false } で返り、
+ * 理解画面はそのとき「前版との diff」ボタンを出さない(計画 15 C1 / E1)
+ */
+export const fetchDiff = (src: string) =>
+  req<DiffResponse>('/api/diff?src=' + encodeURIComponent(src));
 
 /*
  * mutation は表示言語と AI モデル設定も送る(言語は AI 生成・builtin 説明の解決、

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildFlowGraph } from '../web/src/flowgraph';
 import type { SkillFlow, SkillFlowStep } from '../src/shared/types';
 
-const L = { yes: 'はい', no: 'いいえ', done: '完了' };
+const L = { yes: 'はい', no: 'いいえ', done: '終了', abort: '中断' };
 
 const step = (title: string, over: Partial<SkillFlowStep> = {}): SkillFlowStep => ({
   title,
@@ -43,7 +43,7 @@ describe('buildFlowGraph (抽出データ → フローチャート)', () => {
     };
     const g = buildFlowGraph(flow, L);
     const decRow = g.rows.find((r) => r.node.kind === 'dec');
-    expect(decRow?.term?.label).toBe('⛔ 列挙して中止');
+    expect(decRow?.term?.label).toBe('列挙して中止');
     const exit = g.edges.find((e) => e.type === 'exit');
     expect(exit).toMatchObject({ from: 'd0-0', to: 't0-0', label: 'はい' });
     // 判断ノードから本線へ抜ける辺は「いいえ」
@@ -61,9 +61,24 @@ describe('buildFlowGraph (抽出データ → フローチャート)', () => {
     };
     const g = buildFlowGraph(flow, L);
     const loop = g.edges.find((e) => e.type === 'loop');
-    expect(loop).toMatchObject({ from: 'd2-0', to: 'p1', label: '↩ 修正して再実行' });
+    expect(loop).toMatchObject({ from: 'd2-0', to: 'p1', label: 'はい · 修正して再実行' });
     // ループ分岐には終端カプセルは付かない
     expect(g.rows.find((r) => r.node.id === 'd2-0')?.term).toBeUndefined();
+  });
+
+  it('then の無い中断は「中断」、human ゲートの分岐は判断ノードに印が付く', () => {
+    const flow: SkillFlow = {
+      steps: [step('S1', { gate: 'human', branches: [{ when: '承認された', then: '' }] })],
+    };
+    const g = buildFlowGraph(flow, L);
+    const decRow = g.rows.find((r) => r.node.kind === 'dec');
+    expect(decRow?.term?.label).toBe('中断');
+    expect(decRow?.node).toMatchObject({ kind: 'dec', human: true });
+    const plain = buildFlowGraph(
+      { steps: [step('S1', { branches: [{ when: 'x', then: '' }] })] },
+      L,
+    );
+    expect(plain.rows.find((r) => r.node.kind === 'dec')?.node).toMatchObject({ human: false });
   });
 
   it('範囲外の to は中断カプセルとして扱う(旧キャッシュ・壊れたデータ耐性)', () => {

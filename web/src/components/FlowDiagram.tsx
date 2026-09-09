@@ -1,26 +1,34 @@
+/*
+ * 理解画面の「流れ」(計画 15 Phase E1 / design-system 0.6)。
+ * キャッシュ済みフロー(it.aiFlow)があれば flowgraph.ts でグラフに写像し、標準のフローチャート
+ * 記法(start / end = 角丸の横長、proc = 四角、dec = ひし形、条件ラベル、左レーンのループ、
+ * 右への中断、human ゲートは人のアイコン、委譲は下線リンク)で描く。判断を「色の違う処理の箱」で
+ * 表さない。未生成時は SKILL.md の見出し構造を同じ縦の流れで出す(構造そのもの。✦ なし)。
+ * 描画は zero-dep: ノードは CSS、配線はノード位置を実測して自前 SVG で引く。
+ * 寸法は docs/design/0.9.0/*Understand.dc.html の SVG 実測: 幅 680、proc 300 × 48、ひし形 200 × 64、
+ * 終端 200 × 32(中断 100 × 32)、ノード間 28、ループのレーンは proc の左 60、中断は proc の右 62。
+ */
+
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import { flowSkill, type SkillFlow } from '../api';
 import { buildFlowGraph, type FlowGraph, type FlowNode } from '../flowgraph';
+import { mdHeadings, splitFrontmatter } from '../md';
 import type { FlatItem } from '../util';
 import { t } from '../i18n';
 import { InlineError, InlineNote } from './Inline';
 
-/*
- * AI フロー図解(詳細画面の「フロー」タブ本体)。
- * キャッシュ済みフロー(it.aiFlow)があれば flowgraph.ts でグラフに写像し、
- * フローチャート(中央=本線 / 左=ループ / 右=中断)として描画する。
- * 無ければ説明 + 抽出ボタンを出す(diagnose の DiagnosisBlock と同じオンデマンド構成)。
- * 描画は zero-dep: ノードは CSS、配線はノード位置を実測して自前 SVG で引く。
- */
-export function FlowSection({
+export function FlowBlock({
   it,
+  raw,
   resolve,
   aiAvailable,
   onOpen,
   reload,
 }: {
   it: FlatItem;
-  /* calls 内の名前を既知アイテムに解決する(OverviewTab の関連スキルと同じ規則) */
+  /* SKILL.md の生テキスト(未生成時の見出しツリー用)。読み込み中は null */
+  raw: string | null;
+  /* calls 内の名前を既知アイテムに解決する(触るものの委譲先と同じ規則) */
   resolve: (name: string) => FlatItem | undefined;
   /* claude CLI があるか。無ければ抽出ボタンは押せない(起動時に 1 回だけ検出した結果) */
   aiAvailable: boolean;
@@ -45,50 +53,82 @@ export function FlowSection({
   };
 
   return (
-    <div className="flow-tab">
+    <section className="dblk">
+      <div className="dblk-hd">
+        <h2>{t('flow.title')}</h2>
+        <span className="meta">{flow ? t('flow.extracted') : t('flow.treeNote')}</span>
+        <span className="hd-r">
+          <InlineError msg={error} />
+          {!aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
+          <button
+            className="btn"
+            disabled={busy || !aiAvailable}
+            onClick={run}
+            title={t('flow.runTitle')}
+          >
+            {busy ? t('flow.running') : flow ? t('flow.rerun') : '✦ ' + t('flow.run')}
+          </button>
+        </span>
+      </div>
       {flow ? (
-        <FlowChart flow={flow} resolve={resolve} onOpen={onOpen} />
+        <div className="fc-body">
+          <FlowChart
+            flow={flow}
+            startLabel={(it.kind === 'agent' ? '@' : '/') + it.name}
+            resolve={resolve}
+            onOpen={onOpen}
+          />
+        </div>
       ) : (
-        <p className="full-desc">{t('flow.emptyHint')}</p>
+        <HeadingTree raw={raw} />
       )}
-      <button
-        className="pbtn sm"
-        disabled={busy || !aiAvailable}
-        onClick={run}
-        title={t('flow.runTitle')}
-      >
-        {busy ? t('flow.running') : flow ? t('flow.rerun') : '✦ ' + t('flow.run')}
-      </button>
-      <InlineError msg={error} />
-      {!aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
+    </section>
+  );
+}
+
+/* ── 未生成時: 見出しの木(States モックの「フロー図未生成」) ── */
+
+function HeadingTree({ raw }: { raw: string | null }) {
+  if (raw === null) return <div className="tree-row meta">{t('common.loading')}</div>;
+  let hs = mdHeadings(splitFrontmatter(raw).body);
+  // 文書のタイトル(先頭の唯一の h1)は骨格ではないので落とし、その下の階層を根にする
+  if (hs.length > 1 && hs[0].level === 1 && !hs.slice(1).some((h) => h.level === 1)) {
+    hs = hs.slice(1);
+  }
+  if (!hs.length) return <div className="tree-row meta">{t('flow.treeEmpty')}</div>;
+  const min = Math.min(...hs.map((h) => h.level));
+  return (
+    <div className="tree">
+      {hs.map((h, i) => {
+        const depth = Math.min(h.level - min, 3);
+        return (
+          <div className={'tree-row d' + depth} key={i}>
+            <span className="mono">{(depth ? '├─ ' : '') + h.text}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 /* ── フローチャート描画 ── */
 
-/* 配線は種類を破線パターンで分け、色は無彩色(テーマのトークンに追随) */
-const WIRE = {
-  seq: { stroke: 'var(--border-strong)', label: 'var(--sub)', dash: '' },
-  loop: { stroke: 'var(--border-strong)', label: 'var(--sub)', dash: '5 4' },
-  exit: { stroke: 'var(--border-strong)', label: 'var(--sub)', dash: '2 3' },
-} as const;
-/* SVG ラベルの縁取り(ペイン背景色)。文字が線に重なっても読めるようにする */
-const HALO = 'var(--bg)';
-
 function FlowChart({
   flow,
+  startLabel,
   resolve,
   onOpen,
 }: {
   flow: SkillFlow;
+  startLabel: string;
   resolve: (name: string) => FlatItem | undefined;
   onOpen: (key: string) => void;
 }) {
   const graph = buildFlowGraph(flow, {
     yes: t('flow.yes'),
     no: t('flow.no'),
-    done: t('flow.done'),
+    done: t('flow.end'),
+    abort: t('flow.abort'),
   });
   const wrap = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -117,11 +157,17 @@ function FlowChart({
           <Fragment key={row.node.id}>
             <div className="fc-l" />
             <div className="fc-m">
-              <Node node={row.node} refFor={ref} resolve={resolve} onOpen={onOpen} />
+              <Node
+                node={row.node}
+                startLabel={t('flow.start', { name: startLabel })}
+                refFor={ref}
+                resolve={resolve}
+                onOpen={onOpen}
+              />
             </div>
             <div className="fc-r">
               {row.term && (
-                <span ref={ref(row.term.id)} className="fc-term abort">
+                <span ref={ref(row.term.id)} className="fc-cap abort" title={row.term.label}>
                   {row.term.label}
                 </span>
               )}
@@ -133,38 +179,75 @@ function FlowChart({
   );
 }
 
+/* 承認を待つ判断(human ゲート)の印。モックの人のアイコン(丸 + 肩の弧) */
+function Person() {
+  return (
+    <svg
+      className="fc-person"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-label={t('flow.gateHuman')}
+    >
+      <circle cx="8" cy="5" r="3" />
+      <path d="M2.5 15c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5" />
+    </svg>
+  );
+}
+
 function Node({
   node,
+  startLabel,
   refFor,
   resolve,
   onOpen,
 }: {
   node: FlowNode;
+  startLabel: string;
   refFor: (id: string) => (el: HTMLElement | null) => void;
   resolve: (name: string) => FlatItem | undefined;
   onOpen: (key: string) => void;
 }) {
-  if (node.kind === 'start') return <span ref={refFor(node.id)} className="fc-start" />;
+  if (node.kind === 'start')
+    return (
+      <span ref={refFor(node.id)} className="fc-cap">
+        {startLabel}
+      </span>
+    );
   if (node.kind === 'end')
     return (
-      <span ref={refFor(node.id)} className="fc-term done">
+      <span ref={refFor(node.id)} className="fc-cap">
         {node.label}
       </span>
     );
   if (node.kind === 'dec')
     return (
-      <div ref={refFor(node.id)} className="fc-dec">
-        <div className="fc-shape" />
-        <div className="fc-q">{node.when}</div>
+      <div ref={refFor(node.id)} className={'fc-dec' + (node.human ? ' human' : '')}>
+        {/* ひし形は SVG(破線の縁取りを CSS の border では出せないため) */}
+        <svg
+          className="fc-shape"
+          viewBox="0 0 200 64"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <polygon points="100,0 200,32 100,64 0,32" vectorEffect="non-scaling-stroke" />
+        </svg>
+        <div className="fc-q">
+          {node.human && <Person />}
+          <span>{node.when}</span>
+        </div>
       </div>
     );
   const s = node.step;
   return (
-    <div ref={refFor(node.id)} className={'fc-proc' + (s.gate === 'human' ? ' human' : '')}>
+    <div ref={refFor(node.id)} className="fc-proc">
       <div className="fc-head">
-        <span className="fc-num">{node.index + 1}</span>
         <span className="fc-title">{s.title}</span>
-        {s.gate === 'human' && <span className="fc-gate">👤 {t('flow.gateHuman')}</span>}
+        {/* 分岐を持たない human ゲート(判断ノードが無い)は処理の箱に印を出す */}
+        {s.gate === 'human' && s.branches.length === 0 && <Person />}
       </div>
       {s.detail && <div className="fc-detail">{s.detail}</div>}
       {s.calls.length > 0 && (
@@ -174,13 +257,14 @@ function Node({
             const name = raw.replace(/^\//, '');
             const target = resolve(name);
             return target ? (
-              <button key={raw} className="rel-chip" onClick={() => onOpen(target.key)}>
-                <span className="rn">/{name}</span>
+              /* 委譲は下線リンク(本文色)。0.6 */
+              <button key={raw} className="link" onClick={() => onOpen(target.key)}>
+                {name}
               </button>
             ) : (
               /* 未知の名前(gw 等の外部ツール)はリンクにしない */
-              <span key={raw} className="rel-chip missing">
-                <span className="rn">{name}</span>
+              <span key={raw} className="meta">
+                {name}
               </span>
             );
           })}
@@ -190,12 +274,19 @@ function Node({
   );
 }
 
-/* ── 配線: ノード実測 → SVG(直進 / ループ / 脱出 + 矢頭 + ラベル)── */
+/* ── 配線: ノード実測 → SVG(直進 / ループ / 脱出 + 矢頭 + ラベル)。色・太さは --fc-* トークン ── */
 
 const NS = 'http://www.w3.org/2000/svg';
+const WIRE = 'var(--fc-wire)';
+const LABEL = 'var(--fc-label)';
+/* SVG ラベルの縁取り(パネル地の色)。文字が線に重なっても読めるようにする */
+const HALO = 'var(--fc-halo)';
+/* ループのレーンは戻り先の左 60px、2 本目以降は 20px ずつ外側(モック実測) */
+const LOOP_INSET = 60;
+const LOOP_STEP = 20;
 
 /* fill / stroke は var() を確実に解決させるため属性でなく style に当てる */
-const STYLE_KEYS = new Set(['fill', 'stroke']);
+const STYLE_KEYS = new Set(['fill', 'stroke', 'stroke-width']);
 function mk(tag: string, attrs: Record<string, string>): SVGElement {
   const el = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -205,12 +296,18 @@ function mk(tag: string, attrs: Record<string, string>): SVGElement {
   return el;
 }
 
-function arrow(svg: SVGSVGElement, x: number, y: number, dir: 'down' | 'right', color: string) {
+function line(svg: SVGSVGElement, d: string) {
+  svg.appendChild(
+    mk('path', { d, stroke: WIRE, 'stroke-width': 'var(--fc-wire-w)', fill: 'none' }),
+  );
+}
+
+function arrow(svg: SVGSVGElement, x: number, y: number, dir: 'down' | 'right') {
   const d =
     dir === 'down'
-      ? `M ${x - 4} ${y - 6} L ${x + 4} ${y - 6} L ${x} ${y} Z`
-      : `M ${x - 6} ${y - 4} L ${x - 6} ${y + 4} L ${x} ${y} Z`;
-  svg.appendChild(mk('path', { d, fill: color }));
+      ? `M ${x - 3.5} ${y - 7} L ${x + 3.5} ${y - 7} L ${x} ${y} Z`
+      : `M ${x - 7} ${y - 3.5} L ${x - 7} ${y + 3.5} L ${x} ${y} Z`;
+  svg.appendChild(mk('path', { d, fill: WIRE }));
 }
 
 function label(
@@ -218,22 +315,19 @@ function label(
   x: number,
   y: number,
   text: string,
-  color: string,
   anchor: 'start' | 'middle' | 'end',
 ) {
   if (!text) return;
   const el = mk('text', {
     x: String(x),
     y: String(y),
-    fill: color,
+    fill: LABEL,
     'text-anchor': anchor,
-    'font-size': '10.5',
-    'font-weight': '700',
     stroke: HALO,
     'stroke-width': '3',
     'paint-order': 'stroke',
   });
-  el.textContent = text.length > 14 ? text.slice(0, 13) + '…' : text;
+  el.textContent = text.length > 18 ? text.slice(0, 17) + '…' : text;
   svg.appendChild(el);
 }
 
@@ -264,54 +358,25 @@ function drawWires(
     const a = box(e.from);
     const b = box(e.to);
     if (!a || !b) continue;
-    const c = WIRE[e.type];
     if (e.type === 'seq') {
-      svg.appendChild(
-        mk('path', {
-          d: `M ${a.cx} ${a.b} V ${b.t - 1}`,
-          stroke: c.stroke,
-          'stroke-width': '1.6',
-          fill: 'none',
-        }),
-      );
-      arrow(svg, b.cx, b.t - 1, 'down', c.stroke);
-      label(svg, a.cx + 9, a.b + 15, e.label, c.label, 'start');
+      line(svg, `M ${a.cx} ${a.b} V ${b.t - 1}`);
+      arrow(svg, b.cx, b.t - 1, 'down');
+      // 判断から下へ抜ける辺の条件ラベル(「はい」)は線の右脇
+      label(svg, a.cx + 8, a.b + 18, e.label, 'start');
     } else if (e.type === 'exit') {
-      svg.appendChild(
-        mk('path', {
-          d: `M ${a.l + a.w} ${a.cy} H ${b.l - 1}`,
-          stroke: c.stroke,
-          'stroke-width': '1.6',
-          fill: 'none',
-          'stroke-dasharray': c.dash,
-        }),
-      );
-      arrow(svg, b.l - 1, a.cy, 'right', c.stroke);
-      label(svg, (a.l + a.w + b.l) / 2, a.cy - 7, e.label, c.label, 'middle');
+      /* 右頂点から右へ抜けて中断の終端へ。条件ラベルは線の上 */
+      line(svg, `M ${a.l + a.w} ${a.cy} H ${b.l - 1}`);
+      arrow(svg, b.l - 1, a.cy, 'right');
+      label(svg, a.l + a.w + 10, a.cy - 6, e.label, 'start');
     } else {
-      /* loop: 発生元ひし形の左頂点 → 左レーン → 行き先処理ノードの左辺(スキップも同経路) */
-      const lx = 26 - (loopK % 3) * 12;
+      /* loop: 左頂点 → 左レーンを上へ → 戻り先の処理ノードの左辺。ラベルはレーンの中ほど */
+      const lx = b.l - LOOP_INSET - (loopK % 3) * LOOP_STEP;
       loopK++;
-      const r = 7;
       const sy = a.cy;
       const ty = b.cy;
-      const up = ty < sy ? -1 : 1;
-      svg.appendChild(
-        mk('path', {
-          d:
-            `M ${a.l} ${sy} H ${lx + r}` +
-            ` Q ${lx} ${sy} ${lx} ${sy + up * r}` +
-            ` V ${ty - up * r}` +
-            ` Q ${lx} ${ty} ${lx + r} ${ty}` +
-            ` H ${b.l - 1}`,
-          stroke: c.stroke,
-          'stroke-width': '1.6',
-          fill: 'none',
-          'stroke-dasharray': c.dash,
-        }),
-      );
-      arrow(svg, b.l - 1, ty, 'right', c.stroke);
-      label(svg, a.l - 8, sy - 7, e.label, c.label, 'end');
+      line(svg, `M ${a.l} ${sy} H ${lx} V ${ty} H ${b.l - 1}`);
+      arrow(svg, b.l - 1, ty, 'right');
+      label(svg, lx - 6, (sy + ty) / 2 + 4, e.label, 'end');
     }
   }
 }

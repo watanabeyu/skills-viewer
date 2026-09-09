@@ -8,13 +8,12 @@
  */
 
 import { useEffect, useState } from 'react';
-import type { ItemKind, Section, SkillItem, Source } from '../api';
+import type { ItemKind, SkillItem, Source } from '../api';
 import { itemKey } from '../api';
 import {
   KIND_LABEL,
   MARK_CHAR,
   SRC_COLOR,
-  headingOf,
   invocationLabel,
   invocationOf,
   invocationTitle,
@@ -24,20 +23,11 @@ import {
 } from '../util';
 import { lintLabel, t } from '../i18n';
 
-/* ---- v0.8 から引き継ぐバッジ(理解画面が使う。E1 で組み替えるまでそのまま) ---- */
+/* ---- v0.8 から引き継ぐバッジ(memory 画面と「すべてのプロジェクト」が使う。Phase F で見直す) ---- */
 
 export function KindBadge({ it }: { it: SkillItem }) {
   const label = KIND_LABEL[it.kind];
   return label ? <span className="kbadge">{label}</span> : null;
-}
-
-export function UnusedBadge({ show }: { show: boolean }) {
-  if (!show) return null;
-  return (
-    <span className="unused-badge" title={t('badge.unusedTitle')}>
-      {t('badge.unused')}
-    </span>
-  );
 }
 
 /* hover で警告内容を CSS tooltip 表示(native title より視認性が高い) */
@@ -55,47 +45,6 @@ export function WarnBadge({ it }: { it: SkillItem }) {
         ))}
       </span>
     </span>
-  );
-}
-
-export function InvocationBadge({ it }: { it: SkillItem }) {
-  const inv = invocationOf(it);
-  if (!inv) return null;
-  return (
-    <span
-      className={'inv-badge inv-' + inv.kind + (inv.basis === 'ai' ? ' inv-ai' : '')}
-      title={invocationTitle(it)}
-    >
-      {invocationLabel(inv.kind)}
-      {inv.basis === 'ai' ? ' ✦' : ''}
-    </span>
-  );
-}
-
-export function SectionHeading({
-  section,
-  count,
-  small,
-  tokens,
-}: {
-  section: Section;
-  count: number;
-  small?: boolean;
-  /* セクション全体(フィルタ前)の注入トークン概算。省略時は非表示 */
-  tokens?: number;
-}) {
-  return (
-    <div className={'sec-h' + (small ? ' sm' : '')}>
-      <span className="sq" style={{ background: SRC_COLOR[section.source] }} />
-      <span className="lbl">{headingOf(section)}</span>
-      <span className="n">{count}</span>
-      {!!tokens && (
-        <span className="sec-tok" title={t('app.tokensTitle')}>
-          {t('sec.tokens', { n: tokens.toLocaleString() })}
-        </span>
-      )}
-      <span className="ln" />
-    </div>
   );
 }
 
