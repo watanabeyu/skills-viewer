@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { MemorySection, Section } from '../src/shared/types';
 import { ackChanges, buildSnapshot, computeChanges, diffSnapshot } from '../src/server/snapshot';
+import { claudeMdRefsOf } from '../src/server/claude-md';
 import { dayKey } from '../src/server/usage';
 
 const tmpDirs: string[] = [];
@@ -209,6 +210,60 @@ describe('computeChanges(形式移行)', () => {
     expect(changes?.updated).toHaveLength(1);
     expect(changes?.updated[0].author).toBeUndefined();
     expect(changes?.updated[0].authoredAt).toBeUndefined();
+  });
+});
+
+/*
+ * computeChanges への CLAUDE.md の入力(計画 16 Phase D): 追跡対象を cwd の 7 段
+ * (claudeMdLayers)から登録済み全プロジェクト(claudeMdRefsOf(projectCandidates(cwd)))へ広げた。
+ * ここでは claudeMdRefsOf が実際に computeChanges の入力として機能し、cwd 以外のプロジェクトの
+ * CLAUDE.md の変化(追加・更新・削除)も拾えることを確かめる(index.ts の collect / ack と
+ * 同じ組み合わせ方)。home はテスト用の一時ディレクトリを明示し、実環境の ~/.claude には触れない。
+ */
+describe('computeChanges(CLAUDE.md を登録済み全プロジェクトから集める — 計画16 Phase D)', () => {
+  const setup = () => {
+    const home = mkTmp('snap-cmd-home-');
+    const cwdProj = mkTmp('snap-cmd-cwd-'); // 「cwd」役のプロジェクト
+    const otherProj = mkTmp('snap-cmd-other-'); // 登録済みだが cwd ではないプロジェクト
+    fs.writeFileSync(path.join(cwdProj, 'CLAUDE.md'), '# cwd project');
+    fs.writeFileSync(path.join(otherProj, 'CLAUDE.md'), '# other project');
+    const snapFile = path.join(home, 'cache', 'snapshot.json');
+    return { home, cwdProj, otherProj, snapFile };
+  };
+
+  it('cwd だけでなく他プロジェクトの CLAUDE.md も両方キーに入る', () => {
+    const { home, cwdProj, otherProj, snapFile } = setup();
+    computeChanges([], [], claudeMdRefsOf([cwdProj, otherProj], home), snapFile); // 基準づくり
+    const saved = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
+    expect(Object.keys(saved.entries).sort()).toEqual(
+      [
+        `claude-md:${path.join(cwdProj, 'CLAUDE.md')}`,
+        `claude-md:${path.join(otherProj, 'CLAUDE.md')}`,
+      ].sort(),
+    );
+  });
+
+  it('cwd ではない他プロジェクトの CLAUDE.md が更新されても updated に出る', () => {
+    const { home, cwdProj, otherProj, snapFile } = setup();
+    computeChanges([], [], claudeMdRefsOf([cwdProj, otherProj], home), snapFile); // 基準づくり
+    fs.writeFileSync(path.join(otherProj, 'CLAUDE.md'), '# other project changed');
+    const changes = computeChanges([], [], claudeMdRefsOf([cwdProj, otherProj], home), snapFile);
+    expect(changes?.updated.map((c) => c.path)).toEqual([path.join(otherProj, 'CLAUDE.md')]);
+  });
+
+  it('cwd ではない他プロジェクトの CLAUDE.md が消えると removed に出る', () => {
+    const { home, cwdProj, otherProj, snapFile } = setup();
+    computeChanges([], [], claudeMdRefsOf([cwdProj, otherProj], home), snapFile); // 基準づくり
+    fs.rmSync(path.join(otherProj, 'CLAUDE.md'));
+    const changes = computeChanges([], [], claudeMdRefsOf([cwdProj, otherProj], home), snapFile);
+    expect(changes?.removed.map((c) => c.path)).toEqual([path.join(otherProj, 'CLAUDE.md')]);
+  });
+
+  it('cwd ではない新しいプロジェクトの CLAUDE.md が加わると added に出る(初回に無かった分)', () => {
+    const { home, cwdProj, otherProj, snapFile } = setup();
+    computeChanges([], [], claudeMdRefsOf([cwdProj], home), snapFile); // 基準: otherProj はまだ候補に無い
+    const changes = computeChanges([], [], claudeMdRefsOf([cwdProj, otherProj], home), snapFile);
+    expect(changes?.added.map((c) => c.path)).toEqual([path.join(otherProj, 'CLAUDE.md')]);
   });
 });
 

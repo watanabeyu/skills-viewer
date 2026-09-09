@@ -45,7 +45,7 @@ import { attachFlows, flowOne } from './flow';
 import { attachGroups, generateGroups } from './groups';
 import { attachMemoryTriage, triageProject } from './memory-triage';
 import { ackChanges, computeChanges } from './snapshot';
-import { claudeMdLayers, claudeMdRefs } from './claude-md';
+import { claudeMdLayers, claudeMdRefsOf } from './claude-md';
 import { previousContent } from './diff';
 import { ApiError, toErrorBody } from './errors';
 import { serverLang, srvMsg } from './locale';
@@ -367,9 +367,13 @@ function collect(cwd: string, lang: Lang, selectedPath: string): SkillsData {
    * 選んだだけで cwd の CLAUDE.md が「削除」に化け、しかも「既読にする」(/api/changes-ack は
    * cwd 起点)を押しても消えない差分になる。cwd を選んでいる通常時は計算済みのものを使い回す。
    * 差分に要るのはパスと内容ハッシュだけなので、cwd 側は実績付与(memorySections)を通さない。
+   *
+   * CLAUDE.md の追跡対象は cwd の 7 段(claudeMdLayers)ではなく、登録済み全プロジェクト
+   * (Phase D、判断 9)。projectCandidates(cwd) の各プロジェクトを claudeMdRefsOf に渡すだけなので、
+   * 「選択が cwd と違うときに cwd の CLAUDE.md を計算し直す」処理(以前の cwdClaudeMd)は不要
+   * ── 集合は最初から cwd 抜きに全プロジェクト分なので、選択が cwd かどうかに依らない。
    */
   const cwdMemory = isCwd ? memory : scanMemory(cwd);
-  const cwdClaudeMd = isCwd ? claudeMd : claudeMdLayers({ root: cwd });
   return {
     generatedAt: new Date().toISOString(),
     cwd,
@@ -386,7 +390,7 @@ function collect(cwd: string, lang: Lang, selectedPath: string): SkillsData {
     claudeMd,
     budget: descriptionBudget(sections, selectedId),
     context: sessionContext(sections, memory, claudeMd, selectedId),
-    changes: computeChanges(sections, cwdMemory, claudeMdRefs(cwdClaudeMd)),
+    changes: computeChanges(sections, cwdMemory, claudeMdRefsOf(projectCandidates(cwd))),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
     ...(memory.length ? { memory: publicMemory(memory) } : {}),
@@ -489,10 +493,12 @@ function handleApi(req: http.IncomingMessage, res: http.ServerResponse, cwd: str
         return;
       }
       if (url.pathname === '/api/changes-ack') {
+        // 既読にする基準は collect の changes と同じ入力で作る(cwd 起点・全登録プロジェクト分)。
+        // 入力がずれると「既読にした」直後に同じ差分がまた出る
         ackChanges(
           scanSections(cwd, lang),
           memorySections(cwd),
-          claudeMdRefs(claudeMdLayers({ root: cwd })),
+          claudeMdRefsOf(projectCandidates(cwd)),
         );
         return send(200, { ok: true });
       }

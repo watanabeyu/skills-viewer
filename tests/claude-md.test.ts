@@ -7,7 +7,12 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { claudeMdLayers, claudeMdPaths, claudeMdRefs } from '../src/server/claude-md';
+import {
+  claudeMdLayers,
+  claudeMdPaths,
+  claudeMdRefs,
+  claudeMdRefsOf,
+} from '../src/server/claude-md';
 import type { ClaudeMdLayerKind } from '../src/shared/types';
 
 let dir: string;
@@ -512,6 +517,49 @@ describe('claudeMdRefs — 差分追跡へ渡す参照', () => {
     write(path.join(root, '.claude', 'rules', 'lazy.md'), '---\npaths:\n  - "x"\n---\n本文');
     const refs = claudeMdRefs(claudeMdLayers({ home, root, managedPath }), home);
     expect(refs.map((r) => path.basename(r.path))).toEqual(['lazy.md']);
+  });
+});
+
+/*
+ * claudeMdRefsOf — 登録済み全プロジェクトから集めた参照(計画 16 Phase D)。
+ * claudeMdRefs(単一の走査結果)と違い、プロジェクトのパスの配列を受けて claudeMdPaths を
+ * 1 プロジェクトずつ回す(本文は読まない軽い列挙)。
+ */
+describe('claudeMdRefsOf — 登録済み全プロジェクトの CLAUDE.md 参照', () => {
+  it('複数プロジェクトから同じパスが列挙されてもパスで重複を除く(~/.claude/CLAUDE.md は共通)', () => {
+    const proj2 = path.join(dir, 'proj2');
+    fs.mkdirSync(proj2, { recursive: true });
+    write(path.join(home, '.claude', 'CLAUDE.md'), '# user');
+    write(path.join(root, 'CLAUDE.md'), '# project 1');
+    write(path.join(proj2, 'CLAUDE.md'), '# project 2');
+    const refs = claudeMdRefsOf([root, proj2], home);
+    // ~/.claude/CLAUDE.md は root からも proj2 からも列挙されるが、返るのは 1 件だけ
+    expect(refs.filter((r) => r.path === path.join(home, '.claude', 'CLAUDE.md'))).toHaveLength(1);
+    expect(refs.map((r) => r.path).sort()).toEqual(
+      [
+        path.join(home, '.claude', 'CLAUDE.md'),
+        path.join(root, 'CLAUDE.md'),
+        path.join(proj2, 'CLAUDE.md'),
+      ].sort(),
+    );
+  });
+
+  it('source は ~/.claude 配下なら user、それ以外は project(既存 claudeMdRefs と同じ規則)', () => {
+    write(path.join(home, '.claude', 'CLAUDE.md'), '# user');
+    write(path.join(root, 'CLAUDE.md'), '# project');
+    const refs = claudeMdRefsOf([root], home);
+    expect(refs.find((r) => r.path === path.join(home, '.claude', 'CLAUDE.md'))?.source).toBe(
+      'user',
+    );
+    expect(refs.find((r) => r.path === path.join(root, 'CLAUDE.md'))?.source).toBe('project');
+  });
+
+  it('存在しないファイルは列挙しない(claudeMdPaths と同じく実在ファイルだけ)', () => {
+    // root に CLAUDE.md を置かない = claudeMdPaths が返すのは ~/.claude/CLAUDE.md だけ
+    write(path.join(home, '.claude', 'CLAUDE.md'), '# user');
+    const refs = claudeMdRefsOf([root], home);
+    expect(refs.map((r) => r.path)).toEqual([path.join(home, '.claude', 'CLAUDE.md')]);
+    expect(refs.every((r) => r.exists)).toBe(true);
   });
 });
 

@@ -503,3 +503,42 @@ export function claudeMdRefs(
   }
   return out;
 }
+
+/*
+ * 差分追跡(snapshot)へ渡す参照。計画 16 Phase D: CLAUDE.md の変化追跡を cwd だけでなく
+ * 登録済み全プロジェクトへ広げるための入口。claudeMdRefs(claudeMdLayers(...))と違い、
+ * 本文を読んで @import を展開する重い走査(claudeMdLayers)は使わず、パスの存在だけを見る
+ * claudeMdPaths を各プロジェクトに回す ── 38 プロジェクトでも existsSync と小さいファイルの
+ * hash(呼び出し元の computeChanges が contentHash で取る)で済む軽さを保つため。
+ *
+ * `~/.claude/CLAUDE.md` は全プロジェクトで共通に列挙され、親ディレクトリの CLAUDE.md も
+ * サブディレクトリ登録で重複しうるので、パスで重複を除いてから返す(snapshot のキーは
+ * パス由来なので、重複したままだと同じキーへの上書きが起きるだけで実害は無いが、
+ * 呼び出し側の件数集計をわかりやすくするために先に潰す)。
+ */
+export function claudeMdRefsOf(
+  paths: string[],
+  home = os.homedir(),
+): {
+  path: string;
+  exists: boolean;
+  name?: string;
+  source?: 'user' | 'project';
+}[] {
+  const userDir = userClaudeDir(home);
+  const seen = new Set<string>();
+  const out: { path: string; exists: boolean; name?: string; source?: 'user' | 'project' }[] = [];
+  for (const root of paths) {
+    for (const fp of claudeMdPaths({ root, home })) {
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+      out.push({
+        path: fp,
+        exists: true,
+        name: path.basename(fp),
+        source: isUnder(fp, userDir) ? 'user' : 'project',
+      });
+    }
+  }
+  return out;
+}
