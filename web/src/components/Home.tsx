@@ -249,6 +249,13 @@ export function ActiveBlock({
         {/* 選んだプロジェクトにアイテムが無いときも「このプロジェクト · 0 件」の見出しは残す */}
         {!project && (
           <div className="grp">
+            {/*
+             * 0 件の理由は見出しの 2 行目(note)に出す。切替で別プロジェクトを選んだときも
+             * 「なぜ空か」がその場で分かるように。worktree は理由が違う(.claude/ が git 未追跡なら
+             * 本体にあってもここには無い)ので言い分ける(計画 16 Phase C)。
+             * 表の行にすると長文が 1 本ぶら下がって見えるので行にはしない。フルパスは切替のラベルと
+             * meta に既にあるので名前だけ
+             */}
             <GroupHead
               open={false}
               onToggle={() => {}}
@@ -256,15 +263,8 @@ export function ActiveBlock({
               name={t('act.thisProject')}
               meta={`${data.selected.name} · ${t('act.count', { n: 0 })} · ${t('proj.empty')}`}
               tok={0}
+              note={t(emptyReasonKey(data.selected), { name: data.selected.name })}
             />
-            {/*
-             * 0 件の理由。切替で別プロジェクトを選んだときも「なぜ空か」がその場で分かるように。
-             * worktree は理由が違う(.claude/ が git 未追跡なら本体にあってもここには無い)ので
-             * 言い分ける(計画 16 Phase C)
-             */}
-            <div className="trow-empty meta">
-              {t(emptyReasonKey(data.selected), { path: data.selected.path })}
-            </div>
           </div>
         )}
         {sections.map((s) => {

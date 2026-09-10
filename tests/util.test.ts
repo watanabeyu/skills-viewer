@@ -719,16 +719,17 @@ describe('emptyReasonKey (0 件の理由の言い分け)', () => {
 
   /*
    * サーバーは .claude の有無そのものを確かめていない(settings.local.json だけの .claude は普通にある)。
-   * 「.claude が無い」と断定していないことを両言語で見張る
+   * 「.claude が無い」と断定していないことを両言語で見張る。
+   * 見出しの 2 行目に出すのでフルパスでなくプロジェクト名({name})を埋める(パスは切替と meta にある)
    */
   it('文言は「.claude が無い」と断定せず、走査の事実(定義が無い)だけを言う', () => {
     for (const lang of ['en', 'ja'] as const) {
       setLang(lang);
       for (const key of ['proj.emptyReason', 'proj.emptyReasonWorktree'] as const) {
-        const msg = t(key, { path: '/w/gamma' });
-        expect(msg).toContain('/w/gamma/.claude');
-        expect(msg).not.toMatch(/^no \/w\/gamma\/\.claude/);
-        expect(msg).not.toContain('/w/gamma/.claude が無い');
+        const msg = t(key, { name: 'gamma' });
+        expect(msg).toContain('gamma/.claude');
+        expect(msg).not.toMatch(/^no gamma\/\.claude/);
+        expect(msg).not.toContain('gamma/.claude が無い');
       }
     }
   });

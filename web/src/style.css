@@ -52,7 +52,7 @@
   --row-h: 40px;
   --section-gap: 32px;
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.12);
-  /* 本文の最大幅(Ledger は中央寄せ、Console は全幅なので上書きする) */
+  /* 本文の最大幅。両テーマ共通で中央寄せ(Console の全幅は 2026-09-11 にやめた。design-system 0.8) */
   --content-max: 1240px;
 
   /*
@@ -121,8 +121,8 @@
   --mark-sm-fs: 10px;
   --gutter-left: 0;
   --gutter-inset: 0;
-  /* ① の行: 40px、左右 16、名前の下に説明 */
-  --chg-row-h: 40px;
+  /* ① の行: 名前の下に説明の 2 行なので一覧の行(--trow-h)と同じ高さ、左右 16(Console は 1 行で 32 = 同じく --trow-h) */
+  --chg-row-h: var(--trow-h);
   --chg-row-pad: 0 16px;
   --chg-gap: 12px;
   --chg-name-w: auto;
@@ -166,6 +166,11 @@
   --ghead-transform: none;
   --ghead-tracking: 0;
   --ghead-meta-font: var(--font-body);
+  /*
+   * グループ見出しの 2 行目(注記)。左 = 山形 12 + 間隔 10 + 点 + 間隔 10 で名前の左端に揃える。
+   * 下 12 = (見出し 40 − 名前の文字高 16) / 2 で、1 行目の名前の上の余白と同じにする
+   */
+  --gnote-pad: 0 0 12px calc(32px + var(--dot-size));
   --dot-size: 8px;
   --dot-radius: 50%;
   /* ② : 左 200px、表ヘッダ 36、行 48、列 1fr / 80 / 140 / 200、間 16 */
@@ -186,12 +191,15 @@
   --bar-radius: 2px;
   /*
    * ---- memory 一覧・詳細(計画 15 Phase F)。値は docs/design/0.9.0/{Ledger,Console}MemoryList/Detail.dc.html の実測 ----
-   * パネル = 面 + 罫線。見出し帯 40(罫線あり)、行 40、表ヘッダ 30、
+   * パネル = 面 + 罫線。見出し帯 40(罫線あり)、行 40(1 行のとき)、表ヘッダ 30、
    * 列 20 / 1fr / 80 / 70 / 90 / 70 / 70 / 120 / 70(記号 / 名前と索引行 / 種類 / 鮮度 / 読まれた / 索引 / 本文 / 診断 / 更新)、間 12。
+   * 名前 + 索引行の 2 行の行は、上下 8 の padding で一覧の 2 行の行(--trow-h 56)と同じ高さになる
+   * (13 × 1.5 + 2 + 12 × 1.5 = 39.5 + 16 ≈ 56)。1 行だけの行は min-height の 40 のまま。
    * コスト: 左 200、値 26px/500。診断の kv はキー列 120(E1 の 110 より広い)
    */
   --mem-hd-h: 40px;
   --mem-row-h: 40px;
+  --mem-row-pad: 8px 16px;
   --mem-thead-h: 30px;
   --mem-cols: 20px minmax(0, 1fr) 80px 70px 90px 70px 70px 120px 70px;
   --mem-cols-nouse: 20px minmax(0, 1fr) 80px 70px 70px 70px 120px 70px;
@@ -269,10 +277,14 @@
   --fc-detail-color: var(--sub);
   --fc-cap-bg: var(--bg);
   --fc-cap-border: var(--border);
-  /* 全文: frontmatter 10px 16px 面、本文 4px 16px 16px / 14px */
+  /*
+   * 全文: frontmatter 10px 16px 面、本文 16px / 14px。
+   * モックは 4px 16px 16px だが、先頭要素(見出し)の上 margin 16 込みで上 20 / 下 22 だった。
+   * 先頭・末尾要素の margin を落として padding だけで上下を同じにする(本文が段落で始まっても上が詰まらない)
+   */
   --fm-pad: 10px 16px;
   --fm-bg: var(--panel);
-  --md-pad: 4px 16px 16px;
+  --md-pad: 16px;
   --md-size: 14px;
   /* hook 一覧の行 40px */
   --hook-row-h: 40px;
@@ -322,7 +334,6 @@
   --row-h: 32px;
   --section-gap: 24px;
   --shadow-pop: none;
-  --content-max: none;
 
   /* ---- ホームと一覧。docs/design/0.9.0/ConsoleHome.dc.html の実測 ---- */
   --appbar-h: 44px;
@@ -336,7 +347,6 @@
   --switch-size: 12px;
   --proj-path-disp: inline;
   --main-pad: 24px 24px 0;
-  --main-margin: 0;
   /* 見出しは等幅 12px 大文字 + 字間 0.08em、副文色 */
   --h2-size: 12px;
   --h2-weight: 500;
@@ -383,7 +393,6 @@
   --mark-sm-fs: 12px;
   --gutter-left: -24px;
   --gutter-inset: 4px;
-  --chg-row-h: 32px;
   --chg-row-pad: 0;
   --chg-gap: 12px;
   --chg-name-w: 260px;
@@ -426,6 +435,8 @@
   --ghead-transform: uppercase;
   --ghead-tracking: 0.08em;
   --ghead-meta-font: var(--font-mono);
+  /* 注記の下 8 = (見出し 30 − 名前の文字高 14) / 2 */
+  --gnote-pad: 0 0 8px calc(32px + var(--dot-size));
   --dot-size: 7px;
   --dot-radius: 1px;
   --ctx-left-w: 200px;
@@ -443,9 +454,13 @@
   --ctx-k-transform: uppercase;
   --ctx-k-tracking: 0.08em;
   --bar-radius: 1px;
-  /* memory 一覧・詳細(ConsoleMemoryList/Detail.dc.html): 見出し帯 36、行 32。列と幅は同じ */
+  /*
+   * memory 一覧・詳細(ConsoleMemoryList/Detail.dc.html): 見出し帯 36、行 32(1 行のとき)。列と幅は同じ。
+   * 2 行の行は Ledger の比率(56 / 40 = 1.4 → 32 × 1.4 ≈ 45)に寄せて上下 2 の padding(13 × 1.6 + 2 + 12 × 1.6 = 42 + 4 = 46)
+   */
   --mem-hd-h: 36px;
   --mem-row-h: 32px;
+  --mem-row-pad: 2px 16px;
 
   /* ---- 理解画面と hook 画面。*Understand.dc.html / *Hook.dc.html の Console 実測 ---- */
   --h1-size: 18px;
@@ -505,7 +520,8 @@
   --fc-cap-border: var(--border-strong);
   --fm-pad: 10px 12px;
   --fm-bg: transparent;
-  --md-pad: 8px 16px 14px;
+  /* モックの下 14 に上も揃える(上 8 は先頭要素の margin 込みの値だった) */
+  --md-pad: 14px 16px;
   --md-size: 13px;
   --hook-row-h: 32px;
   /* CLAUDE.md 画面: 行 32、パネル見出し 36(docs/design/0.9.0/ConsoleClaudeMd.dc.html) */
@@ -523,7 +539,6 @@
   :root {
     --appbar-pad: 0 24px;
     --main-pad: 24px 24px 0;
-    --chg-row-h: 48px;
     --col-kind: 84px;
     --col-src: 120px;
     --col-inv: 110px;
@@ -534,7 +549,6 @@
   }
   :root[data-theme='console'] {
     --main-pad: 24px 24px 0;
-    --chg-row-h: 32px;
     --chg-name-w: 180px;
     --name-w: 170px;
     --col-kind: 72px;
@@ -1527,6 +1541,7 @@ button.chg-row:hover {
   font-size: var(--name-size);
   font-weight: var(--name-weight);
   color: var(--text);
+  line-height: var(--body-lh);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1543,7 +1558,8 @@ button.chg-row:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-  line-height: 1.4;
+  /* 名前・説明の行間は本文の規則(Ledger 1.5 / Console 1.6。design-system 2 節)に揃える */
+  line-height: var(--body-lh);
 }
 .cell .meta {
   color: var(--meta);
@@ -1571,8 +1587,9 @@ button.chg-row:hover {
   font-family: var(--font-mono);
   color: var(--meta);
 }
+/* 「変化なし」は 1 行なので、2 行の行の高さでなく 1 行の行(--row-h)に合わせる */
 .chg-none {
-  min-height: var(--chg-row-h);
+  min-height: var(--row-h);
   display: flex;
   align-items: center;
   padding: var(--chg-row-pad);
@@ -1697,12 +1714,17 @@ button.ctx-row:hover {
 .grp + .grp .ghead {
   margin-top: var(--ghead-gap);
 }
+/*
+ * グループ見出し。1 行目(.ghead-line = 山形・点・名前・件数・右端 tok)が --ghead-h、
+ * その下に任意の注記(.gnote)。注記は「0 件の理由」のように見出しに属する説明で、
+ * 表の行(.trow-empty)として出すと長文が 1 本ぶら下がって見えるのでここに置く
+ */
 .ghead {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
   width: 100%;
-  height: var(--ghead-h);
+  min-height: var(--ghead-h);
   padding: var(--ghead-pad);
   border: 0;
   border-bottom: 1px solid var(--ghead-border);
@@ -1710,6 +1732,21 @@ button.ctx-row:hover {
   color: var(--text);
   text-align: left;
   cursor: pointer;
+}
+.ghead-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--ghead-h);
+}
+/* 注記: 名前の左端に揃え(--gnote-pad)、補足色 12px で折り返す */
+.ghead .gnote {
+  padding: var(--gnote-pad);
+  font-family: var(--ghead-meta-font);
+  font-size: 12px;
+  line-height: var(--body-lh);
+  color: var(--meta);
+  white-space: normal;
 }
 .ghead:hover .gname {
   color: var(--sub);
@@ -2450,6 +2487,13 @@ button.ctx-row:hover {
 .md-full {
   padding: var(--md-pad);
 }
+/* 先頭要素の上 margin と末尾要素の下 margin を落とし、ブロック上下の余白を --md-pad だけにする(上下が同じになる) */
+.md-full .md-body > :first-child {
+  margin-top: 0;
+}
+.md-full .md-body > :last-child {
+  margin-bottom: 0;
+}
 .md-full .md-body {
   font-size: var(--md-size);
   line-height: 1.6;
@@ -2878,7 +2922,7 @@ button.crow:hover {
   gap: 12px;
   width: 100%;
   min-height: var(--mem-row-h);
-  padding: 0 16px;
+  padding: var(--mem-row-pad);
   border: 0;
   border-bottom: 1px solid var(--border);
   background: transparent;
@@ -2906,6 +2950,8 @@ button.crow:hover {
 }
 .mrow.thead {
   min-height: var(--mem-thead-h);
+  /* 表ヘッダは 1 行なので 2 行用の上下 padding を持たない */
+  padding: 0 16px;
   border-bottom: 1px solid var(--thead-border);
   color: var(--meta);
   font-family: var(--thead-font);

@@ -173,6 +173,7 @@ export function GroupHead({
   name,
   meta,
   tok,
+  note,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -180,14 +181,19 @@ export function GroupHead({
   name: string;
   meta: string;
   tok: number;
+  /* 見出しの 2 行目に出す注記(0 件の理由など)。表の行にしない(1.4 の骨格) */
+  note?: string;
 }) {
   return (
     <button className="ghead" onClick={onToggle} aria-expanded={open}>
-      <Chevron open={open} />
-      <SourceDot source={source} />
-      <span className="gname">{name}</span>
-      <span className="meta">{meta}</span>
-      <span className="num meta gtok">{t('act.tok', { n: tok.toLocaleString() })}</span>
+      <span className="ghead-line">
+        <Chevron open={open} />
+        <SourceDot source={source} />
+        <span className="gname">{name}</span>
+        <span className="meta">{meta}</span>
+        <span className="num meta gtok">{t('act.tok', { n: tok.toLocaleString() })}</span>
+      </span>
+      {note && <span className="gnote">{note}</span>}
     </button>
   );
 }
