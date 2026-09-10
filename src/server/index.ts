@@ -300,7 +300,7 @@ interface ProjectSets {
   projects: string[];
   /* projects の本体から列挙した linked worktree(id 付き。計画 16 Phase C) */
   worktrees: Worktree[];
-  /* ?project=<id> の解決候補 = projects ∪ worktrees の path */
+  /* ?project=<id> の解決候補 = projects ∪ worktrees の path ∪ その本体(mainPath) */
   candidates: string[];
 }
 
@@ -366,12 +366,26 @@ function projectSets(cwd: string): ProjectSets {
   const worktrees: Worktree[] = worktreesForProjects(projects).map((w) => ({
     // id をサーバーが作るのは、web がパスから組み立てると規則が二重定義になるため(判断 2)
     id: projectSectionId(w.path),
+    mainId: projectSectionId(w.mainPath),
     ...w,
   }));
   const sets: ProjectSets = {
     projects,
     worktrees,
-    candidates: [...new Set([...projects, ...worktrees.map((w) => w.path)])],
+    /*
+     * 候補には worktree から逆引きした本体(mainPath)も入れる。本体は登録簿に無い・定義 0 件
+     * のことがあり、そのとき「worktree は選べるのに本体は選べない」= 切替から本体の行が
+     * 消える(その本体にぶら下がる worktree ごと辿れなくなる)ため。
+     * 増えるのは列挙済み worktree の本体だけで、その worktree は既に候補にある
+     * ── 母集団は「cwd と選んだプロジェクト」のままで、生のパスは相変わらず通らない。
+     */
+    candidates: [
+      ...new Set([
+        ...projects,
+        ...worktrees.map((w) => w.path),
+        ...worktrees.map((w) => w.mainPath),
+      ]),
+    ],
   };
   setsMemo = { regKey, mains, wtKey: worktreeStamp(mains), sets };
   return sets;
@@ -386,9 +400,12 @@ export function projectWorktrees(cwd: string): Worktree[] {
 }
 
 /*
- * ?project=<id> の解決候補 = 登録済みプロジェクト(+ cwd)∪ そこから列挙した worktree。
+ * ?project=<id> の解決候補 = 登録済みプロジェクト(+ cwd)∪ そこから列挙した worktree
+ * ∪ その worktree の本体(mainPath)。
  * worktree を足すのは、「claude を起動して登録された」かつ「.claude/ に 1 件以上ある」ものしか
  * 登録簿に出ないため ── 登録の有無に依らず選べるようにする(計画 16 判断 5・6)。
+ * 本体を足すのも同じ理由で、本体側が登録簿に無い(worktree でしか claude を起動していない)
+ * ときに「worktree は選べるのに本体は選べない」状態を作らないため。
  * 足すのは列挙した path だけで、生のパスは入らない。
  * 1 リクエストの中で何度呼んでも列挙は 1 回きり(projectSets のメモ)。
  */
@@ -412,7 +429,8 @@ export function selectedProject(
     path: selectedPath,
     name: path.basename(selectedPath),
     isCwd: selectedPath === path.resolve(cwd),
-    ...(wt ? { mainPath: wt.mainPath } : {}),
+    // 本体は id も返す: 定義 0 件・未登録だと Section が無く、web に本体を指す id が無いため
+    ...(wt ? { mainPath: wt.mainPath, mainId: wt.mainId } : {}),
   };
 }
 

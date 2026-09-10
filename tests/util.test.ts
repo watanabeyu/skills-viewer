@@ -50,6 +50,7 @@ import {
   resolveProject,
   selectedSection,
   sessionSections,
+  worktreeOptions,
   type FlatItem,
 } from '../web/src/util';
 import type { Section, SkillsData, SnapshotChanges } from '../src/shared/types';
@@ -763,69 +764,61 @@ describe('latestGate (最後に始めた 1 本だけが結果を書き込む)', 
   });
 });
 
-/*
- * 切替の行(計画 16 Phase C)。worktree は本体の下に字下げして 1 度だけ出す。
- * sections はサーバーの形のままなので、寄せるのを web がやめると同じプロジェクトが
- * 2 行(本体の下とトップレベル)に並ぶ ── その重複をここで機械的に落とす。
- */
-describe('projectRows (worktree を本体の下へ寄せる)', () => {
-  const wtSec = secOf({
-    id: 'proj--w-alpha-wt',
-    source: 'project',
-    projectName: 'alpha-wt',
-    note: '/w/alpha-wt',
-    items: [base({ path: '/w/alpha-wt/.claude/skills/foo/SKILL.md' })],
-  });
-  const wt = {
-    id: wtSec.id,
-    path: '/w/alpha-wt',
-    name: 'alpha-wt',
-    branch: 'feat/a',
-    mainPath: '/w/alpha',
-  };
+const wtSec = secOf({
+  id: 'proj--w-alpha-wt',
+  source: 'project',
+  projectName: 'alpha-wt',
+  note: '/w/alpha-wt',
+  items: [base({ path: '/w/alpha-wt/.claude/skills/foo/SKILL.md' })],
+});
+const wt = {
+  id: wtSec.id,
+  path: '/w/alpha-wt',
+  name: 'alpha-wt',
+  branch: 'feat/a',
+  mainPath: '/w/alpha',
+  // 本体の id もサーバーが作る(本体が Section を持たなくても選べるように。判断 2)
+  mainId: projA.id,
+};
 
-  it('worktree の Section はトップレベルから外れ、本体の subs に入る(重複しない)', () => {
+/*
+ * 切替の行(計画 16 Phase C の改訂)。worktree は行にせず、本体の行に畳んで件数だけ添える
+ * ── 実データでは 1 つの本体に 40 本近くぶら下がり、並べると切替が一覧として機能しなかった。
+ * sections はサーバーの形のままなので、畳むのを web がやめると同じスキル群が何十行も並ぶ。
+ */
+describe('projectRows (worktree を本体の行に畳む)', () => {
+  it('worktree の Section はトップレベルに出ず、本体の行の件数になる', () => {
     const d = dataOf({ sections: [...sections, wtSec], worktrees: [wt] });
     const { current, others } = projectRows(d);
-    // cwd(= 本体 alpha)の組。worktree はその下に 1 行だけ
+    // cwd(= 本体 alpha)の行。worktree は行にならず件数だけ
     expect(current?.path).toBe('/w/alpha');
-    expect(current?.subs.map((r) => r.path)).toEqual(['/w/alpha-wt']);
-    expect(current?.subs[0].section).toBe(wtSec);
-    // トップレベル(現在の組 + 他のプロジェクト)に worktree のパスは 1 つも無い
+    expect(current?.worktrees).toBe(1);
+    // トップレベル(現在の行 + 他のプロジェクト)に worktree のパスは 1 つも無い
     expect([current, ...others].map((r) => r?.path)).toEqual(['/w/alpha', '/w/beta']);
   });
 
-  it('登録も定義も無い worktree でも行になり、id はサーバーが返した値を使う', () => {
-    const { current } = projectRows(dataOf({ worktrees: [wt] }));
-    expect(current?.subs).toEqual([
-      {
-        section: null,
-        name: 'alpha-wt',
-        path: '/w/alpha-wt',
-        id: wtSec.id,
-        branch: 'feat/a',
-        cwd: false,
-        subs: [],
-      },
-    ]);
+  it('登録も定義も無い worktree も件数に入る(行は本体だけ)', () => {
+    const wt2 = {
+      id: 'proj--w-alpha-wt2',
+      path: '/w/alpha-wt2',
+      name: 'alpha-wt2',
+      mainPath: '/w/alpha',
+      mainId: projA.id,
+    };
+    const { current, others } = projectRows(dataOf({ worktrees: [wt, wt2] }));
+    expect(current).toEqual({
+      section: projA,
+      scanned: true,
+      name: 'alpha',
+      path: '/w/alpha',
+      id: null, // cwd は既定の選択なので URL に書かない
+      cwd: true,
+      worktrees: 2,
+    });
+    expect(others.map((r) => r.path)).toEqual(['/w/beta']);
   });
 
-  /*
-   * worktree はディレクトリ名よりブランチで覚えているので、行にブランチを載せる
-   * (切替では 2 行目に「<branch> · <path>」で出す)。detached HEAD では付かない。
-   */
-  it('worktree の行に branch が載る(detached HEAD では付かない)', () => {
-    const { current } = projectRows(dataOf({ worktrees: [wt] }));
-    expect(current?.subs[0].branch).toBe('feat/a');
-    // 本体の行は branch を持たない(ブランチはチェックアウト単位の事実で、行の見分けにだけ使う)
-    expect(current?.branch).toBeUndefined();
-    const { current: detached } = projectRows(
-      dataOf({ worktrees: [{ id: wt.id, path: wt.path, name: wt.name, mainPath: wt.mainPath }] }),
-    );
-    expect(detached?.subs[0]).not.toHaveProperty('branch');
-  });
-
-  it('cwd が worktree なら本体の組が先頭に来て、「現在」の印はその worktree の行に付く', () => {
+  it('cwd が worktree なら本体の行が先頭に来て、「現在」の印もその本体に付く', () => {
     const d = dataOf({
       cwd: '/w/alpha-wt',
       sections: [{ ...wtSec, isCurrent: true }, projA, userSec, pluginSec, builtinSec],
@@ -839,41 +832,139 @@ describe('projectRows (worktree を本体の下へ寄せる)', () => {
       worktrees: [wt],
     });
     const { current, others } = projectRows(d);
-    expect(current?.path).toBe('/w/alpha'); // 先頭は cwd を含む組(= 本体)
-    expect(current?.cwd).toBe(false);
-    expect(current?.subs[0].cwd).toBe(true);
-    // cwd は既定の選択なので URL に書かない(id は null)
-    expect(current?.subs[0].id).toBeNull();
-    // cwd の行がトップレベルにも出る(= 重複する)ことは無い
+    expect(current?.path).toBe('/w/alpha'); // 先頭は cwd を含む行(= 本体)
+    expect(current?.cwd).toBe(true);
+    // 押すと本体が選ばれる。cwd は worktree の側なので、本体の行は id を持つ
+    expect(current?.id).toBe(projA.id);
+    expect(current?.worktrees).toBe(1);
+    // cwd の worktree がトップレベルに出ることは無い(選び直しはホームの select が持つ)
     expect([current, ...others].some((r) => r?.path === '/w/alpha-wt')).toBe(false);
   });
 
-  it('本体に行が無い(未登録・定義 0 件)ときは選べない見出しの行を作る', () => {
-    const orphan = { ...wt, mainPath: '/w/gamma' };
-    const { others } = projectRows(dataOf({ worktrees: [orphan] }));
-    const head = others.find((r) => r.path === '/w/gamma');
-    expect(head?.id).toBeUndefined(); // 解決できる候補が無いので押せない
-    expect(head?.subs.map((r) => r.path)).toEqual(['/w/alpha-wt']);
-  });
-
   /*
-   * heading は「走査していないので 0 件とは言えない行」の印(切替は「アイテムがありません」を出さない)。
-   * 印を落としても他のテストは緑のままだったので、付く行・付かない行をここで固定する。
+   * 本体が sections に無い(登録簿に無い / 定義 0 件)ケース。サーバーが逆引きした本体を候補に
+   * 入れ mainId を返すようになったので、行を作って押せるようにする ── 落とすと、その本体に
+   * ぶら下がる worktree ごと UI から辿れなくなる(C2 の保留 1)。
    */
-  it('登録簿に無い本体(worktree を束ねるためだけの行)は heading', () => {
-    const { others } = projectRows(dataOf({ worktrees: [{ ...wt, mainPath: '/w/gamma' }] }));
-    expect(others.find((r) => r.path === '/w/gamma')?.heading).toBe(true);
+  it('sections に無い本体でも行を作り、mainId で選べる(走査していないので 0 件とは言わない)', () => {
+    const orphan = { ...wt, mainPath: '/w/gamma', mainId: 'proj--w-gamma' };
+    const { current, others } = projectRows(dataOf({ worktrees: [orphan] }));
+    expect(current?.path).toBe('/w/alpha'); // cwd の行は変わらない
+    const head = others.find((r) => r.path === '/w/gamma');
+    expect(head).toEqual({
+      section: null,
+      scanned: false, // 走査していないので「アイテムがありません」は出さない
+      name: 'gamma',
+      path: '/w/gamma',
+      id: 'proj--w-gamma',
+      cwd: false,
+      worktrees: 1,
+    });
   });
 
-  it('走査した結果 0 件だった行(Section が無いだけ)には heading が付かない', () => {
-    // cwd に定義が 1 件も無い応答。行は出るが「見出しだけ」ではないので 0 件と言ってよい
+  it('走査した結果 0 件だった行(Section が無いだけ)は scanned', () => {
+    // cwd に定義が 1 件も無い応答。行は出て「アイテムがありません」が付く
     const noItems = dataOf({ cwd: '/w/gamma', sections: [projB, userSec, pluginSec, builtinSec] });
     const { current } = projectRows(noItems);
     expect(current?.path).toBe('/w/gamma');
     expect(current?.section).toBeNull();
-    expect(current?.heading).toBeUndefined();
-    // 登録簿にある本体の下にぶら下がる worktree の行も同じ(走査はしている)
-    expect(projectRows(dataOf({ worktrees: [wt] })).current?.subs[0].heading).toBeUndefined();
+    expect(current?.scanned).toBe(true);
+    expect(current?.id).toBeNull();
+  });
+});
+
+/*
+ * ホーム上部の worktree の select の選択肢(計画 16 Phase C の改訂)。切替が本体だけになった分、
+ * 「本体 / どの worktree」はここで選ぶ。id はサーバーが返した値だけを使う(判断 2)。
+ */
+describe('worktreeOptions (選んだ本体の worktree を並べる)', () => {
+  it('本体に worktree が無ければ空(select ごと出さない)', () => {
+    expect(worktreeOptions(dataOf())).toEqual([]);
+    // 別の本体にぶら下がる worktree は選んだ本体の選択肢にならない
+    expect(worktreeOptions(dataOf({ worktrees: [{ ...wt, mainPath: '/w/beta' }] }))).toEqual([]);
+  });
+
+  it('本体が先頭で、表示はブランチ名優先(detached HEAD ではディレクトリ名)', () => {
+    const wt2 = {
+      id: 'proj--w-alpha-wt2',
+      path: '/w/alpha-wt2',
+      name: 'alpha-wt2',
+      mainPath: '/w/alpha',
+      mainId: projA.id,
+    };
+    expect(worktreeOptions(dataOf({ worktrees: [wt, wt2] }))).toEqual([
+      { id: null, label: 'main' }, // 本体 = cwd なので URL に書かない
+      { id: wt.id, label: 'feat/a' },
+      { id: wt2.id, label: 'alpha-wt2' },
+    ]);
+  });
+
+  it('worktree を選んでいるときも本体の worktree で組む(本体の id は selected.mainId)', () => {
+    const d = dataOf({
+      cwd: '/w/alpha-wt',
+      sections: [{ ...wtSec, isCurrent: true }, projA, userSec, pluginSec, builtinSec],
+      selected: {
+        id: wtSec.id,
+        path: '/w/alpha-wt',
+        name: 'alpha-wt',
+        isCwd: true,
+        mainPath: '/w/alpha',
+        mainId: projA.id,
+      },
+      worktrees: [wt],
+    });
+    expect(worktreeOptions(d)).toEqual([
+      { id: projA.id, label: 'main' },
+      { id: null, label: 'feat/a' }, // cwd の worktree は URL に書かない
+    ]);
+  });
+
+  /*
+   * 本体が sections に無い(登録簿に無い / 定義 0 件)場合。id はサーバーが作った mainId が
+   * あるので、本体の選択肢は常に先頭に出る(C2 の保留 3)。
+   */
+  it('本体が Section を持たなくても、mainId で本体の選択肢を先頭に出す', () => {
+    const orphanWt = { ...wt, mainPath: '/w/gamma', mainId: 'proj--w-gamma' };
+    const d = dataOf({
+      cwd: '/w/beta',
+      sections: [{ ...projB, isCurrent: true }, userSec, pluginSec, builtinSec],
+      selected: {
+        id: wtSec.id,
+        path: '/w/alpha-wt',
+        name: 'alpha-wt',
+        isCwd: false,
+        mainPath: '/w/gamma',
+        mainId: 'proj--w-gamma',
+      },
+      worktrees: [orphanWt],
+    });
+    expect(worktreeOptions(d)).toEqual([
+      { id: 'proj--w-gamma', label: 'main' },
+      { id: orphanWt.id, label: 'feat/a' },
+    ]);
+  });
+
+  /*
+   * 古い応答(mainId を持たない selected)でも本体の選択肢を落とさない。値は列挙した worktree の
+   * mainId から補う ── どちらもサーバーが projectSectionId で作った同じ値。
+   */
+  it('selected.mainId が無い応答では worktrees[].mainId で補う', () => {
+    const d = dataOf({
+      cwd: '/w/beta',
+      sections: [{ ...projB, isCurrent: true }, userSec, pluginSec, builtinSec],
+      selected: {
+        id: wtSec.id,
+        path: '/w/alpha-wt',
+        name: 'alpha-wt',
+        isCwd: false,
+        mainPath: '/w/alpha',
+      },
+      worktrees: [wt],
+    });
+    expect(worktreeOptions(d)).toEqual([
+      { id: projA.id, label: 'main' },
+      { id: wt.id, label: 'feat/a' },
+    ]);
   });
 });
 

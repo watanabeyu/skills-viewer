@@ -233,12 +233,32 @@ describe('worktree が切替の候補に入る(登録簿に無くても選べる
   it('worktree を選ぶと selected.mainPath に本体が付く(本体を選んだときは付かない)', () => {
     const worktrees = mod.projectWorktrees(main);
     expect(worktrees).toEqual([
-      { id: projectSectionId(wt), path: wt, name: 'repo-feat-a', branch: 'feat/a', mainPath: main },
+      {
+        id: projectSectionId(wt),
+        mainId: projectSectionId(main),
+        path: wt,
+        name: 'repo-feat-a',
+        branch: 'feat/a',
+        mainPath: main,
+      },
     ]);
     const onWt = mod.selectedProject(main, wt, worktrees);
     expect(onWt.mainPath).toBe(main);
     expect(onWt.isCwd).toBe(false);
     expect(mod.selectedProject(main, main, worktrees)).not.toHaveProperty('mainPath');
+  });
+
+  /*
+   * 本体の id もサーバーが作る(判断 2: web はパスから id を組み立てない)。本体は登録簿に
+   * 無い・定義 0 件で Section を持たないことがあり、そのとき web には本体を指す id が
+   * 無かった ── 切替の本体の行も、ホームの worktree select の「本体」もこれで選ぶ。
+   */
+  it('worktree には本体の id(mainId)も付き、選んだときは selected にも入る', () => {
+    const worktrees = mod.projectWorktrees(main);
+    expect(worktrees[0].mainId).toBe(projectSectionId(main));
+    expect(mod.selectedProject(main, wt, worktrees).mainId).toBe(projectSectionId(main));
+    // 本体を選んだときは mainPath と同じく付かない(本体に本体は無い)
+    expect(mod.selectedProject(main, main, worktrees)).not.toHaveProperty('mainId');
   });
 
   it('worktree から起動したときは「現在」かつ本体つき(登録簿に本体しか無くても列挙できる)', () => {
@@ -249,6 +269,7 @@ describe('worktree が切替の候補に入る(登録簿に無くても選べる
       name: 'repo-feat-a',
       isCwd: true,
       mainPath: main,
+      mainId: projectSectionId(main),
     });
   });
 
@@ -270,6 +291,53 @@ describe('worktree が切替の候補に入る(登録簿に無くても選べる
     writeAdminDir(main, 'repo-feat-b', path.join(added, '.git'), 'ref: refs/heads/feat/b');
     expect(mod.projectCandidates(main)).toContain(added);
     expect(mod.projectWorktrees(main).map((w) => w.path)).toContain(added);
+  });
+});
+
+/*
+ * 逆引きした本体も候補に入る(C2)。worktree でしか claude を起動していないと本体は登録簿に
+ * 出ないので、「worktree は選べるのに本体は選べない」= 切替に本体の行が出せず、その本体に
+ * ぶら下がる worktree ごと UI から辿れなくなる。増えるのは列挙済み worktree の本体だけで、
+ * 生のパスは相変わらず通らない(母集団は「cwd と選んだプロジェクト」のまま)。
+ */
+describe('worktree から逆引きした本体も切替の候補に入る', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sv-worktree-main-'));
+  const home = path.join(root, 'home');
+  const main = path.join(root, 'repo'); // 登録簿には無い(ここで claude を起動していない)
+  const wt = path.join(root, 'repo-feat-a');
+  const outside = path.join(root, 'other');
+  let mod: typeof import('../src/server/index');
+
+  beforeAll(async () => {
+    for (const d of [home, path.join(main, '.git'), wt, outside])
+      fs.mkdirSync(d, { recursive: true });
+    // 登録簿には worktree だけ(本体は一度も起動していない)
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { [wt]: {} } }));
+    fs.writeFileSync(
+      path.join(wt, '.git'),
+      'gitdir: ' + path.join(main, '.git', 'worktrees', 'repo-feat-a') + '\n',
+    );
+    writeAdminDir(main, 'repo-feat-a', path.join(wt, '.git'), 'ref: refs/heads/feat/a');
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/index');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('登録簿に無い本体でも、その id で選べる(候補は worktree の mainPath も含む)', () => {
+    expect(mod.projectCandidates(wt)).toEqual(expect.arrayContaining([wt, main]));
+    expect(mod.resolveSelectedProject(wt, projectSectionId(main))).toBe(main);
+    // 本体の id は列挙した worktree にも入っている(web はこれを使う)
+    expect(mod.projectWorktrees(wt)[0].mainId).toBe(projectSectionId(main));
+  });
+
+  it('worktree にも本体にも当たらないディレクトリは従来どおり cwd に落ちる', () => {
+    expect(mod.resolveSelectedProject(wt, projectSectionId(outside))).toBe(wt);
+    expect(mod.resolveSelectedProject(wt, main)).toBe(wt); // 生のパスは通らない
   });
 });
 

@@ -71,46 +71,28 @@ export function ProjectSwitcher({
     onSelect(id);
   };
   /*
-   * 1 行。sub = worktree(本体の下に字下げ)。id を持たない行は選べない本体の見出しなので
-   * ボタンにしない(押しても解決できる候補が無い)。
+   * 1 行 = 本体のチェックアウト 1 つ。worktree は行にせず、件数だけ meta に添える
+   * (計画 16 Phase C の改訂: 1 つの本体に 40 本近く並ぶと切替が一覧として機能しないため。
+   * worktree の選び直しはホーム上部の select が持つ)。
    * 起動ディレクトリの行は「現在」の印だけで区別する(cwd は既定の選択にすぎない。判断 7)。
-   * 見出し行(heading)に「アイテムがありません」は出さない ── 登録簿に無く走査していないだけで、
-   * 0 件だと確かめたわけではないため。
    */
-  const row = (r: ProjectRow, sub = false) => {
-    const inner = (
-      <>
-        <span className="l1">
-          <SourceDot source="project" />
-          {r.name}
-          {r.cwd && <span className="proj-cur">{t('proj.current')}</span>}
-          {!r.heading && r.section === null && <span className="meta"> · {t('proj.empty')}</span>}
-        </span>
+  const row = (r: ProjectRow) => (
+    <button key={r.path} className="di" onClick={() => pick(r.id)}>
+      <span className="l1">
+        <SourceDot source="project" />
+        {r.name}
+        {r.cwd && <span className="proj-cur">{t('proj.current')}</span>}
         {/*
-         * worktree はディレクトリ名よりブランチで覚えているので、あれば 2 行目の先頭に出す
-         * (区切りは meta の行と同じ ·)。本体の行は branch を持たないので従来どおりパスだけ
+         * 「アイテムがありません」は走査した行にだけ出す ── worktree から逆引きしただけの本体は
+         * 登録簿に無く走査していないので、0 件だと確かめたわけではない
          */}
-        <span className="l2">{r.branch ? r.branch + ' · ' + r.path : r.path}</span>
-      </>
-    );
-    const cls = 'di' + (sub ? ' sub' : '');
-    const id = r.id;
-    return id === undefined ? (
-      <div key={r.path} className={cls + ' plain'}>
-        {inner}
-      </div>
-    ) : (
-      <button key={r.path} className={cls} onClick={() => pick(id)}>
-        {inner}
-      </button>
-    );
-  };
-  /* 本体の行 + その worktree(字下げ) */
-  const group = (r: ProjectRow) => (
-    <div key={r.path} className="proj-grp">
-      {row(r)}
-      {r.subs.map((s) => row(s, true))}
-    </div>
+        {r.scanned && r.section === null && <span className="meta"> · {t('proj.empty')}</span>}
+        {r.worktrees > 0 && (
+          <span className="meta"> · {t('proj.worktreeCount', { n: r.worktrees })}</span>
+        )}
+      </span>
+      <span className="l2">{r.path}</span>
+    </button>
   );
   return (
     <span className="proj" ref={ref}>
@@ -136,9 +118,9 @@ export function ProjectSwitcher({
       </button>
       {openMenu && (
         <div className="drop proj-drop">
-          {current && group(current)}
+          {current && row(current)}
           {others.length > 0 && <div className="dh">{t('proj.others')}</div>}
-          {others.map(group)}
+          {others.map(row)}
           <div className="dsep" />
           <button className="di" onClick={() => pick('all')}>
             <span className="l1">

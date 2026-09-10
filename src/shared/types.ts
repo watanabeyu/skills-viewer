@@ -487,6 +487,8 @@ export interface SelectedProject {
    * 画面に 1 行で言うために持つ(計画 16 Phase C)。worktree でなければ付かない。
    */
   mainPath?: string;
+  /* mainPath の id(Section.id と同じ規則)。本体へ戻る選択肢を web が組めるように付ける */
+  mainId?: string;
 }
 
 /* 本体から列挙した linked worktree(計画 16 判断 5)。登録の有無に依らず切替の候補になる */
@@ -498,8 +500,14 @@ export interface Worktree {
   name: string;
   /* チェックアウト中のブランチ。detached HEAD では付かない */
   branch?: string;
-  /* この worktree の本体(メインワークツリー)のパス。切替はこの下に字下げして並べる */
+  /* この worktree の本体(メインワークツリー)のパス。切替はこの本体の 1 行に畳む */
   mainPath: string;
+  /*
+   * mainPath の id(Section.id と同じ規則)。本体は定義 0 件・未登録で Section を持たないことが
+   * あり、そのとき web には本体を指す id が無かった ── 逆引きした本体も候補に入れたので、
+   * 「本体の行 / 本体の選択肢」を選べるように id もサーバーが作る(判断 2)。
+   */
+  mainId: string;
 }
 
 export interface SkillsData {
@@ -510,7 +518,7 @@ export interface SkillsData {
   /*
    * 登録済みプロジェクトの本体から列挙した linked worktree。1 件も無ければ省略。
    * sections は変えない(worktree の Section はそのまま)。切替が path で突き合わせて
-   * 本体の下へ寄せるので、同じプロジェクトが 2 か所に出ることはない(計画 16 判断 6)。
+   * 本体の 1 行に畳むので、同じプロジェクトが 2 か所に出ることはない(計画 16 判断 6)。
    */
   worktrees?: Worktree[];
   sections: Section[];

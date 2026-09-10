@@ -351,6 +351,19 @@ export default function App() {
   };
 
   /*
+   * ?project= の切替。ヘッダーの切替(本体)とホーム上部の worktree の select が同じ経路を通る
+   * ── 選択の書き込み方(null = cwd は URL に書かない・'all' 以外は by を落とす)を 2 か所に
+   * 書かないため(計画 16 Phase C の改訂)。
+   */
+  const selectProject = (id: string | null) => {
+    const next = new URLSearchParams(params);
+    if (id === null) next.delete('project');
+    else next.set('project', id);
+    if (id !== 'all') next.delete('by');
+    navigate({ pathname: '/', search: next.toString() });
+  };
+
+  /*
    * 全画面に落とすのは初回取得・切替の失敗だけ。トークン取得の失敗は含めない ── 読み取りには
    * 要らないので、閲覧まで止めてブラウザの再読み込みしか復帰手段が無い状態にしない
    * (ヘッダーの 1 行で知らせる。レビュー 3 周目)
@@ -386,19 +399,7 @@ export default function App() {
             <span className="crumb-cur">{crumb.name}</span>
           </span>
         ) : (
-          data && (
-            <ProjectSwitcher
-              data={data}
-              project={project}
-              onSelect={(id) => {
-                const next = new URLSearchParams(params);
-                if (id === null) next.delete('project');
-                else next.set('project', id);
-                if (id !== 'all') next.delete('by');
-                navigate({ pathname: '/', search: next.toString() });
-              }}
-            />
-          )
+          data && <ProjectSwitcher data={data} project={project} onSelect={selectProject} />
         )}
         {data && !crumb && project === 'all' && (
           <span className="meta">
@@ -458,6 +459,7 @@ export default function App() {
                     onOpenMemory={openMemory}
                     onOpenMemoryList={openMemoryList}
                     onOpenClaudeMd={openClaudeMd}
+                    onSelectProject={selectProject}
                     summary={summary}
                     setParam={setParam}
                     reload={reload}

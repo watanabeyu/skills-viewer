@@ -978,12 +978,6 @@ select,
 
 /* copy dropdown */
 .drop {
-  /*
-   * 行の左右余白と l1 の gap。worktree の字下げ(.proj-drop .di.sub)がこの 2 つから
-   * 「本体の行で名前が始まる位置」を出すので、リテラルを複製せずトークンで共有する
-   */
-  --drop-pad-x: 14px;
-  --drop-gap: 8px;
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
@@ -1003,7 +997,7 @@ select,
   text-align: left;
   background: none;
   border: 0;
-  padding: 8px var(--drop-pad-x);
+  padding: 8px 14px;
   cursor: pointer;
 }
 .drop .di:hover {
@@ -1251,26 +1245,9 @@ select,
 .proj-drop .di .l1 {
   display: flex;
   align-items: center;
-  gap: var(--drop-gap);
+  gap: 8px;
 }
 .proj-drop .di .l1 svg {
-  color: var(--sub);
-}
-/*
- * worktree の行は本体の下に字下げする(計画 16 Phase C)。幅は目分量ではなく
- * 「本体の行で名前が始まる位置」= 行の左余白 + 印(--dot-size)+ l1 の gap から出す
- */
-.proj-drop .di.sub {
-  padding-left: calc(var(--drop-pad-x) + var(--dot-size) + var(--drop-gap));
-}
-/* 選べない本体(登録簿に無く定義も 0 件)の行は worktree の見出しなので、押せる見た目にしない */
-.proj-drop .di.plain,
-.proj-drop .di.plain:hover {
-  cursor: default;
-  background: none;
-}
-/* 押せないことは色でも示す(design-system 0.4: 押せる行だけが本文色) */
-.proj-drop .di.plain .l1 {
   color: var(--sub);
 }
 .dot {
@@ -1361,6 +1338,13 @@ select,
   flex-direction: column;
   gap: var(--section-gap);
   padding-bottom: 48px;
+}
+/*
+ * ① の上に置く worktree の select(計画 16 Phase C の改訂)。.home は列方向の flex なので、
+ * 包まないと select が幅いっぱいに伸びる ── 見た目は ③ の見出し行と同じ .sel に委ねる
+ */
+.home-wt {
+  display: flex;
 }
 .blk {
   display: flex;

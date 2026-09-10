@@ -111,39 +111,41 @@ export function latestGate(): () => () => boolean {
   };
 }
 
+/* 起動ディレクトリのパス(Section があればその note。切替と worktree の select で同じ値を見る) */
+const cwdPathOf = (data: SkillsData): string => currentSection(data.sections)?.note || data.cwd;
+
 /*
- * 切替に出す 1 行。worktree は本体の行の subs に入り、トップレベルには出ない(計画 16 判断 6)。
+ * 切替に出す 1 行 = 本体のチェックアウトだけ(計画 16 判断 6 の改訂)。worktree は行にせず、
+ * 本体の行に件数を添えるだけにする ── 実データでは 1 つの本体に 40 本近くぶら下がり、
+ * 字下げして並べると切替が一覧として機能しなかったため。worktree の選択はホームの select が持つ。
  * id は ?project= に渡す値で、null = cwd(既定の選択なので URL に書かない)。
- * id を持たない行は「本体の見出しだけ」= 選べない(登録簿に無い本体は解決できるパスが無い)。
  */
 export interface ProjectRow {
-  /* 一致する Section。定義が 0 件のプロジェクト / worktree では null */
+  /* 一致する Section。定義が 0 件のプロジェクトと、worktree から逆引きした本体では null */
   section: Section | null;
+  /*
+   * 走査の対象だったか。false = worktree から逆引きしただけの本体(登録簿に無いので
+   * 走査していない)。section が null でも「0 件」とは言えないので、切替は
+   * 「アイテムがありません」を出さない ── 0 件だと確かめたわけではないため。
+   */
+  scanned: boolean;
   name: string;
   path: string;
-  id?: string | null;
-  /*
-   * worktree のチェックアウト中のブランチ(detached HEAD では付かない)。
-   * worktree はディレクトリ名よりブランチで覚えているので、2 行目に出して行を見分けられるようにする。
-   * 本体の行は持たない。
-   */
-  branch?: string;
-  /* 起動ディレクトリの行(「現在」の印が付く。worktree から起動していればその行) */
+  id: string | null;
+  /* 起動ディレクトリを含む行(「現在」の印)。cwd が worktree なら、その本体の行に付く */
   cwd: boolean;
-  /*
-   * worktree を束ねるためだけに作った本体の見出し行(登録簿に無いので走査していない)。
-   * section が null でも「0 件」ではないため、切替は「アイテムがありません」を出さない。
-   */
-  heading?: true;
-  subs: ProjectRow[];
+  /* この本体から辿れる linked worktree の数(0 なら添えない)。行としては出さない */
+  worktrees: number;
 }
 
 /*
  * 切替の行の組み立て(計画 16 Phase C)。sections はサーバーの形のままなので、
- * worktrees の path と一致する Section をトップレベルから外し、本体の行の下へ寄せる
- * ── .claude/ を git で追跡しているリポジトリでは同じスキル群が 2 行に並んでしまうため。
- * worktree は登録の有無に依らず(= Section が無くても)行になる。
- * 先頭は cwd を含む組(cwd が worktree なら本体の組)で、残りは「他のプロジェクト」。
+ * worktrees の path と一致する Section をトップレベルから外して本体の行に畳む
+ * ── .claude/ を git で追跡しているリポジトリでは同じスキル群が何十行も並んでしまうため。
+ * 畳む先が sections に無い本体(登録簿に無い / 定義 0 件)でも行は作る: サーバーが
+ * worktree から逆引きした本体を候補に入れ、id(worktrees[].mainId)も返すようになったので、
+ * その行から本体を選べる ── 行を落とすと、その本体にぶら下がる worktree ごと辿れなくなる。
+ * 先頭は cwd を含む行(cwd が worktree ならその本体)で、残りは「他のプロジェクト」。
  */
 export function projectRows(data: SkillsData): {
   current: ProjectRow | null;
@@ -153,58 +155,87 @@ export function projectRows(data: SkillsData): {
   const wtPaths = new Set(worktrees.map((w) => w.path));
   const projects = data.sections.filter((s) => s.source === 'project');
   const cwdSection = currentSection(data.sections);
-  const cwdPath = cwdSection?.note || data.cwd;
+  const cwdPath = cwdPathOf(data);
   const tops: ProjectRow[] = [];
-  // cwd の行。cwd 自身が worktree のときはここでは作らない(本体の下に 1 度だけ出す)
+  // cwd の行。cwd 自身が worktree のときはここでは作らない(本体の行に畳む)
   if (!wtPaths.has(cwdPath))
     tops.push({
       section: cwdSection,
+      scanned: true,
       name: cwdSection?.projectName || fileName(data.cwd),
       path: cwdPath,
       id: null,
       cwd: true,
-      subs: [],
+      worktrees: 0,
     });
   for (const s of projects) {
     if (s === cwdSection || wtPaths.has(s.note)) continue;
     tops.push({
       section: s,
+      scanned: true,
       name: s.projectName || '',
       path: s.note,
       id: s.id,
       cwd: false,
-      subs: [],
+      worktrees: 0,
     });
   }
   for (const w of worktrees) {
     let main = tops.find((t) => t.path === w.mainPath);
     if (!main) {
-      // 本体が登録簿に無い(または定義 0 件で Section が無い)ときは見出しだけの行にする。
-      // 選べる候補はサーバーが返した id を持つものだけなので、この行に id は付けない
+      // 走査していない本体(登録簿に無い / 定義 0 件)。id はサーバーが付けた mainId を使う
       main = {
         section: null,
+        scanned: false,
         name: fileName(w.mainPath),
         path: w.mainPath,
-        cwd: false,
-        heading: true,
-        subs: [],
+        id: w.mainPath === cwdPath ? null : w.mainId,
+        cwd: w.mainPath === cwdPath,
+        worktrees: 0,
       };
       tops.push(main);
     }
-    main.subs.push({
-      section: projects.find((s) => s.note === w.path) || null,
-      name: w.name,
-      path: w.path,
-      // cwd の worktree は既定の選択なので、他の行と同じく URL に書かない
-      id: w.path === cwdPath ? null : w.id,
-      ...(w.branch ? { branch: w.branch } : {}),
-      cwd: w.path === cwdPath,
-      subs: [],
-    });
+    main.worktrees++;
+    // cwd が worktree なら「現在」はその本体の行に付く(worktree 自身の行は無い)
+    if (w.path === cwdPath) main.cwd = true;
   }
-  const idx = tops.findIndex((t) => t.cwd || t.subs.some((s) => s.cwd));
+  const idx = tops.findIndex((t) => t.cwd);
   const current = idx < 0 ? null : tops[idx];
   return { current, others: tops.filter((t) => t !== current) };
+}
+
+/*
+ * ホーム上部の worktree の select の選択肢(計画 16 Phase C の改訂)。
+ * 選んでいるものの本体(worktree を選んでいれば selected.mainPath)に紐づく worktree を、
+ * 常に「本体」を先頭にして並べる。worktree が 1 本も無ければ空 = select ごと出さない。
+ * 表示はディレクトリ名よりブランチで覚えているのでブランチ名を優先する(無ければディレクトリ名)。
+ * id は ?project= に渡す値(null = cwd)で、サーバーが返した id 以外は組み立てない(判断 2)。
+ */
+export interface WorktreeOption {
+  id: string | null;
+  label: string;
+}
+
+export function worktreeOptions(data: SkillsData): WorktreeOption[] {
+  const mainPath = data.selected.mainPath ?? data.selected.path;
+  const wts = (data.worktrees || []).filter((w) => w.mainPath === mainPath);
+  if (wts.length === 0) return [];
+  const cwdPath = cwdPathOf(data);
+  /*
+   * 本体の id はサーバーが作ったものだけを使う(判断 2)。worktree を選んでいるときは
+   * selected.mainId(無い応答なら列挙した worktree の mainId。どちらもサーバー製で同じ値)、
+   * 本体を選んでいるときは selected.id そのもの。Section を持たない本体でも必ず選べる。
+   */
+  const mainId = data.selected.mainPath
+    ? (data.selected.mainId ?? wts[0].mainId)
+    : data.selected.id;
+  const out: WorktreeOption[] = [
+    { id: mainPath === cwdPath ? null : mainId, label: t('proj.mainCheckout') },
+  ];
+  for (const w of wts)
+    // cwd の worktree は既定の選択なので、他と同じく URL に書かない
+    out.push({ id: w.path === cwdPath ? null : w.id, label: w.branch || w.name });
+  return out;
 }
 
 /*

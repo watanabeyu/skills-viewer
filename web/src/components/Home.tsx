@@ -28,6 +28,7 @@ import {
   sessionSections,
   sortItems,
   usageMatches,
+  worktreeOptions,
   type KindFilter,
   type SortKey,
   type UseFilter,
@@ -305,6 +306,44 @@ export function ActiveBlock({
   );
 }
 
+/* ---- worktree の切替(ホーム上部の 1 行) ---- */
+
+/*
+ * 選んでいる本体に linked worktree があるときだけ出す 1 行(計画 16 Phase C の改訂)。
+ * ヘッダーの切替は本体だけを並べるので、「本体 / どの worktree」はここで選ぶ ──
+ * 実データでは 1 つの本体に 40 本近くぶら下がり、切替に混ぜると一覧として機能しないため。
+ * 選択の経路はヘッダーと同じ ?project=(App の onSelectProject)。
+ */
+function WorktreeSelect({
+  data,
+  onSelectProject,
+}: {
+  data: SkillsData;
+  onSelectProject: (id: string | null) => void;
+}) {
+  const options = worktreeOptions(data);
+  if (options.length === 0) return null;
+  /* いま選んでいるもの。cwd は URL に書かないので id は null で表す(選択肢の id と同じ規則) */
+  const cur = data.selected.isCwd ? null : data.selected.id;
+  // value は id そのものでなく並びの位置(null = cwd を空文字と区別せずに扱えるため)
+  const at = options.findIndex((o) => o.id === cur);
+  return (
+    <div className="home-wt">
+      <select
+        className="sel"
+        value={String(at)}
+        onChange={(e) => onSelectProject(options[Number(e.target.value)].id)}
+      >
+        {options.map((o, i) => (
+          <option key={String(o.id)} value={String(i)}>
+            {t('proj.worktreeSelect', { v: o.label })}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export function Home({
   data,
   project,
@@ -316,6 +355,7 @@ export function Home({
   onOpenMemory,
   onOpenMemoryList,
   onOpenClaudeMd,
+  onSelectProject,
   summary,
   setParam,
   reload,
@@ -330,12 +370,15 @@ export function Home({
   onOpenMemory: (path: string) => void;
   onOpenMemoryList: () => void;
   onOpenClaudeMd: (path?: string) => void;
+  /* ?project= の切替(ヘッダーの切替と同じ経路)。null = cwd */
+  onSelectProject: (id: string | null) => void;
   summary: SummaryAction;
   setParam: (key: string, value: string | null) => void;
   reload: () => Promise<void>;
 }) {
   return (
     <div className="home">
+      <WorktreeSelect data={data} onSelectProject={onSelectProject} />
       <ChangesBlock
         data={data}
         project={project}
