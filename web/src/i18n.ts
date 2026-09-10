@@ -357,8 +357,10 @@ const en = {
   'ctx.desc': 'skill name + description',
   'ctx.descNote': '{n} items · excl. {h} hidden and hooks',
   'ctx.descNoteNoHidden': '{n} items · excl. hooks',
-  'ctx.descLimit': '{n} (1%)',
-  'ctx.over': '⚠ over budget',
+  /* 上限は Claude Code の文字数予算(窓の 2%)を 200k 窓・tok に直した目安。切られたかは /doctor が答える */
+  'ctx.descLimit': '{n} (≈2%)',
+  'ctx.over': '⚠ likely truncated',
+  'ctx.descDoctor': 'run /doctor in Claude Code to see what was actually cut',
   /* ③ 使えるもの(出所で区切り、このプロジェクトだけ開く) */
   'act.title': 'Available',
   'act.count': '{n} items',
@@ -423,6 +425,8 @@ const en = {
   'lint.short-description':
     'Description is very short (under 30 chars) — likely too little for the model to pick it',
   'lint.long-description': 'Description is very long (over 1024 chars) — it inflates every session',
+  'lint.listing-truncated':
+    'description + when_to_use exceed 1,536 chars — Claude Code cuts the rest from the skill listing, so put the trigger first',
   'lint.no-trigger':
     'No trigger condition (e.g. "Use when …") in the description — auto-invocation is unlikely',
   'lint.name-echo': 'Description merely repeats the name — it adds no signal',
@@ -936,8 +940,9 @@ const ja: Record<MsgKey, string> = {
   'ctx.desc': 'skill の name + description',
   'ctx.descNote': '{n} 件 · 呼べない {h} 件と hook は除外',
   'ctx.descNoteNoHidden': '{n} 件 · hook は除外',
-  'ctx.descLimit': '{n}(1%)',
-  'ctx.over': '⚠ 予算超過',
+  'ctx.descLimit': '{n}(2% の目安)',
+  'ctx.over': '⚠ 切られる見込み',
+  'ctx.descDoctor': '実際に切られたかは Claude Code の /doctor で',
   'act.title': '使えるもの',
   'act.count': '{n} 件',
   'act.sub': 'このプロジェクトで起動したセッションが使えるもの',
@@ -998,6 +1003,8 @@ const ja: Record<MsgKey, string> = {
   'lint.short-description':
     'description が短すぎます(30文字未満)— モデルが選ぶ手掛かりとして不足しがちです',
   'lint.long-description': 'description が長すぎます(1024文字超)— 毎セッションの負荷になります',
+  'lint.listing-truncated':
+    'description + when_to_use が 1,536 文字を超えています — Claude Code は一覧でそこから先を切るので、発動条件を先頭に',
   'lint.no-trigger':
     'description に発動条件(「〜のときに使用」等)がありません — 自動発動されにくくなります',
   'lint.name-echo': 'description が名前の繰り返しになっています — 情報が増えていません',

@@ -19,7 +19,12 @@ export type AiModel = 'haiku' | 'sonnet' | 'opus';
 export type RelationType = 'invokes' | 'delegates' | 'called-by' | 'references';
 /* description の静的リント警告(言語非依存キー。表示ラベルは web 側の辞書で解決する) */
 export type LintCode =
-  'no-description' | 'short-description' | 'long-description' | 'no-trigger' | 'name-echo';
+  | 'no-description'
+  | 'short-description'
+  | 'long-description'
+  | 'listing-truncated'
+  | 'no-trigger'
+  | 'name-echo';
 
 export interface SkillRelation {
   name: string;
@@ -459,7 +464,8 @@ export interface SessionContext {
 }
 
 /*
- * description の予算。公式は「コンテキスト窓の 1%」で、200k 窓なら 2,000。
+ * description の一覧の上限の目安。Claude Code の予算は文字数でコンテキスト窓の 2%(CHANGELOG 2.1.32)。
+ * viewer は 200k 窓 × 2% = 4,000 tok の概算で比べる(index.ts の DESCRIPTION_BUDGET)。
  * settings.json に相当するキーは無い(2026-09-08 確認)ので source は default 固定。
  */
 export interface DescriptionBudget {

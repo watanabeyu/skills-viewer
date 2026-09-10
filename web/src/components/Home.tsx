@@ -145,7 +145,11 @@ function ContextBlock({
                       <span className="warn-inline">{t('ctx.claudeMdTruncated')}</span>
                     )}
                   </span>
-                  <span className="meta">{l.note}</span>
+                  <span className="meta">
+                    {l.note}
+                    {/* 上限は目安(文字数予算をトークンに直したもの)。本当に切られたかは Claude Code 側でしか分からない */}
+                    {r.key === 'descriptions' && r.over && ' · ' + t('ctx.descDoctor')}
+                  </span>
                 </span>
                 <span className={'num' + (r.over ? ' warn' : '')}>{r.tok.toLocaleString()}</span>
                 <span className="num meta">{l.limit}</span>

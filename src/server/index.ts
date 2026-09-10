@@ -192,11 +192,15 @@ function attributeMemoryUsage(memory: MemorySection[]): void {
  * 同じ事実(Read / W-E / usageAvailable)をプロンプトに載せる必要があるので共通化する。
  */
 /*
- * description の常時コストと予算。公式は「コンテキスト窓の 1%」で、200k 窓なら 2,000。
- * settings.json に相当するキーは無い(2026-09-08 確認)ので既定固定にし、
- * 公式にキーが現れたら source を分けて差し替える。
+ * description の常時コストと、一覧の上限の目安。
+ * Claude Code は skill の一覧(name + description)を文字数の予算で切る。予算はコンテキスト窓の 2%
+ * (CHANGELOG 2.1.32「Skill character budget now scales with context window (2% of context)」)。
+ * viewer は文字数でなくトークンの概算を持っているので、200k 窓 × 2% = 4,000 tok を目安にする
+ * (ASCII ≈ 4 文字/tok で、旧来の固定 15,000 文字ともほぼ一致する)。計画 15 当時の「1% = 2,000」は
+ * 古かった(2026-09-11 に CHANGELOG で確認)。窓の大きさは viewer から分からないので 200k 固定。
+ * 実際に切られたかどうかは Claude Code の /doctor が答える(2.1.144)ので、画面は「見込み」と言う。
  */
-const DESCRIPTION_BUDGET = 2000;
+const DESCRIPTION_BUDGET = 4000;
 
 /*
  * そのセッションに注入される母集団。scanSections は登録済みの全プロジェクトを返すので、

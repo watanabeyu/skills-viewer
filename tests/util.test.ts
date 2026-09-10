@@ -626,11 +626,11 @@ const dataOf = (over: Partial<SkillsData> = {}): SkillsData => ({
   usageAvailable: true,
   changes: null,
   claudeMd: { layers: [], tokens: 0 },
-  budget: { used: 0, limit: 2000, source: 'default' },
+  budget: { used: 0, limit: 4000, source: 'default' },
   context: {
     claudeMd: { tok: 1180 },
     memoryIndex: { tok: 310, lines: 2, limitLines: 200, limitBytes: 25 * 1024 },
-    descriptions: { tok: 3370, count: 21, hiddenCount: 2, limit: 2000 },
+    descriptions: { tok: 3370, count: 21, hiddenCount: 2, limit: 4000 },
   },
   ...over,
 });
@@ -1345,15 +1345,19 @@ describe('changeMarkOf / changeRows (① 増えた・変わった)', () => {
 });
 
 describe('contextRows (② セッションの文脈の分岐。README 6.3)', () => {
-  it('3 内訳。CLAUDE.md 群には上限(バー)が無く、description は 1% 予算との比で超過を判定', () => {
+  it('3 内訳。CLAUDE.md 群には上限(バー)が無く、description は一覧上限(窓の 2% の目安)との比で判定', () => {
     const rows = contextRows(dataOf(), projA);
     expect(rows.map((r) => r.key)).toEqual(['claudeMd', 'memory', 'descriptions']);
     expect(rows[0].ratio).toBeNull();
     expect(rows[1].ratio).toBeCloseTo(2 / 200);
     expect(rows[1].over).toBe(false);
-    expect(rows[2].ratio).toBeCloseTo(3370 / 2000);
-    expect(rows[2].over).toBe(true);
+    expect(rows[2].ratio).toBeCloseTo(3370 / 4000);
+    expect(rows[2].over).toBe(false);
     expect(contextTotal(rows)).toBe(1180 + 310 + 3370);
+    // 上限を超えたら over(画面は「切られる見込み」+ /doctor への案内)
+    const d = dataOf();
+    d.context.descriptions = { ...d.context.descriptions, tok: 4500 };
+    expect(contextRows(d, projA)[2].over).toBe(true);
   });
   it('memory が無ければ MEMORY.md の行を出さない', () => {
     const d = dataOf();

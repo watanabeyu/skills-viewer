@@ -120,7 +120,7 @@ describe('descriptionBudget', () => {
     // 選んだプロジェクト 100 + user 50。proj-b の 900 は入らない
     expect(descriptionBudget(secs, 'proj-a')).toEqual({
       used: 150,
-      limit: 2000,
+      limit: 4000,
       source: 'default',
     });
   });
@@ -151,7 +151,7 @@ describe('sessionContext', () => {
 
   it('description は件数・hidden 件数・合計とも選んだプロジェクト + 共有スコープだけを見る', () => {
     const ctx = sessionContext(secs, [], emptyClaudeMd, 'proj-a');
-    expect(ctx.descriptions).toEqual({ tok: 150, count: 2, hiddenCount: 1, limit: 2000 });
+    expect(ctx.descriptions).toEqual({ tok: 150, count: 2, hiddenCount: 1, limit: 4000 });
   });
 
   it('hook は description を注入しないので件数に数えない', () => {
