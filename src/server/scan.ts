@@ -293,11 +293,17 @@ function scanPlugins(): ScanItem[] {
   return items.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/*
+ * 登録簿の場所。index.ts の候補メモ(projectSets)が版を見るのにも要るので、
+ * パスの組み立てはここ 1 か所に置く ── 片方だけ書き換えるとメモが永久に stale になる。
+ */
+export const REGISTRY_FILE = path.join(HOME, '.claude.json');
+
 /* projects Claude Code has been used in (registry: ~/.claude.json) + cwd */
 export function listProjects(cwd: string): string[] {
   let registered: string[] = [];
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(HOME, '.claude.json'), 'utf8'));
+    const cfg = JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8'));
     registered = Object.keys(cfg.projects || {});
   } catch {
     /* no registry — fall back to cwd only */
@@ -446,11 +452,19 @@ export const projectSectionId = (projectPath: string): string =>
  * ── `.claude/` を git 追跡している新しい worktree を選ぶと、中身があるのに ③ が 0 件になり、
  * 「定義が無い」という嘘の理由まで出ていた。読み取り許可の母集団は元から {cwd, 選択} なので
  * ここで広がるものは無い。isCurrent の意味(= cwd)も変えない。
+ *
+ * 選択を足すときも listProjects と同じく HOME は外す(レビュー 3 周目): user 段は独立した
+ * Section なので、cwd がホームだと(無選択時の selectedPath = cwd で)HOME が走査根に復活し、
+ * proj-…-home の Section が user 段と同じ skill を二重計上していた。
  */
 export function scanSections(cwd: string, lang: Lang = 'en', selectedPath?: string): Section[] {
   const cwdResolved = path.resolve(cwd);
+  const selectedRoot = selectedPath ? path.resolve(selectedPath) : '';
   const roots = [
-    ...new Set([...listProjects(cwd), ...(selectedPath ? [path.resolve(selectedPath)] : [])]),
+    ...new Set([
+      ...listProjects(cwd),
+      ...(selectedRoot && selectedRoot !== path.resolve(HOME) ? [selectedRoot] : []),
+    ]),
   ];
   const projects = roots
     .map((p) => ({ path: p, items: scanClaudeDir(p), current: p === cwdResolved }))

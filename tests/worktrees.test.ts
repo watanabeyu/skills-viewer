@@ -251,6 +251,26 @@ describe('worktree が切替の候補に入る(登録簿に無くても選べる
       mainPath: main,
     });
   });
+
+  /*
+   * 候補メモの鍵に worktree 一覧の版が入っていること(レビュー 3 周目)。
+   * `git worktree add` は ~/.claude.json を触らないので、鍵が登録簿だけだと
+   * 「新しく作った worktree」がリロードしても候補に出ず、C が救おうとした未登録 worktree の
+   * 入口をメモが塞いでしまう(README の「再読み込みで再スキャン」とも食い違う)。
+   * 先に 1 回呼んでメモを温めてから作る ── 直前のテストが別の cwd で温めていても効くように。
+   */
+  it('登録簿を動かさずに worktree を足しても、次の呼び出しで候補に出る', () => {
+    const added = path.join(root, 'repo-feat-b');
+    expect(mod.projectCandidates(main)).not.toContain(added); // ここでメモが温まる
+    fs.mkdirSync(added, { recursive: true });
+    fs.writeFileSync(
+      path.join(added, '.git'),
+      'gitdir: ' + path.join(main, '.git', 'worktrees', 'repo-feat-b') + '\n',
+    );
+    writeAdminDir(main, 'repo-feat-b', path.join(added, '.git'), 'ref: refs/heads/feat/b');
+    expect(mod.projectCandidates(main)).toContain(added);
+    expect(mod.projectWorktrees(main).map((w) => w.path)).toContain(added);
+  });
 });
 
 /*
@@ -324,6 +344,8 @@ describe('未登録の worktree を選ぶと、その .claude も走査される
   const main = path.join(root, 'repo'); // cwd かつ唯一の登録済みプロジェクト
   const wt = path.join(root, 'repo-feat-a'); // 登録簿に無い worktree
   let mod: typeof import('../src/server/index');
+  /* ① の基準(snapshot.json)は差し替えた HOME 配下に置かれる。HOME を stub した後で読み込む */
+  let snap: typeof import('../src/server/snapshot');
 
   const skill = (dir: string, name: string) => {
     fs.mkdirSync(path.join(dir, '.claude', 'skills', name), { recursive: true });
@@ -348,6 +370,7 @@ describe('未登録の worktree を選ぶと、その .claude も走査される
     vi.resetModules();
     vi.stubEnv('HOME', home);
     mod = await import('../src/server/index');
+    snap = await import('../src/server/snapshot');
   });
   afterAll(() => {
     vi.unstubAllEnvs();
@@ -370,5 +393,33 @@ describe('未登録の worktree を選ぶと、その .claude も走査される
     const onMain = mod.collect(main, 'en', null);
     expect(onMain.sections.map((s) => s.id)).not.toContain(projectSectionId(wt));
     expect(onMain.sections.find((s) => s.id === projectSectionId(main))?.items).toHaveLength(1);
+  });
+
+  /*
+   * ①(前回からの変化)の入力は cwd 起点に揃えること(collect の trackedSections)。
+   * 選択で足した Section を入れたままにすると、「既読にする」(/api/changes-ack は cwd 起点で
+   * 走査する)を押しても消えない差分になる ── 逆に常に外すと、登録済みプロジェクトの追加が
+   * ① に出なくなる。両方向を固定する(レビュー 3 周目: どちらに壊しても全テストが緑だった)。
+   * 基準は先に 1 回 collect して現在の cwd 起点に揃えてから見る(テストの実行順に依らないように)。
+   */
+  const changedPaths = (ch: import('../src/shared/types').SnapshotChanges | null | undefined) =>
+    [...(ch?.added || []), ...(ch?.updated || []), ...(ch?.removed || [])].map((e) => e.path);
+
+  it('未登録の worktree を選んでも ① にその skill は出ない(既読にできない差分を作らない)', () => {
+    mod.collect(main, 'en', null);
+    const paths = changedPaths(mod.collect(main, 'en', projectSectionId(wt)).changes);
+    for (const name of ['wt-skill', 'wt-skill2'])
+      expect(paths).not.toContain(path.join(wt, '.claude', 'skills', name, 'SKILL.md'));
+  });
+
+  it('登録済みプロジェクト(cwd)の追加は ① に出て、既読にすると消える', () => {
+    mod.collect(main, 'en', null);
+    skill(main, 'main-skill2');
+    const added = path.join(main, '.claude', 'skills', 'main-skill2', 'SKILL.md');
+    expect(changedPaths(mod.collect(main, 'en', projectSectionId(main)).changes)).toContain(added);
+    // 「既読にする」= POST /api/changes-ack と同じ入力で基準を更新する
+    const inp = mod.changeInputs(main, 'en', mod.projectCandidates(main));
+    snap.ackChanges(inp.sections, inp.memory, inp.claudeMd);
+    expect(mod.collect(main, 'en', projectSectionId(main)).changes).toBeNull();
   });
 });

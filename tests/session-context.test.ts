@@ -618,3 +618,52 @@ describe('collect (transcript を二度読みしない)', () => {
     expect(new Set(opened).size).toBe(2); // 同じファイルを 2 度開いていない
   });
 });
+
+/*
+ * cwd がホームディレクトリのとき(レビュー 3 周目)。listProjects は HOME を意図的に
+ * 走査根から外している(user 段が独立した Section なので)のに、無選択時の selectedPath は
+ * resolve(cwd) なので、cwd がホームだと HOME が「選んだプロジェクト」として走査根に復活し、
+ * proj-…-home の Section が user 段と同じ skill を二重に数えていた(② の件数・トークン、
+ * ①(差分)のキーは path 単位なので影響しない)。
+ */
+describe('collect (cwd がホームでも user 段と二重にならない)', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sv-home-cwd-')));
+  const home = path.join(tmp, 'home');
+  const other = path.join(tmp, 'work', 'other'); // 対照: 定義を持たない別ディレクトリ
+  let mod: typeof import('../src/server/index');
+
+  beforeAll(async () => {
+    for (const d of [home, other]) fs.mkdirSync(d, { recursive: true });
+    // 登録簿は空(ホームで claude を起動しただけの状態)
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: {} }));
+    fs.mkdirSync(path.join(home, '.claude', 'skills', 'user-skill'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude', 'skills', 'user-skill', 'SKILL.md'),
+      '---\nname: user-skill\ndescription: user scope の skill\n---\n本文\n',
+    );
+    vi.resetModules();
+    vi.stubEnv('HOME', home);
+    mod = await import('../src/server/index');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('project 段は生えず、user の skill は 1 件のまま', () => {
+    const data = mod.collect(home, 'en', null);
+    expect(data.sections.filter((s) => s.source === 'project')).toEqual([]);
+    expect(data.sections.map((s) => s.id)).not.toContain(projectSectionId(home));
+    const named = data.sections.flatMap((s) => s.items).filter((it) => it.name === 'user-skill');
+    expect(named).toHaveLength(1);
+  });
+
+  it('② の description 件数・トークンが二重にならない(定義なしの cwd と同じ)', () => {
+    const onHome = mod.collect(home, 'en', null).context.descriptions;
+    // 対照: 定義を持たないディレクトリを cwd にすると project 段は最初から無い
+    const onOther = mod.collect(other, 'en', null).context.descriptions;
+    expect(onHome.count).toBe(onOther.count);
+    expect(onHome.tok).toBe(onOther.tok);
+  });
+});

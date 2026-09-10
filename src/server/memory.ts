@@ -142,21 +142,16 @@ export function worktreesOf(mainDir: string): WorktreeEntry[] {
 
 /*
  * 登録済みプロジェクト群から辿れる linked worktree(重複なし。計画 16 判断 5)。
- * 登録簿にはリポジトリのサブディレクトリや worktree 自身も入るので、まず repoRootOf で本体へ
+ * 登録簿にはリポジトリのサブディレクトリや worktree 自身も入るので、まず repoRootsOf で本体へ
  * 畳んでから本体ごとに 1 回だけ列挙する(同じ本体を登録の数だけ readdir しない)。
  * 列挙の起点は登録簿に閉じており、各 worktree は worktreesOf が逆リンクを検証して採るので、
  * 「gitdir に書いた任意のパス」がここから増えることはない(レビュー 1 周目で検証を足した。
  * それまでは gitdir の指す先を無検証で root にしていた)。
  */
 export function worktreesForProjects(projects: string[]): (WorktreeEntry & { mainPath: string })[] {
-  const mains = new Set<string>();
-  for (const p of projects) {
-    const main = repoRootOf(p);
-    if (main) mains.add(main);
-  }
   const out: (WorktreeEntry & { mainPath: string })[] = [];
   const seen = new Set<string>();
-  for (const main of [...mains].sort()) {
+  for (const main of repoRootsOf(projects)) {
     for (const wt of worktreesOf(main)) {
       if (seen.has(wt.path)) continue; // 同じ worktree に 2 つの本体から辿り着くことは無いが念のため
       seen.add(wt.path);
@@ -164,6 +159,20 @@ export function worktreesForProjects(projects: string[]): (WorktreeEntry & { mai
     }
   }
   return out;
+}
+
+/*
+ * 登録済みプロジェクト群を本体(メインワークツリー)へ畳んだ集合(重複なし・昇順)。
+ * worktree 列挙の起点であり、index.ts の候補メモが `<main>/.git/worktrees` の版を見る
+ * 対象でもあるので、「どこを本体と見るか」の規則を 2 か所に書かないためここに置く。
+ */
+export function repoRootsOf(projects: string[]): string[] {
+  const mains = new Set<string>();
+  for (const p of projects) {
+    const main = repoRootOf(p);
+    if (main) mains.add(main);
+  }
+  return [...mains].sort();
 }
 
 /*

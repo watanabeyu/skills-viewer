@@ -24,6 +24,7 @@ import {
 } from './util';
 import { asTypeFilter } from './memory';
 import { GridView } from './components/GridView';
+import { InlineError } from './components/Inline';
 import { Home } from './components/Home';
 import { MEM_SORT_KEYS, MemoryList } from './components/MemoryGrid';
 import { DetailView, clearMdCache } from './components/DetailView';
@@ -40,7 +41,7 @@ const SORT_KEYS: SortKey[] = ['name', 'uses', 'recent', 'updated', 'tokens'];
 export default function App() {
   const [data, setData] = useState<SkillsData | null>(null);
   const [error, setError] = useState('');
-  /* トークン取得の失敗(取得エラーとは別。initToken の効果の注記を参照) */
+  /* トークン取得の失敗(取得エラーとは別。ensureToken の注記を参照。表示はヘッダーの 1 行) */
   const [tokenError, setTokenError] = useState('');
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -99,11 +100,37 @@ export default function App() {
    * 保持は useRef で行う ── useMemo はキャッシュの破棄が許され、作り直されると世代が 0 に戻る。
    */
   const gate = useRef(latestGate()).current;
+
+  /*
+   * トークンの取得(mutation にしか要らない。GET /api/skills には不要)。
+   * 失敗は取得エラーとは別に持つ: 同じ state に入れると /api/skills 成功時の setError('') が
+   * 消してしまい、以後の mutation が 403 で落ちても理由が画面のどこにも残らない。
+   * 一過性の失敗から抜ける道も要る ── 全画面には落とさず(閲覧は読み取りだけで成り立つ)、
+   * 取得が成功するたびに黙って取り直す(レビュー 3 周目)。
+   * 取り直しの要否は state ではなく ref で見る: tokenError を load の依存に入れると、
+   * 失敗のたびに load の identity が変わって取得の effect が再走し、/api/skills を取り直す。
+   */
+  const tokenMissing = useRef(true);
+  const ensureToken = useCallback(async () => {
+    if (!tokenMissing.current) return;
+    try {
+      await initToken();
+      tokenMissing.current = false;
+      setTokenError('');
+    } catch (e) {
+      setTokenError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
   /*
    * silent = 失敗を全画面のエラーにしない再取得。エラー画面はヘッダーも切替も持たないので、
    * poll や操作(要約・棚卸しの後の取り直し)の失敗までそこへ固定すると、ブラウザの再読み込み
    * 以外に戻る道が無くなる。全画面へ落としてよいのは初回取得と切替だけ(レビュー 2 周目)。
    * 成功はどちらでも前のエラーを消す(次の取得で復帰できるように)。
+   * silent は代わりに呼び出し側へ再 throw する ── 握りつぶすと「操作は成功・再取得だけ失敗」の
+   * とき、既読・棚卸し・要約の catch(局所表示)が発火せず、画面が古いまま何も言わない
+   * ことになる(レビュー 3 周目)。捨てるのは直近の要求でなくなった失敗だけで、
+   * それは後の取得が画面を持っているので局所表示にも出さない。
    */
   const load = useCallback(
     async (silent: boolean) => {
@@ -114,13 +141,20 @@ export default function App() {
         if (!isLatest()) return;
         setData(next);
         setError('');
+        /* サーバーと話せたので、残っているトークン取得の失敗はここで取り直す */
+        void ensureToken();
       } catch (e) {
-        if (!silent && isLatest()) setError(e instanceof Error ? e.message : String(e));
+        if (!isLatest()) return;
+        if (silent) throw e;
+        setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [gate, projectParam],
+    [ensureToken, gate, projectParam],
   );
-  /* 子(ホーム・一覧・詳細)へ渡す再取得は操作起点なので silent。失敗はその場の局所表示に任せる */
+  /*
+   * 子(ホーム・一覧・詳細)へ渡す再取得は操作起点なので silent。全画面には落とさないが、
+   * 返す Promise は reject しうる ── 失敗はその場の局所表示(呼び出し側の catch)に任せる
+   */
   const reload = useCallback(() => load(true), [load]);
 
   /*
@@ -142,17 +176,17 @@ export default function App() {
     if (l === lang) return;
     setLang(l);
     setLangState(l);
-    void reload();
+    /*
+     * reload は失敗を投げる(局所表示のため)。言語切替には受け皿となる表示が無いので
+     * ここで握る ── 表示言語は既に切り替わっており、次の操作・再読み込みで取り直せる
+     */
+    void reload().catch(() => {});
   };
 
-  /*
-   * トークンは mutation にしか要らないので初回だけ(GET /api/skills には不要)。
-   * 失敗は取得エラーとは別に持つ: 同じ state に入れると /api/skills 成功時の setError('') が
-   * 消してしまい、以後の mutation が 403 で落ちても理由が画面のどこにも残らない
-   */
+  /* トークンは初回に取る(以後は取得の成功時に、失敗が残っていれば取り直す) */
   useEffect(() => {
-    initToken().catch((e) => setTokenError(e instanceof Error ? e.message : String(e)));
-  }, []);
+    void ensureToken();
+  }, [ensureToken]);
 
   /*
    * 取得は ?project= が変わるたびにやり直す(切替 = /api/skills を取り直す。計画 16 Phase B)。
@@ -266,7 +300,10 @@ export default function App() {
         await reloadRef.current();
       }
     } catch {
-      /* サーバー停止など。次の操作で復帰 */
+      /*
+       * サーバー停止など。次の操作で復帰。再取得(reloadRef)の失敗もここで握る ──
+       * ポーリングは操作起点ではないので、表示を出す場所が無い
+       */
     }
     if (!isLatest()) return;
     setAiBusy(false);
@@ -313,12 +350,15 @@ export default function App() {
     onRun: onAiClick,
   };
 
-  /* 全画面に落とすのは初回取得・切替の失敗とトークン取得の失敗だけ(他は silent で握りつぶす) */
-  const fatal = error || tokenError;
-  if (fatal)
+  /*
+   * 全画面に落とすのは初回取得・切替の失敗だけ。トークン取得の失敗は含めない ── 読み取りには
+   * 要らないので、閲覧まで止めてブラウザの再読み込みしか復帰手段が無い状態にしない
+   * (ヘッダーの 1 行で知らせる。レビュー 3 周目)
+   */
+  if (error)
     return (
       <div className="wrap">
-        <div className="empty">{t('app.loadFailed', { msg: fatal })}</div>
+        <div className="empty">{t('app.loadFailed', { msg: error })}</div>
       </div>
     );
 
@@ -368,6 +408,11 @@ export default function App() {
           </span>
         )}
         <span className="appbar-r">
+          {/*
+            トークン取得の失敗は閲覧を止めないので、設定の隣に 1 行だけ添える
+            (取得が成功すれば取り直して消える。全画面には落とさない)
+          */}
+          <InlineError msg={tokenError ? t('app.tokenFailed', { msg: tokenError }) : ''} />
           {/* AI 操作はヘッダーに置かない: 全件要約はホーム ③、再分類は用途別、棚卸しは memory 一覧(Phase F) */}
           <button className="btn quiet" onClick={() => setSettingsOpen(true)}>
             {t('app.settings')}

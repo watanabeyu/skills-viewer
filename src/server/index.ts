@@ -21,11 +21,12 @@ import type {
   SkillsData,
   Worktree,
 } from '../shared/types';
-import { HOME, listProjects, projectSectionId, scanSections } from './scan';
+import { REGISTRY_FILE, listProjects, projectSectionId, scanSections } from './scan';
 import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
 import {
   publicMemory,
   realDir,
+  repoRootsOf,
   resolveAutoMemoryDir,
   scanMemory,
   usageAvailableFor,
@@ -305,11 +306,12 @@ interface ProjectSets {
 
 /*
  * 登録簿(~/.claude.json)の版。mtime(ns)とサイズが変わったらメモを捨てる。
- * 読めない環境(登録簿が無い)は 'none' で固定 ── その場合の候補は cwd だけなので組み直す意味が無い。
+ * 読めない環境(登録簿が無い)は 'none' ── その場合も候補は「cwd とその worktree」なので、
+ * 下の worktree 側の版だけで組み直しの判断が付く。
  */
 function registryStamp(): string {
   try {
-    const st = fs.statSync(path.join(HOME, '.claude.json'), { bigint: true });
+    const st = fs.statSync(REGISTRY_FILE, { bigint: true });
     return `${st.mtimeNs}:${st.size}`;
   } catch {
     return 'none';
@@ -317,24 +319,50 @@ function registryStamp(): string {
 }
 
 /*
+ * worktree 一覧の版。本体ごとの `<main>/.git/worktrees` は worktree の追加・削除で必ず
+ * mtime が動く(エントリの作成・削除)ので、そのディレクトリの版を鍵に載せる。
+ * `git worktree add` は ~/.claude.json を触らない(登録は claude をそこで起動したとき)ため、
+ * 登録簿の版だけを鍵にすると新しい worktree が候補にも worktrees にも出てこない
+ * ── README の「ページを再読み込みすれば再スキャン」と食い違うので、ここで拾う(レビュー 3 周目)。
+ * statSync は本体の数ぶんだけ(µs 単位)。無ければ '-'(まだ worktree が 1 つも無い本体)。
+ */
+function worktreeStamp(mains: string[]): string {
+  return mains
+    .map((main) => {
+      try {
+        const st = fs.statSync(path.join(main, '.git', 'worktrees'), { bigint: true });
+        return `${st.mtimeNs}`;
+      } catch {
+        return '-';
+      }
+    })
+    .join(',');
+}
+
+/*
  * 候補一式のメモ(レビュー 2 周目)。resolveAutoMemoryDir の autoDirMemo と同じ流儀で、
- * 「登録簿が変わっていなければ組み直さない」。
+ * 「登録簿と各本体の worktree 一覧が変わっていなければ組み直さない」。
  *
  * なぜ要るか: 組むのは listProjects × 2 + worktreesForProjects(本体ごとの readdir + 逆リンク検証)で、
  * 実環境(33 project / 73 worktree)では 6.3ms/req かかる。web は読み取り系にも常に
  * `data.selected.id` を付けるので、選択が cwd(既定)のままでも /api/file・/api/diff が毎回これを
  * 払っていた ── `.claude` 配下と分かれば 0.01ms で終わる判定の手前で 10ms 級の前段が乗る。
  *
- * 限界: worktree の増減や、登録済みディレクトリが消えたことは ~/.claude.json が動くまで
- * 反映されない(起動し直せば必ず組み直す)。列挙の起点は登録簿なので、鍵をそこに置いている。
+ * 本体の集合(repoRootsOf)は登録簿の版に紐付けて覚える: 畳み込みは祖先方向の existsSync なので、
+ * 版の判定のために毎回やり直さない。
+ *
+ * 限界: 登録済みディレクトリが消えたこと・新しいリポジトリが本体として現れたことは
+ * ~/.claude.json が動くまで反映されない(列挙の起点が登録簿だから。起動し直せば必ず組み直す)。
  * 返す配列はメモと共有しているので、呼び出し側で書き換えないこと。
  */
-let setsMemo: { key: string; sets: ProjectSets } | undefined;
+let setsMemo: { regKey: string; mains: string[]; wtKey: string; sets: ProjectSets } | undefined;
 
 function projectSets(cwd: string): ProjectSets {
-  const key = path.resolve(cwd) + '\0' + registryStamp();
-  if (setsMemo?.key === key) return setsMemo.sets;
+  const regKey = path.resolve(cwd) + '\0' + registryStamp();
+  if (setsMemo?.regKey === regKey && setsMemo.wtKey === worktreeStamp(setsMemo.mains))
+    return setsMemo.sets;
   const projects = listProjects(cwd);
+  const mains = repoRootsOf(projects);
   const worktrees: Worktree[] = worktreesForProjects(projects).map((w) => ({
     // id をサーバーが作るのは、web がパスから組み立てると規則が二重定義になるため(判断 2)
     id: projectSectionId(w.path),
@@ -345,7 +373,7 @@ function projectSets(cwd: string): ProjectSets {
     worktrees,
     candidates: [...new Set([...projects, ...worktrees.map((w) => w.path)])],
   };
-  setsMemo = { key, sets };
+  setsMemo = { regKey, mains, wtKey: worktreeStamp(mains), sets };
   return sets;
 }
 
@@ -688,9 +716,21 @@ export function handleApi(req: http.IncomingMessage, res: http.ServerResponse, c
       }
       if (url.pathname === '/api/open') return send(200, openInEditor(data, cwd, selectedPath()));
       if (url.pathname === '/api/summarize-all')
-        return send(200, startSummarizeAll(scanSections(cwd, lang), !!data.force, lang, model));
+        /*
+         * 母集団は collect と同じ「登録簿 ∪ 選んだプロジェクト」(レビュー 3 周目)。
+         * cwd 固定だと、未登録の worktree を選んだときにその skill が ③・未要約件数
+         * (aiStale)には出るのに要約ジョブに入らず、「未要約 N 件」が押しても減らない。
+         */
+        return send(
+          200,
+          startSummarizeAll(scanSections(cwd, lang, selectedPath()), !!data.force, lang, model),
+        );
       if (url.pathname === '/api/group-generate') {
-        // 環境全体で 1 回の claude 呼び出し。完了時にグループ集合を返す(割当は再取得で反映)
+        /*
+         * 環境全体で 1 回の claude 呼び出し。完了時にグループ集合を返す(割当は再取得で反映)。
+         * ここは母集団が「環境全体」という設計なので選択を渡さない(グループは
+         * プロジェクトをまたいで共有する分類で、選択で中身が変わると生成のたびに揺れる)。
+         */
         generateGroups(scanSections(cwd, lang), lang, model)
           .then((r) => send(200, { ok: true, groups: r.groups }))
           .catch((e) => send(400, toErrorBody(e)));
@@ -718,7 +758,9 @@ export function handleApi(req: http.IncomingMessage, res: http.ServerResponse, c
           ? data.files.filter((f: unknown): f is string => typeof f === 'string')
           : undefined;
         // sections は「CLAUDE.md / skill に既に書いてある」「skill へ昇格」を判定させる文脈。
-        // AI を呼ぶときだけ要るので、フルスキャンは関数で渡して遅延させる
+        // AI を呼ぶときだけ要るので、フルスキャンは関数で渡して遅延させる。
+        // 選択を渡さないのは、これが件数や予算ではなく「どこかに既にあるか」を見るための
+        // 環境全体の文脈だから(未登録の worktree を選んでいても判定は変わらない)
         triageProject(sec, lang, model, {
           force: !!data.force,
           files,

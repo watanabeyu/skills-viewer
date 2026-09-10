@@ -21,6 +21,11 @@ export type { Lang };
 const en = {
   'app.settings': 'Settings',
   'app.loadFailed': 'Failed to load: {msg}',
+  /*
+   * トークン取得の失敗。mutation にしか要らないので閲覧は続けられる ── 全画面へ落とさず
+   * ヘッダーの 1 行に留めるため、「効かないのは変更系だけ」と読める文言にする
+   */
+  'app.tokenFailed': 'No token — changes are disabled, reading still works ({msg})',
 
   'sort.title': 'Sort order',
   'sort.name': 'Name',
@@ -634,6 +639,7 @@ export type MsgKey = keyof typeof en;
 const ja: Record<MsgKey, string> = {
   'app.settings': '設定',
   'app.loadFailed': '読み込みに失敗しました: {msg}',
+  'app.tokenFailed': 'トークンを取得できません。変更系の操作だけが使えません({msg})',
 
   'sort.title': '並び順',
   'sort.name': '名前順',

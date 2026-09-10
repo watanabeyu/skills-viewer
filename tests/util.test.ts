@@ -959,7 +959,7 @@ describe('App の取得とポーリングの結線', () => {
     const body = code.match(/const load = useCallback\([\s\S]*?\n {2}\);/)?.[0];
     expect(body).toBeTruthy();
     expect(body).toContain("setError('')");
-    expect(body).toMatch(/if \(!silent && isLatest\(\)\) setError\(/);
+    expect(body).toMatch(/if \(silent\) throw e;\s*\n\s*setError\(/);
     // setError を呼ぶのは load の 2 か所だけ(poll / 操作の失敗を全画面へ固定しない)
     expect([...code.matchAll(/setError\(/g)]).toHaveLength(2);
     expect([...(body?.matchAll(/setError\(/g) || [])]).toHaveLength(2);
@@ -967,17 +967,63 @@ describe('App の取得とポーリングの結線', () => {
     expect([...code.matchAll(/load\(false\)/g)]).toHaveLength(1);
     expect(code).toContain('const reload = useCallback(() => load(true), [load]);');
     // 呼び出し側の .catch(setError) 頼み(世代を見ない)に戻っていないこと
-    expect(code).not.toMatch(/reload\(\)\.catch\(/);
+    expect(code).not.toMatch(/\.catch\(\([\w\s,]*\) => setError\(/);
+  });
+
+  /*
+   * silent(操作起点の再取得)の失敗は握りつぶさず呼び出し側へ投げる(レビュー 3 周目)。
+   * 握ると reload が決して reject しなくなり、既読・棚卸し・要約の catch(局所表示)が
+   * 「操作は成功・再取得だけ失敗」で発火せず、画面が古いまま何も言わない。
+   * 捨てるのは世代が進んだ失敗だけ(後の取得が画面を持っている)。
+   */
+  it('silent の失敗は再 throw され、世代が進んだ失敗だけが捨てられる', async () => {
+    const code = await appCode();
+    const body = code.match(/const load = useCallback\([\s\S]*?\n {2}\);/)?.[0] || '';
+    // catch の中身: 世代切れは return、silent は throw、非 silent だけ全画面へ
+    expect(body).toMatch(
+      /\} catch \(e\) \{\s*\n\s*if \(!isLatest\(\)\) return;\s*\n\s*if \(silent\) throw e;/,
+    );
+    // throw を消して握りつぶす形(catch が空 / silent の分岐なし)に戻っていないこと
+    expect([...body.matchAll(/throw e;/g)]).toHaveLength(1);
+    /*
+     * 投げる先が居ない呼び出しだけは自分で握る: ポーリング(try/catch)と言語切替。
+     * ここが素の void reload() に戻ると unhandled rejection になる
+     */
+    expect(code).toContain('void reload().catch(() => {});');
+    expect(code).not.toMatch(/void reload\(\);/);
+    expect(code).toMatch(/await reloadRef\.current\(\);[\s\S]*?\n {4}\} catch \{/);
   });
 
   /*
    * トークン取得の失敗は取得エラーと別に持つ。同じ state だと /api/skills 成功時の
    * setError('') が消してしまい、以後の mutation が 403 でも理由が画面に残らない。
+   * 同時に全画面へも落とさない: トークンは mutation にしか要らないので、一過性の失敗で
+   * 読み取り専用の閲覧まで止めると再読み込み以外に戻る道が無くなる(レビュー 3 周目)。
    */
-  it('initToken の失敗は tokenError(取得の成功で消えない)', async () => {
-    const src = await appSource();
-    expect(src).toMatch(/initToken\(\)\.catch\(\(e\) => setTokenError\(/);
-    expect(src).not.toMatch(/initToken\(\)\.catch\(\(e\) => setError\(/);
+  it('initToken の失敗は tokenError(取得の成功で消えない / 全画面に出さない)', async () => {
+    const code = await appCode();
+    // 取得は ensureToken に集約し、失敗は tokenError へ、成功で消す
+    expect(code).toMatch(
+      /const ensureToken = useCallback\(async \(\) => \{[\s\S]*?await initToken\(\);[\s\S]*?setTokenError\(''\);[\s\S]*?\} catch \(e\) \{\s*\n\s*setTokenError\(/,
+    );
+    expect(code).not.toMatch(/initToken\(\)\.catch\(\(e\) => setError\(/);
+    // 全画面は error だけ(tokenError を混ぜた fatal に戻っていないこと)
+    expect(code).toContain('if (error)');
+    expect(code).not.toMatch(/error \|\| tokenError|tokenError \|\| error/);
+    // 残っている間はヘッダーの 1 行(InlineError)で知らせる
+    expect(code).toContain("<InlineError msg={tokenError ? t('app.tokenFailed'");
+    // 取得の成功経路で取り直す(mount の 1 回だけではない)
+    const body = code.match(/const load = useCallback\([\s\S]*?\n {2}\);/)?.[0] || '';
+    expect(body).toContain('void ensureToken();');
+    expect(code).toMatch(
+      /useEffect\(\(\) => \{\s*\n\s*void ensureToken\(\);\s*\n\s*\}, \[ensureToken\]\);/,
+    );
+    /*
+     * 取り直しの要否は ref で見る: tokenError を load の依存に入れると、失敗のたびに
+     * load の identity が変わって取得の effect が再走し /api/skills を取り直す
+     */
+    expect(code).toContain('const tokenMissing = useRef(true);');
+    expect(code).toContain('[ensureToken, gate, projectParam],');
   });
 
   /* 予約済みの timeout にも世代を効かせる(cleanup 後に発火してもチェーンを継がない) */

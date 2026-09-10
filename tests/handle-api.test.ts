@@ -6,7 +6,8 @@
  *
  * ここでは http.IncomingMessage / ServerResponse の最小スタブで handleApi を 1 往復させ、
  * 「クエリの ?project= が読み取り許可に届いているか」「①(変化)の入力が collect と
- * /api/changes-ack で同じか」を結合で固定する。サーバーは起こさない(listen しない)。
+ * /api/changes-ack で同じか」「Origin / Host のゲートが効いているか」
+ * 「一括要約の母集団が ③ と一致するか」を結合で固定する。サーバーは起こさない(listen しない)。
  *
  * 環境: HOME は必ず一時ディレクトリに差し替えてから動的 import する。
  * snapshot(~/.cache/skills-viewer/snapshot.json)と AI キャッシュのパスは import 時に
@@ -19,7 +20,24 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { projectSectionId } from '../src/server/scan';
-import type { SkillsData } from '../src/shared/types';
+import type { Section, SkillsData } from '../src/shared/types';
+
+/*
+ * 一括要約(POST /api/summarize-all)が「どの母集団を」ジョブに渡したかを見るための差し替え。
+ * 本物は claude CLI を起動してしまうので、受け取った sections だけ記録して空のジョブを返す
+ * (他の export は素通し ── collect が使う loadSummaries / staleItems などは本物のまま)。
+ */
+const summarizeAllArgs = vi.hoisted(() => [] as Section[][]);
+vi.mock('../src/server/summary', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/server/summary')>();
+  return {
+    ...actual,
+    startSummarizeAll: (sections: Section[]) => {
+      summarizeAllArgs.push(sections);
+      return { finished: true, total: 0, done: 0, errors: [] };
+    },
+  };
+});
 
 interface Reply {
   code: number;
@@ -30,7 +48,15 @@ interface Reply {
 function call(
   mod: typeof import('../src/server/index'),
   cwd: string,
-  opts: { method?: string; url: string; token?: string; body?: unknown },
+  opts: {
+    method?: string;
+    url: string;
+    token?: string;
+    body?: unknown;
+    /* 既定は 127.0.0.1(hostOk)。Origin なしは same-origin fetch と同じ扱い */
+    host?: string;
+    origin?: string;
+  },
 ): Promise<Reply> {
   return new Promise((resolve) => {
     const method = opts.method || 'GET';
@@ -38,9 +64,9 @@ function call(
     const req = {
       method,
       url: opts.url,
-      // Host は 127.0.0.1(hostOk)。Origin なしは same-origin fetch と同じ扱い
       headers: {
-        host: '127.0.0.1:4763',
+        host: opts.host ?? '127.0.0.1:4763',
+        ...(opts.origin ? { origin: opts.origin } : {}),
         ...(opts.token ? { 'x-csb-token': opts.token } : {}),
       },
       on(ev: string, cb: (chunk?: unknown) => void) {
@@ -73,6 +99,8 @@ describe('handleApi (クエリ・トークン・入力の結線)', () => {
   const home = path.join(tmp, 'home');
   const alpha = path.join(tmp, 'work', 'alpha'); // cwd
   const beta = path.join(tmp, 'work', 'beta'); // 登録済みだが cwd ではない
+  const wtree = path.join(tmp, 'work', 'alpha-feat-a'); // alpha の worktree(登録簿には無い)
+  const wtreeSkill = path.join(wtree, '.claude', 'skills', 'wt-skill', 'SKILL.md');
   let mod: typeof import('../src/server/index');
   const q = (o: Record<string, string>) =>
     Object.entries(o)
@@ -87,6 +115,21 @@ describe('handleApi (クエリ・トークン・入力の結線)', () => {
     );
     fs.writeFileSync(path.join(alpha, 'CLAUDE.md'), '# alpha\n');
     fs.writeFileSync(path.join(beta, 'CLAUDE.md'), '# beta\n');
+    /*
+     * alpha の linked worktree(登録簿には無い = 「claude をそこで起動していない」状態)。
+     * git が書くファイルだけを再現する(tests/worktrees.test.ts の writeAdminDir と同じ形)。
+     * 一括要約の母集団が「登録簿だけ」に縮んでいると、この skill がジョブに入らない。
+     */
+    const admin = path.join(alpha, '.git', 'worktrees', 'alpha-feat-a');
+    fs.mkdirSync(admin, { recursive: true });
+    fs.mkdirSync(path.dirname(wtreeSkill), { recursive: true });
+    fs.writeFileSync(path.join(wtree, '.git'), 'gitdir: ' + admin + '\n');
+    fs.writeFileSync(path.join(admin, 'gitdir'), path.join(wtree, '.git') + '\n');
+    fs.writeFileSync(path.join(admin, 'HEAD'), 'ref: refs/heads/feat/a\n');
+    fs.writeFileSync(
+      wtreeSkill,
+      '---\nname: wt-skill\ndescription: worktree にだけある skill\n---\n本文\n',
+    );
     vi.resetModules();
     vi.stubEnv('HOME', home); // ← import より前(SNAPSHOT_FILE などが HOME を焼き込む)
     mod = await import('../src/server/index');
@@ -194,6 +237,67 @@ describe('handleApi (クエリ・トークン・入力の結線)', () => {
     });
     expect(r.code).toBe(400);
     expect(r.body.error).toBe('not-openable-path');
+  });
+
+  /*
+   * Origin / Host のゲート(README Security の「非 localhost の Origin は拒否」の番犬)。
+   * GET も mutation もハンドラの入口で 403 になり、トークンの有無より前に落ちる。
+   * Host も見るのは DNS rebinding 対策(same-origin GET には Origin が付かない)。
+   */
+  it('非 localhost の Origin / Host は 403(bad-origin)', async () => {
+    const evil = await call(mod, alpha, { url: '/api/token', origin: 'http://evil.example' });
+    expect(evil).toEqual({ code: 403, body: { error: 'bad-origin', detail: '' } });
+    const rebind = await call(mod, alpha, { url: '/api/token', host: 'example.com:4763' });
+    expect(rebind).toEqual({ code: 403, body: { error: 'bad-origin', detail: '' } });
+    // mutation も同じ入口で落ちる(正しいトークンを付けても通らない)
+    const post = await call(mod, alpha, {
+      method: 'POST',
+      url: '/api/changes-ack',
+      token: mod.TOKEN,
+      origin: 'http://evil.example',
+    });
+    expect(post.code).toBe(403);
+  });
+
+  it('localhost の Origin と Origin 無しは通る', async () => {
+    const withOrigin = await call(mod, alpha, {
+      url: '/api/token',
+      origin: 'http://127.0.0.1:4763',
+    });
+    expect(withOrigin.code).toBe(200);
+    expect(
+      (await call(mod, alpha, { url: '/api/token', origin: 'http://localhost:5173' })).code,
+    ).toBe(200);
+    // same-origin fetch / curl は Origin を付けない
+    expect((await call(mod, alpha, { url: '/api/token' })).code).toBe(200);
+  });
+
+  /*
+   * 一括要約の母集団は ③(GET /api/skills)と一致していなければならない。
+   * cwd 固定のままだと、未登録の worktree を選んだときにその skill が一覧・未要約件数には
+   * 出るのに要約ジョブに入らず、「未要約 N 件」が押しても減らない(レビュー 3 周目)。
+   */
+  it('POST /api/summarize-all の母集団は ③ と一致する(選んだ worktree を含む)', async () => {
+    const project = projectSectionId(wtree);
+    const shown = (await call(mod, alpha, { url: '/api/skills?' + q({ lang: 'en', project }) }))
+      .body as SkillsData;
+    const paths = (secs: Section[]) =>
+      secs
+        .flatMap((s) => s.items)
+        .map((it) => it.path)
+        .filter(Boolean)
+        .sort();
+    summarizeAllArgs.length = 0;
+    const r = await call(mod, alpha, {
+      method: 'POST',
+      url: '/api/summarize-all',
+      token: mod.TOKEN,
+      body: { lang: 'en', selected: project },
+    });
+    expect(r.code).toBe(200);
+    expect(summarizeAllArgs).toHaveLength(1);
+    expect(paths(summarizeAllArgs[0])).toContain(wtreeSkill);
+    expect(paths(summarizeAllArgs[0])).toEqual(paths(shown.sections));
   });
 
   it('未知のエンドポイントは 404', async () => {
