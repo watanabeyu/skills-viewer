@@ -900,7 +900,7 @@ export function claudeMdCounts(scan: ClaudeMdScan): {
 }
 
 /*
- * ③「効いているもの」の並び: 選んだプロジェクト → user → plugin → built-in。
+ * ③「使えるもの」の並び: 選んだプロジェクト → user → plugin → built-in。
  * 他プロジェクトのセクションはこのセッションには効かないので含めない。
  */
 export function sessionSections(sections: Section[], project: Section | null): Section[] {

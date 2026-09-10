@@ -40,7 +40,7 @@ import {
   type ImportTree,
 } from '../claudemd';
 import { changeMarkOf, fmtDate, relTimeLabel } from '../util';
-import { mdRender, splitFrontmatter, splitPreview } from '../md';
+import { mdRender, splitFrontmatter } from '../md';
 import { t, type MsgKey } from '../i18n';
 import { InlineError } from './Inline';
 import { EditorButton, useOpenEditor } from './EditorButton';
@@ -432,12 +432,10 @@ function FilePanel({
 }) {
   const [prev, setPrev] = useState<DiffResponse | null>(null);
   const [showDiff, setShowDiff] = useState(false);
-  const [more, setMore] = useState(false);
   useEffect(() => {
     let alive = true;
     setPrev(null);
     setShowDiff(false);
-    setMore(false);
     if (withheld) return;
     fetchDiff(file.path, selected)
       .then((r) => {
@@ -449,9 +447,11 @@ function FilePanel({
     };
   }, [file.path, withheld, selected]);
 
-  const preview = parsed ? splitPreview(parsed.body) : null;
-  const shown = preview ? (more || !preview.rest ? parsed!.body : preview.head) : '';
-  const segs = parsed ? splitImports(shown, file.imports) : [];
+  /*
+   * 本文は畳まず最初から全文(2026-09-11)。この画面の問いは「何が毎回読まれているか」なので、
+   * 読まれるものを途中で隠す理由がない(理解画面の SKILL.md は「続きを表示」のまま)
+   */
+  const segs = parsed ? splitImports(parsed.body, file.imports) : [];
   const ms = Date.parse(file.updatedAt) || 0;
   return (
     <section className="dblk cmd-file">
@@ -508,11 +508,6 @@ function FilePanel({
               ) : (
                 <ImportNote key={i} refText={s.ref} tree={s.tree} />
               ),
-            )}
-            {preview?.rest && (
-              <button className="linkbtn meta" onClick={() => setMore((v) => !v)}>
-                {more ? t('full.less') : t('full.more', { n: preview.restLines })}
-              </button>
             )}
           </div>
         </>

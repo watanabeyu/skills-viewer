@@ -2,7 +2,7 @@
  * ホーム(計画 15 Phase D / README 6.2)。利用者の 3 つの問いに上から順に答える 3 ブロック:
  *   ① 増えた・変わった(ChangesBlock)
  *   ② セッションの文脈: 合計 + 3 内訳(CLAUDE.md 群 / MEMORY.md 索引 / skill の description)
- *   ③ 効いているもの: このプロジェクト + user + plugin + built-in。このプロジェクトだけ開く
+ *   ③ 使えるもの: このプロジェクト + user + plugin + built-in。このプロジェクトだけ開く
  * 寸法は docs/design/0.9.0/{Ledger,Console}Home.dc.html の実測(style.css のトークン)。
  *
  * 3 ブロックの対象は「選んだプロジェクト」(SkillsData.selected)。② もサーバーがその起点で
@@ -161,7 +161,7 @@ function ContextBlock({
   );
 }
 
-/* ---- ③ 効いているもの ---- */
+/* ---- ③ 使えるもの ---- */
 
 export function ActiveBlock({
   data,

@@ -1,5 +1,5 @@
 /*
- * 一覧の行と部品(design-system 1.4)。ホーム ③「効いているもの」と「すべてのプロジェクト」の
+ * 一覧の行と部品(design-system 1.4)。ホーム ③「使えるもの」と「すべてのプロジェクト」の
  * 「置かれているもの」が同じ行を使う。寸法はモック(docs/design/0.9.0/{Ledger,Console}Home.dc.html)の
  * inline style から実測し、style.css のトークン(--trow-h / --col-* など)に置いた。
  *

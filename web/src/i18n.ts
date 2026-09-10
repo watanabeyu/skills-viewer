@@ -359,8 +359,8 @@ const en = {
   'ctx.descNoteNoHidden': '{n} items · excl. hooks',
   'ctx.descLimit': '{n} (1%)',
   'ctx.over': '⚠ over budget',
-  /* ③ 効いているもの(出所で区切り、このプロジェクトだけ開く) */
-  'act.title': 'Available in this session',
+  /* ③ 使えるもの(出所で区切り、このプロジェクトだけ開く) */
+  'act.title': 'Available',
   'act.count': '{n} items',
   'act.sub': 'usable by sessions started in this project',
   'act.subShort': 'usable by sessions in this project',
@@ -938,7 +938,7 @@ const ja: Record<MsgKey, string> = {
   'ctx.descNoteNoHidden': '{n} 件 · hook は除外',
   'ctx.descLimit': '{n}(1%)',
   'ctx.over': '⚠ 予算超過',
-  'act.title': '効いているもの',
+  'act.title': '使えるもの',
   'act.count': '{n} 件',
   'act.sub': 'このプロジェクトで起動したセッションが使えるもの',
   'act.subShort': 'このプロジェクトのセッションが使えるもの',
@@ -1171,7 +1171,7 @@ const ja: Record<MsgKey, string> = {
   'settings.aiModelNote.sonnet': '高品質。やや遅く高コスト',
   'settings.aiModelNote.opus': '最高品質。最も遅く高コスト',
   'settings.aiModelHint':
-    'claude CLI のエイリアスとして解決されます。次回の生成から適用され、生成済みキャッシュはそのまま残ります(置き換えたい場合はホームの「効いているもの」から AI 要約を強制再生成)',
+    'claude CLI のエイリアスとして解決されます。次回の生成から適用され、生成済みキャッシュはそのまま残ります(置き換えたい場合はホームの「使えるもの」から AI 要約を強制再生成)',
   'settings.theme': 'テーマ',
   'settings.themeAuto': '自動',
   'settings.themeAutoNote': 'OS の配色設定に従う(ダーク → Console、ライト → Ledger)',

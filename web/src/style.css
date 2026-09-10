@@ -286,6 +286,9 @@
   --fm-bg: var(--panel);
   --md-pad: 16px;
   --md-size: 14px;
+  /* 本文の行長と行間(.md-full .md-body)。行長は 14px で 1 行 110 字前後 */
+  --md-measure: 960px;
+  --md-lh: 1.75;
   /* hook 一覧の行 40px */
   --hook-row-h: 40px;
   /* CLAUDE.md 画面(E2): 7 段表の行 40 / ヘッダ 30、列 28 / 110 / 1fr / 80 / 80 / 110、見出し一覧 300 + 20、その行 30 */
@@ -523,6 +526,7 @@
   /* モックの下 14 に上も揃える(上 8 は先頭要素の margin 込みの値だった) */
   --md-pad: 14px 16px;
   --md-size: 13px;
+  --md-lh: 1.7;
   --hook-row-h: 32px;
   /* CLAUDE.md 画面: 行 32、パネル見出し 36(docs/design/0.9.0/ConsoleClaudeMd.dc.html) */
   --cmd-row-h: 32px;
@@ -1710,7 +1714,7 @@ button.ctx-row:hover {
   background: var(--warn);
 }
 
-/* ③ 効いているもの / 置かれているもの: 出所の見出し → 表ヘッダ → 行 */
+/* ③ 使えるもの / 置かれているもの: 出所の見出し → 表ヘッダ → 行 */
 .grp + .grp .ghead {
   margin-top: var(--ghead-gap);
 }
@@ -2494,29 +2498,97 @@ button.ctx-row:hover {
 .md-full .md-body > :last-child {
   margin-bottom: 0;
 }
+/*
+ * 全文の本文(SKILL.md / CLAUDE.md / memory 共通)。CLAUDE.md は SKILL.md より長いので、
+ * 読める行長と段落のリズムを優先する(2026-09-11):
+ * - 行長は最大 --md-measure。1240 の枠いっぱいに 14px を敷くと 1 行 150 字を超えて目が戻れない
+ * - 行間 --md-lh、段落・リスト・コードは下 12 で区切る
+ * - 見出しは上に広く下に狭く(次の段落が見出しに属して見える)。h1 / h2 は罫線で章を切る
+ */
 .md-full .md-body {
+  max-width: var(--md-measure);
   font-size: var(--md-size);
-  line-height: 1.6;
+  line-height: var(--md-lh);
 }
 .md-full .md-body h1,
 .md-full .md-body h2 {
-  border: 0;
-  padding: 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
 }
 .md-full .md-body h1 {
-  font-size: 15px;
-  margin: 16px 0 4px;
+  font-size: 20px;
+  margin: 32px 0 12px;
 }
 .md-full .md-body h2 {
-  font-size: 14px;
-  margin: 16px 0 4px;
+  font-size: 17px;
+  margin: 28px 0 10px;
 }
 .md-full .md-body h3 {
-  font-size: 13.5px;
-  margin: 14px 0 4px;
+  font-size: 15px;
+  margin: 24px 0 8px;
+}
+.md-full .md-body h4 {
+  font-size: 14px;
+  margin: 20px 0 6px;
+}
+.md-full .md-body h5,
+.md-full .md-body h6 {
+  font-size: 13px;
+  margin: 16px 0 6px;
+  color: var(--text);
+}
+.md-full .md-body h6 {
+  color: var(--sub);
 }
 .md-full .md-body p {
-  margin: 0 0 6px;
+  margin: 0 0 12px;
+}
+.md-full .md-body ul,
+.md-full .md-body ol {
+  margin: 0 0 12px;
+  padding-left: 24px;
+}
+.md-full .md-body li {
+  margin: 4px 0;
+}
+/* 空行で区切ったリスト(loose list)の <p> と、入れ子のリストは項目の間隔だけで並べる */
+.md-full .md-body li > p {
+  margin: 0;
+}
+.md-full .md-body li > ul,
+.md-full .md-body li > ol {
+  margin: 4px 0 0;
+}
+.md-full .md-body pre {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.md-full .md-body blockquote {
+  margin: 0 0 12px;
+}
+.md-full .md-body hr {
+  margin: 24px 0;
+}
+/* 表: 罫線で区切り、幅が余れば横スクロール(本文の幅を押し広げない) */
+.md-full .md-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0 0 12px;
+  font-size: 0.93em;
+}
+.md-full .md-body th,
+.md-full .md-body td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-full .md-body th {
+  background: var(--raised);
+  font-weight: 600;
 }
 .md-full .linkbtn {
   margin-top: 8px;

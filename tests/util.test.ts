@@ -1402,7 +1402,7 @@ describe('contextRows (② セッションの文脈の分岐。README 6.3)', () 
   });
 });
 
-describe('sessionSections / duplicateNames (③ 効いているもの・同名)', () => {
+describe('sessionSections / duplicateNames (③ 使えるもの・同名)', () => {
   it('選んだプロジェクト → user → plugin → built-in。他プロジェクトは含めない', () => {
     expect(sessionSections(sections, projA).map((s) => s.id)).toEqual([
       'proj--w-alpha',
