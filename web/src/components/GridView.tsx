@@ -273,6 +273,20 @@ export function GridView({
     ));
   }
 
+  const sub = t('all.sub', {
+    p: projects.length,
+    u: countOf('user'),
+    pl: countOf('plugin'),
+    b: countOf('built-in'),
+  });
+  const dupLine = (list: typeof dups) =>
+    t('all.dup', {
+      n: dups.length,
+      list: list.map((d) => `${d.name}: ${d.scopes.join(' / ')}`).join('、'),
+    });
+  const dupHead = dupLine(dups.slice(0, 3));
+  const dupAll = dups.length > 0 ? dupLine(dups) : '';
+
   return (
     <div className="home">
       <ChangesBlock
@@ -287,22 +301,13 @@ export function GridView({
         <div className="blk-hd">
           <h2>{t('all.title')}</h2>
           <span className="pill">{t('act.count', { n: all.length })}</span>
-          <span className="meta">
-            {t('all.sub', {
-              p: projects.length,
-              u: countOf('user'),
-              pl: countOf('plugin'),
-              b: countOf('built-in'),
-            })}
-            {dups.length > 0 &&
-              ' · ' +
-                t('all.dup', {
-                  n: dups.length,
-                  list: dups
-                    .slice(0, 3)
-                    .map((d) => `${d.name}: ${d.scopes.join(' / ')}`)
-                    .join('、'),
-                })}
+          {/*
+           * 見出しの副文は 1 行に収めて省略する(同名の組が多いと右端のセレクトを押し出して
+           * 2 段に崩れる)。全文は title で読める
+           */}
+          <span className="meta ellip hd-sub" title={sub + (dupAll ? ' · ' + dupAll : '')}>
+            {sub}
+            {dups.length > 0 && ' · ' + dupHead}
           </span>
           <span className="hd-r">
             {/* 種類はここでは select(在庫の全体を出すので絞り込みが 3 つ並ぶ。ホーム ③ はセグメント) */}

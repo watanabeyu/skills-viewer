@@ -1396,6 +1396,10 @@ select,
 .blk-hd .meta {
   white-space: nowrap;
 }
+/* 見出しの副文(件数の内訳など)。余った幅を取り、足りなければ省略して右端のボタン列を押し出さない */
+.blk-hd > .hd-sub {
+  flex: 1 1 0;
+}
 .nowrap {
   white-space: nowrap;
   overflow: hidden;
