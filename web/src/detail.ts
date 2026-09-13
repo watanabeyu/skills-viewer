@@ -92,12 +92,15 @@ export function hookParts(name: string): { event: string; matcher: string } {
 }
 
 /* 事実の帯のパス表示。cwd 配下なら相対にして短く(同名プロジェクトの区別は帯の出所チップが担う) */
-export function shortPath(p: string, cwd: string): string {
+export function shortPath(p: string, cwd: string, home = ''): string {
   if (!p) return '';
   const base = cwd.replace(/[\\/]+$/, '');
   if (base && (p.startsWith(base + '/') || p.startsWith(base + '\\'))) {
     return p.slice(base.length + 1);
   }
+  // cwd の外(user scope・自動メモリの置き場)は HOME を ~ に縮める。絶対パスの大半は HOME の繰り返し
+  const h = home.replace(/[\\/]+$/, '');
+  if (h && (p.startsWith(h + '/') || p.startsWith(h + '\\'))) return '~/' + p.slice(h.length + 1);
   return p;
 }
 

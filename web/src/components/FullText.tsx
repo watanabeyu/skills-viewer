@@ -59,12 +59,15 @@ export function FullTextBlock({
   raw,
   error,
   cwd,
+  home,
   selected,
 }: {
   it: FlatItem;
   raw: string | null;
   error: string;
   cwd: string;
+  /* HOME(SkillsData.home)。cwd の外のパスを ~/ に縮める */
+  home: string;
   /* 選んでいるプロジェクト(SkillsData.selected.id)。前版の取得も読み取り許可に乗る */
   selected: string;
 }) {
@@ -97,7 +100,7 @@ export function FullTextBlock({
       <div className="dblk-hd rule">
         <h2>{t('full.title')}</h2>
         <span className="meta mono ellip">
-          {t('full.updated', { path: shortPath(it.path, cwd), date: fmtDate(it.updatedAt) })}
+          {t('full.updated', { path: shortPath(it.path, cwd, home), date: fmtDate(it.updatedAt) })}
         </span>
         {prev?.available && raw !== null && (
           <button

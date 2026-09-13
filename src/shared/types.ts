@@ -519,6 +519,8 @@ export interface Worktree {
 export interface SkillsData {
   generatedAt: string;
   cwd: string;
+  /* HOME。web はここより下のパスを `~/…` に縮めて出す(cwd 配下は相対)。判定は server の os.homedir() */
+  home: string;
   /* この応答の ② を計算した対象。cwd は既定の選択にすぎない(計画 16) */
   selected: SelectedProject;
   /*

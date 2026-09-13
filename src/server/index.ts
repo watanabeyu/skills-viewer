@@ -21,7 +21,7 @@ import type {
   SkillsData,
   Worktree,
 } from '../shared/types';
-import { REGISTRY_FILE, listProjects, projectSectionId, scanSections } from './scan';
+import { HOME, REGISTRY_FILE, listProjects, projectSectionId, scanSections } from './scan';
 import { scanUsageByDir, scanMemoryUsage, encodeProjectPath, setMemoryRoots } from './usage';
 import {
   publicMemory,
@@ -592,6 +592,7 @@ export function collect(cwd: string, lang: Lang, projectId: string | null): Skil
   return {
     generatedAt: new Date().toISOString(),
     cwd,
+    home: HOME,
     selected,
     // 切替が本体の下へ寄せるための一覧。sections 自体は変えない(計画 16 判断 6)
     ...(worktrees.length ? { worktrees } : {}),

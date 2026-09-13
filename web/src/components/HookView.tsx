@@ -58,7 +58,7 @@ export function HookView({
         </FactCell>
         <FactCell label={t('hook.location')}>
           <span className="fv-path mono ellip" title={it.path}>
-            {shortPath(it.path, data.cwd)}
+            {shortPath(it.path, data.cwd, data.home)}
           </span>
           <span className="meta">{where}</span>
         </FactCell>

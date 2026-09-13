@@ -618,6 +618,7 @@ const sections = [projA, projB, userSec, pluginSec, builtinSec];
 const dataOf = (over: Partial<SkillsData> = {}): SkillsData => ({
   generatedAt: '',
   cwd: '/w/alpha',
+  home: '/Users/me',
   // サーバーが文脈を計算した対象(計画 16 判断 3)。既定は cwd を選んでいる状態
   selected: { id: projA.id, path: '/w/alpha', name: 'alpha', isCwd: true },
   sections,

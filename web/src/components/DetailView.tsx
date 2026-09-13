@@ -89,7 +89,14 @@ function SkillBody({
         />
       )}
       {it.hasMd && (
-        <FullTextBlock it={it} raw={raw} error={error} cwd={data.cwd} selected={selected} />
+        <FullTextBlock
+          it={it}
+          raw={raw}
+          error={error}
+          cwd={data.cwd}
+          home={data.home}
+          selected={selected}
+        />
       )}
     </>
   );

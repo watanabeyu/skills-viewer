@@ -118,7 +118,7 @@ export function FactsBand({
   const others = sameNameOthers(it, all);
   // files には SKILL.md 自身が含まれることもあるので重複を寄せる(command / agent は単独の .md)
   const files = [...new Set([...(it.hasMd ? [fileName(it.path)] : []), ...it.files])];
-  const dir = it.path ? shortPath(it.path.replace(/[\\/][^\\/]+$/, ''), data.cwd) : '';
+  const dir = it.path ? shortPath(it.path.replace(/[\\/][^\\/]+$/, ''), data.cwd, data.home) : '';
   const mark = historyOf(it, data.changes).mark;
   return (
     <div className="facts-wrap">

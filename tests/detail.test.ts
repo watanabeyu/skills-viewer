@@ -117,6 +117,12 @@ describe('hookParts / shortPath', () => {
 
   it('cwd 配下のパスは相対にし、外はそのまま', () => {
     expect(shortPath('/w/p/.claude/skills/x/SKILL.md', '/w/p')).toBe('.claude/skills/x/SKILL.md');
+    // cwd の外は HOME を ~ に。cwd 配下が優先(cwd が HOME の下でも相対のまま)
+    expect(shortPath('/Users/me/.claude/skills/x/SKILL.md', '/w/p', '/Users/me')).toBe(
+      '~/.claude/skills/x/SKILL.md',
+    );
+    expect(shortPath('/Users/me/w/p/a.md', '/Users/me/w/p', '/Users/me')).toBe('a.md');
+    expect(shortPath('/Users/meow/x.md', '/w/p', '/Users/me')).toBe('/Users/meow/x.md');
     expect(shortPath('/w/p/.claude/skills/x/SKILL.md', '/w/p/')).toBe('.claude/skills/x/SKILL.md');
     expect(shortPath('/home/u/.claude/skills/x/SKILL.md', '/w/p')).toBe(
       '/home/u/.claude/skills/x/SKILL.md',

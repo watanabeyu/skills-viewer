@@ -28,7 +28,7 @@ import {
   memoryResolver,
 } from '../util';
 import { allSignals, indexMatchOf, triageMeta } from '../memory';
-import { historyOf } from '../detail';
+import { historyOf, shortPath } from '../detail';
 import { esc, mdRender, splitFrontmatter } from '../md';
 import { memoryVerdictLabel, t } from '../i18n';
 import { CopyButton, InlineError, InlineNote } from './Inline';
@@ -190,7 +190,8 @@ function Facts({
   const h = historyOf(it, data.changes);
   const reads = it.useCount || 0;
   const writes = it.writeCount || 0;
-  const dir = it.path.replace(/[\\/][^\\/]+$/, '');
+  // 置き場は HOME 配下(~/.claude/projects/<slug>/memory)か autoMemoryDirectory。HOME は ~ に縮める
+  const dir = shortPath(it.path.replace(/[\\/][^\\/]+$/, ''), data.cwd, data.home);
   return (
     <div className="dblk facts">
       <FactCell label={t('memory.fact.reads')}>
