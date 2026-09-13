@@ -12,12 +12,20 @@ npx skills-viewer
 
 <!-- 相対パス参照: private リポジトリでも GitHub 上で表示でき、npmjs.com は repository フィールドを元に raw URL へ書き換えるため public 化後は npm でも表示される -->
 
-![Skills Viewer — grid view with per-scope grouping, usage stats and AI summaries](assets/screenshot.png)
+![Skills Viewer — home: what changed since you last looked, and everything installed across projects](assets/home.png)
+
+<!-- 3 枚は横並びのサムネイル(クリックで原寸)。縦に並べると README が画面 4 枚分伸びるため -->
+<p>
+  <a href="assets/skill.png"><img src="assets/skill.png" width="32%" alt="Skill page — summary, facts strip, how it triggers and what it touches"></a>
+  <a href="assets/flow.png"><img src="assets/flow.png" width="32%" alt="Flow diagram extracted from the skill body — steps, branches, delegations and a human gate"></a>
+  <a href="assets/memory.png"><img src="assets/memory.png" width="32%" alt="Memory page — index line, freshness and triage verdict, then the body"></a>
+</p>
+<sub>Skill page · flow diagram · memory page (click to enlarge). Ledger theme; Console is the dark one.</sub>
 
 ## Features
 
 - **Home answers three questions** — what changed since you last looked, what this session actually loads, and what is available in it. The list is no longer the first thing you see
-- **What's loaded, and what it costs** — the _session context_ block adds up everything Claude Code reads at the start of a session in the current project: the CLAUDE.md files, the `MEMORY.md` index (against the official 200-line / 25 KB limit) and every name + description (against the 1 % budget). System prompt, MCP tools and hook output are not visible to the viewer and are excluded
+- **What's loaded, and what it costs** — the _session context_ block adds up everything Claude Code reads at the start of a session in the current project: the CLAUDE.md files, the `MEMORY.md` index (against the official 200-line / 25 KB limit) and every name + description (against the skill-listing budget — Claude Code truncates the listing at about 2 % of the context window; the viewer estimates it and defers to `/doctor` for the actual cut). System prompt, MCP tools and hook output are not visible to the viewer and are excluded
 - **CLAUDE.md, all seven layers** — managed policy, `~/.claude/CLAUDE.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules/*.md` and ancestor files up to the git root, listed in load order with per-heading token cost and `@import` expanded in place. Layers that do not exist stay on the list as _none_, because what is **not** read is information too
 - **Two themes** — Console (dark, monospace labels, dense rows) and Ledger (light, rows and tables). Follows your OS setting by default and can be pinned in settings; the layout is fluid down to a 900 px minimum
 - **All scopes in one view** — user (`~/.claude/skills`), every project's `.claude/skills` / `.claude/commands`, installed plugins, and Claude Code built-ins. The current project opens first and the rest stay collapsed, so "what is in this repo" is not buried in what applies everywhere
