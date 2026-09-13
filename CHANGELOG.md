@@ -3,7 +3,7 @@
 All notable changes to this project are documented here, in English followed by Japanese.
 このファイルには主要な変更を記録します(英語の後に日本語を併記)。
 
-## [0.9.0] - 2026-09-13
+## [0.9.0] - 2026-09-14
 
 The UI is rebuilt around one question — _what does a session in this project actually load?_ — and the viewer stops writing files altogether.
 「このプロジェクトで始めるセッションは、実際に何を読み込むのか」を軸に UI を組み直し、viewer はファイルへの書き込みを一切やめました。
@@ -54,10 +54,10 @@ The UI is rebuilt around one question — _what does a session in this project a
 
 ### Security
 
-- **Reads are limited to the current directory and the project you selected** — `autoMemoryDirectory` and the CLAUDE.md group are resolved for those two only. A registered project you are not looking at cannot widen what the viewer reads, since `autoMemoryDirectory` arrives in a committed `.claude/settings.json`. The project is picked by id from the list the viewer enumerated, never by a path sent from the page.
-  **読み取りは cwd と選んだプロジェクトに限定** — `autoMemoryDirectory` と CLAUDE.md 群はその 2 つだけを解決します。見ていない登録済みプロジェクトが読み取り範囲を広げることはできません(`autoMemoryDirectory` は commit 済みの `.claude/settings.json` に載って clone されてくるため)。プロジェクトは viewer が列挙した一覧の id で選び、ページから送られたパスでは選びません。
-- **`@import` stays inside the project or `~/.claude`** — `@/etc/hosts` is reported as out of scope without being opened, dot-prefixed names and `.git` are out of reach, the boundary is re-checked after symlinks resolve, and there are caps of 4 levels, 4 MiB per file, 200 references per file and 500 per scan. The CLAUDE.md group is displayed but never sent to the `claude` CLI.
-  **`@import` はプロジェクトか `~/.claude` の中だけ** — `@/etc/hosts` は開かずに「範囲外」と報告し、ドット始まりの名前と `.git` は届かず、symlink 解決後に境界を再確認。4 段・1 ファイル 4 MiB・1 ファイル 200 件・1 走査 500 件の上限つき。CLAUDE.md 群は表示のみで `claude` CLI には送りません。
+- **Reads are limited to the current directory and the project you selected** — `autoMemoryDirectory` and the CLAUDE.md group are resolved for those two only. A registered project you are not looking at cannot widen what the viewer reads, since `autoMemoryDirectory` arrives in a committed `.claude/settings.json` (change tracking still hashes every registered project's CLAUDE.md group, without returning the contents). The project is picked by id from the list the viewer enumerated, never by a path sent from the page.
+  **読み取りは cwd と選んだプロジェクトに限定** — `autoMemoryDirectory` と CLAUDE.md 群はその 2 つだけを解決します。見ていない登録済みプロジェクトが読み取り範囲を広げることはできません(`autoMemoryDirectory` は commit 済みの `.claude/settings.json` に載って clone されてくるため。変化追跡が登録済み全プロジェクトの CLAUDE.md 群を読んで hash するのは従来どおりで、中身は返しません)。プロジェクトは viewer が列挙した一覧の id で選び、ページから送られたパスでは選びません。
+- **`@import` stays inside the project or `~/.claude`** — `@/etc/hosts` is reported as out of scope without being opened, dot-prefixed names and `.git` are out of reach, the boundary is re-checked after symlinks resolve, and there are caps of 4 levels, 4 MiB per file, 200 references per file and 500 per scan. The CLAUDE.md group is displayed but its bodies are never sent to the `claude` CLI (memory triage still sends the headings of the triaged project's `CLAUDE.md`, as before).
+  **`@import` はプロジェクトか `~/.claude` の中だけ** — `@/etc/hosts` は開かずに「範囲外」と報告し、ドット始まりの名前と `.git` は届かず、symlink 解決後に境界を再確認。4 段・1 ファイル 4 MiB・1 ファイル 200 件・1 走査 500 件の上限つき。CLAUDE.md 群は表示のみで、本文を `claude` CLI に送ることはありません(memory 棚卸しが対象プロジェクトの `CLAUDE.md` の見出しを送るのは従来どおり)。
 - Worktrees are enumerated from `.git/worktrees/*` with the back-link verified, so a stray `gitdir` file cannot point the viewer at an arbitrary directory. The mutation endpoints are unchanged (per-run token, non-localhost `Origin` rejected).
   worktree は `.git/worktrees/*` から逆リンクを確認して列挙するので、細工した `gitdir` で任意のディレクトリを指すことはできません。変更系 API は従来どおり(実行ごとのトークン、非 localhost の `Origin` を拒否)。
 

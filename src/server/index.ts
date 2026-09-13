@@ -517,7 +517,13 @@ export function changeInputs(
  * CLAUDE.md の追跡対象・① の絞り込みに配り回す(レビュー 1 周目: 同じ集合を 3 か所が別々に
  * 組み直していた。2 周目でメモに載せ、リクエストをまたいでも登録簿が変わるまで組み直さない)。
  */
-export function collect(cwd: string, lang: Lang, projectId: string | null): SkillsData {
+export function collect(
+  cwd: string,
+  lang: Lang,
+  projectId: string | null,
+  /* 誰が・いつの付け方(snapshot.ts computeChanges)。起動時サマリだけ prewarm */
+  authors: 'sync' | 'prewarm' = 'sync',
+): SkillsData {
   const { projects, worktrees, candidates } = projectSets(cwd);
   const selectedPath = resolveSelectedProject(cwd, projectId, candidates);
   const selected = selectedProject(cwd, selectedPath, worktrees);
@@ -603,7 +609,7 @@ export function collect(cwd: string, lang: Lang, projectId: string | null): Skil
     claudeMd,
     budget: descriptionBudget(sections, selectedId),
     context: sessionContext(sections, memory, claudeMd, selectedId),
-    changes: computeChanges(chIn.sections, chIn.memory, chIn.claudeMd),
+    changes: computeChanges(chIn.sections, chIn.memory, chIn.claudeMd, undefined, authors),
     ...(grp.groups ? { groups: grp.groups } : {}),
     ...(grp.stale ? { groupsStale: true } : {}),
     ...(memory.length ? { memory: publicMemory(memory) } : {}),
@@ -846,7 +852,8 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void 
 function printStartupSummary(cwd: string): void {
   try {
     // 起動時サマリは cwd の文脈(計画 16 判断 8)。CLI に選択という概念は無いので id は渡さない
-    const data = collect(cwd, serverLang, null);
+    // 件数しか出さないので誰が・いつは待たない: 先読みだけ始め、最初の /api/skills が控えを使う
+    const data = collect(cwd, serverLang, null, 'prewarm');
     const ch = data.changes;
     if (ch) {
       console.log(

@@ -11,7 +11,7 @@
  * 「pull したら何が増えて、誰がいつ入れたのか」が受け取る人の入口だから。
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -186,7 +186,9 @@ function rootOfDir(dir: string): string | null {
   return root;
 }
 
-function gitAuthor(fp: string): { author: string; authoredAt: string } | null {
+type AuthorInfo = { author: string; authoredAt: string } | null;
+
+function gitAuthor(fp: string): AuthorInfo {
   const root = rootOfDir(path.dirname(fp));
   if (!root) return null;
   const rel = path.relative(root, fp);
@@ -222,17 +224,109 @@ const GIT_AUTHOR_BUDGET_MS = 600;
  * removed を先に回す: 消えたファイルは mtime が残っておらず、git が唯一の情報源なので、
  * 上限に当たったときに真っ先に落ちるのが一番惜しい。
  */
-// export はテスト用(git を実プロセスとして起動するので execFileSync をモックして検証する。ロジックは変えていない)
-export function attachGitAuthors(changes: SnapshotChanges): void {
+/* gitAuthor の非同期版(起動時の先読み用)。argv・timeout・失敗時の扱いは同期版と同じ */
+function gitAuthorAsync(fp: string): Promise<AuthorInfo> {
+  const root = rootOfDir(path.dirname(fp));
+  if (!root) return Promise.resolve(null);
+  const rel = path.relative(root, fp);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['-C', root, 'log', '-1', '--format=%an%x09%aI', '--', rel.split(path.sep).join('/')],
+      { encoding: 'utf8', timeout: 3000 },
+      (err, out) => {
+        if (err) return resolve(null);
+        const [author, authoredAt] = String(out).trim().split('\t');
+        resolve(author && authoredAt ? { author, authoredAt } : null);
+      },
+    );
+  });
+}
+
+/*
+ * 起動時の先読み: 待受を止めずに、未読の変化項目の「誰が・いつ」を控えに入れておく。
+ * ブラウザが開いて最初の /api/skills が来る頃には埋まっているので、最初の応答が git を待たない
+ * (来る前に届いた分は同期側が上限の中で引く)。同時実行 4、件数は上限つき
+ */
+const PREWARM_MAX = 400;
+const PREWARM_CONCURRENCY = 4;
+/*
+ * 先読み中は同期側が git を起動しない(控えの分だけ付ける)。起動直後の 1 秒に来た要求が
+ * 先読みと同じファイルを二重に引いて、両方とも遅くなるのを避ける。その要求には author の
+ * 無い項目が混じるが、次の再読み込みで揃う(先読みは 100 件で 0.5 秒程度)
+ */
+let prewarming = false;
+export function prewarmGitAuthors(
+  changes: SnapshotChanges,
+  hashOf: (e: ChangeEntry) => string,
+): Promise<void> {
+  const todo = [...changes.removed, ...changes.added, ...changes.updated]
+    .filter((e) => e.source === 'project')
+    .filter((e) => !authorMemo.has(`${e.path}\0${hashOf(e)}`))
+    .slice(0, PREWARM_MAX);
+  let i = 0;
+  prewarming = true;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const e = todo[i++];
+      if (!e) return;
+      const memoKey = `${e.path}\0${hashOf(e)}`;
+      const info = await gitAuthorAsync(e.path);
+      if (authorMemo.size >= AUTHOR_MEMO_MAX) authorMemo.clear();
+      authorMemo.set(memoKey, { info, at: Date.now() });
+    }
+  };
+  return Promise.all(Array.from({ length: PREWARM_CONCURRENCY }, worker)).then(() => {
+    prewarming = false;
+  });
+}
+
+/*
+ * 引いた「誰が・いつ」の控え。鍵は path + 内容 hash なので、内容が変われば引き直し、変わらなければ
+ * git を呼ばない。差分は既読にするまで消えないので、これが無いと **リクエストごとに** 上限まで git が
+ * 走る(v0.9.0 のリリース判定で実測: 未読 98 件の環境で 1 リクエストあたり git 25 回・700 ms。
+ * 16 で CLAUDE.md の追跡を全プロジェクトに広げて件数が増えた)。既読(ackChanges)で捨てる。
+ * null(未コミット・非 git)は短命にする: コミットした直後に author が出ないまま固まらないように
+ */
+const authorMemo = new Map<string, { info: AuthorInfo; at: number }>();
+const AUTHOR_MEMO_MAX = 4000;
+const AUTHOR_NULL_TTL_MS = 60_000;
+
+/* export はテスト用(メモが test をまたいで残らないように) */
+export function clearGitAuthorMemo(): void {
+  authorMemo.clear();
+}
+
+// export はテスト用(git を実プロセスとして起動するので execFileSync をモックして検証する)
+export function attachGitAuthors(
+  changes: SnapshotChanges,
+  /* 項目の内容 hash(メモの鍵)。省略時は path だけで控える */
+  hashOf: (e: ChangeEntry) => string = () => '',
+): void {
   rootMemo.clear();
   const started = Date.now();
   let calls = 0;
+  let exhausted = prewarming;
   for (const list of [changes.removed, changes.added, changes.updated]) {
     for (const e of list) {
       if (e.source !== 'project') continue;
-      if (calls >= GIT_AUTHOR_MAX || Date.now() - started > GIT_AUTHOR_BUDGET_MS) return;
-      calls++;
-      const info = gitAuthor(e.path);
+      const memoKey = `${e.path}\0${hashOf(e)}`;
+      const hit = authorMemo.get(memoKey);
+      let info: AuthorInfo | undefined =
+        hit && (hit.info || Date.now() - hit.at < AUTHOR_NULL_TTL_MS) ? hit.info : undefined;
+      if (info === undefined) {
+        // 上限に当たっても控えのある項目には付け続ける(return で打ち切らない)
+        if (exhausted) continue;
+        if (calls >= GIT_AUTHOR_MAX || Date.now() - started > GIT_AUTHOR_BUDGET_MS) {
+          exhausted = true;
+          continue;
+        }
+        calls++;
+        info = gitAuthor(e.path);
+        if (authorMemo.size >= AUTHOR_MEMO_MAX) authorMemo.clear();
+        authorMemo.set(memoKey, { info, at: Date.now() });
+      }
       if (!info) continue;
       e.author = info.author;
       e.authoredAt = info.authoredAt;
@@ -249,6 +343,11 @@ export function computeChanges(
   memory: MemorySection[] = [],
   claudeMd: ClaudeMdRef[] = [],
   file: string = SNAPSHOT_FILE,
+  /*
+   * 誰が・いつの付け方。sync = この場で引く(応答に載せる)。prewarm = 付けずに先読みだけ始める
+   * (起動時サマリ用。件数しか出さないので待つ理由が無く、待受前に git を回すと起動が遅れる)
+   */
+  authors: 'sync' | 'prewarm' = 'sync',
 ): SnapshotChanges | null {
   const cur = buildSnapshot(sections, memory, claudeMd);
   const prev = loadSnapshot(file);
@@ -258,7 +357,11 @@ export function computeChanges(
   }
   const d = diffSnapshot(prev.entries, cur);
   if (!d.added.length && !d.updated.length && !d.removed.length) return null;
-  attachGitAuthors(d);
+  // メモの鍵は現在の hash(消えた項目は前回の hash)。内容が同じ限り git は 1 回しか走らない
+  const hashOf = (e: ChangeEntry): string =>
+    (cur[key(e.kind, e.path)] ?? prev.entries[key(e.kind, e.path)])?.hash ?? '';
+  if (authors === 'prewarm') void prewarmGitAuthors(d, hashOf);
+  else attachGitAuthors(d, hashOf);
   // 「いつ既読にしてから」の起点。この追加より前に保存された基準には無いので省略する
   return prev.ackedAt ? { ...d, since: prev.ackedAt } : d;
 }
@@ -271,4 +374,6 @@ export function ackChanges(
   file: string = SNAPSHOT_FILE,
 ): void {
   saveSnapshot(buildSnapshot(sections, memory, claudeMd), file);
+  // 既読で差分が消えるので控えも要らない(次に差分が出るのは内容が変わったとき = 鍵も変わる)
+  authorMemo.clear();
 }
