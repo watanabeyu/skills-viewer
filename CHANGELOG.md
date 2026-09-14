@@ -3,6 +3,64 @@
 All notable changes to this project are documented here, in English followed by Japanese.
 このファイルには主要な変更を記録します(英語の後に日本語を併記)。
 
+## [0.9.0] - 2026-09-14
+
+The UI is rebuilt around one question — _what does a session in this project actually load?_ — and the viewer stops writing files altogether.
+「このプロジェクトで始めるセッションは、実際に何を読み込むのか」を軸に UI を組み直し、viewer はファイルへの書き込みを一切やめました。
+
+### Added
+
+- **Home answers three questions** — _Changed_ (what was added / updated / removed since you last marked it read, in diff grammar, now covering auto memory and CLAUDE.md too, with author and date from `git log`), _Session context_ (everything Claude Code reads at the start of a session: the CLAUDE.md files, the `MEMORY.md` index against its 200-line / 25 KB limit, and every name + description against the skill-listing budget) and _Available_ (what a session started in this project can use, grouped by source with the project first and user / plugin / built-in collapsed).
+  **ホームが 3 つの問いに答える** — 「増えた・変わった」(既読にしてから増えた・変わった・消えたものを diff 文法で。自動メモリと CLAUDE.md も追跡し、誰が・いつを `git log` から引く)、「セッションの文脈」(セッション開始時に読まれるもの全部: CLAUDE.md 群、`MEMORY.md` 索引と 200 行 / 25KB の上限、name + description の合計と一覧の予算)、「使えるもの」(このプロジェクトで始めたセッションが使えるもの。出所で区切り、このプロジェクトを先頭に開き、user / plugin / built-in は畳む)。
+- **CLAUDE.md screen** (`/claude-md/:id`) — the seven layers Claude Code loads (managed policy, `~/.claude/CLAUDE.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules/*.md`, ancestor files up to the git root) in load order with per-file token cost, `@import` expanded in place (up to 4 levels, the official limit) and layers that do not exist kept on the list as _none_. The body is shown in full.
+  **CLAUDE.md 画面**(`/claude-md/:id`)— Claude Code が読む 7 段(管理ポリシー・`~/.claude/CLAUDE.md`・`CLAUDE.md`・`.claude/CLAUDE.md`・`CLAUDE.local.md`・`.claude/rules/*.md`・git ルートまでの親ディレクトリ)を読まれる順に、ファイルごとのトークンと `@import` の展開位置(公式上限の 4 段まで)つきで。無い段は「なし」の行として残し、本文は畳まず全文を表示します。
+- **Two themes** — Console (dark, monospace labels, dense rows) and Ledger (light, rows and tables). Follows the OS setting by default, can be pinned in settings; the layout is fluid down to a 900 px minimum and both themes share a 1240 px content width.
+  **2 つのテーマ** — Console(暗・等幅ラベル・密な行)と Ledger(明・行と表)。既定は OS 設定に追従し、設定で固定できます。最小幅 900 まで可変で、本文の最大幅は両テーマとも 1240。
+- **Project switcher and worktrees** — the header switches between registered projects (main checkouts only, with a worktree count; the current directory is marked _current_). Open a project and pick a linked worktree from the selector at the top of the page to see what a session started there would load — skills from the worktree's own `.claude`, memory shared with the main checkout, as Claude Code does. The selection lives in `?project=`, so links work from any directory.
+  **プロジェクト切替と worktree** — ヘッダーで登録済みプロジェクトを切り替えます(並ぶのは本体だけ。worktree の件数を添え、cwd には「現在」の印)。プロジェクトを開くとページ上部の select で linked worktree を選べ、そこで始めたセッションが読むもの(skill は worktree 自身の `.claude`、メモリは本体と共有 — Claude Code と同じ)が分かります。選択は `?project=` に載るので、別のディレクトリで開いても同じ画面になります。
+- **One page per item** — a single column read top to bottom: summary, a strip of facts (usage sparkline, when it was added and by whom, same-name definitions, bundled files), how it triggers (lint, measured origins, AI diagnosis with its paste-ready instruction), what it touches (delegates, `allowed-tools`, writes and outbound calls), the flow diagram (with the heading tree as a fallback before it is generated), then the full text. Hooks get a short page of their own.
+  **1 項目 1 ページ** — 上から順に読む 1 列: 要約 → 事実の帯(使用のスパークライン・追加された時期と人・同名の定義・同梱ファイル)→ 発動(lint・実測の起点・AI 診断と指示文)→ 触るもの(委譲先・`allowed-tools`・書き込みと外部呼び出し)→ フロー図(未生成なら見出しツリーを代替表示)→ 全文。hook は短い専用ページ。
+- **Memory list and detail, redesigned** — one row per memory with its index cost, body cost, Read count, freshness signal and triage verdict; triage runs from the list and each detail page opens with the verdict (freshness → destination → reason → signals → instruction) before the body. The `/memory/triage/:project` screen is folded into these.
+  **memory 一覧と詳細を再設計** — 1 行に索引コスト・本文コスト・Read 回数・鮮度シグナル・棚卸しの判定。棚卸しは一覧から実行し、詳細は本文より先に判定(鮮度 → 行き先 → 理由 → シグナル → 指示文)を出します。`/memory/triage/:project` はここに統合。
+- **Lint: listing cap** — a description (plus `when_to_use`) longer than 1,536 characters is flagged, since Claude Code cuts the rest from the skill listing.
+  **lint: 一覧の上限** — description(+ `when_to_use`)が 1,536 文字を超えると指摘します(Claude Code はそこから先を一覧から切るため)。
+
+### Changed
+
+- **The viewer never writes** — inline editing, applying an AI-suggested description, copy and delete are gone. Every change is handed over as a paste-ready instruction for Claude Code (with the target's full path, the check-first steps and the verification steps at the end) or via _Open in editor_, which is now offered for every file the viewer may read, `settings.json` included.
+  **viewer は書かない** — インライン編集・AI 改善案の適用・コピー・削除を廃止。変更はすべて Claude Code 向けの指示文(対象のフルパス、事前確認、末尾の確認手順つき)か「エディタで開く」に渡します。「エディタで開く」は `settings.json` を含め、読める全ファイルで使えます。
+- **Skill-listing budget recalibrated** — the limit follows Claude Code's current behavior (a character budget of about 2 % of the context window, estimated as 4,000 tokens for a 200k window) instead of the old 1 % / 2,000. The warning now reads _likely truncated_ and points to `/doctor` for the actual cut.
+  **一覧の予算を再校正** — 上限を Claude Code の現行仕様(文字数でコンテキスト窓の 2%。200k 窓なら 4,000 tok の概算)に合わせ、旧来の 1% / 2,000 をやめました。警告は「切られる見込み」とし、確定は `/doctor` に案内します。
+- **Markdown rendering** — SKILL.md, CLAUDE.md and memory bodies are rendered with markdown-it (tables, nested lists, all heading levels, emphasis) with a readable measure and rhythm. Raw HTML is escaped, images are not loaded, and only `http(s)` links become links.
+  **markdown の描画** — SKILL.md・CLAUDE.md・memory 本文を markdown-it で描画(表・入れ子リスト・全段の見出し・強調)し、行長と行間を読める値に。生 HTML はエスケープ、画像は読み込まず、リンクにするのは `http(s)` だけです。
+- **Paths** — anything under your home directory is shown as `~/…`; paths inside the current project stay relative.
+  **パス表示** — ホーム配下は `~/…` に縮め、cwd 配下は相対のまま。
+- **Purpose grouping** and the by-source / flat orderings moved to the _all projects_ view; the home list is per-project.
+  **用途別グループ**とソース別 / 1 列の並びは「すべてのプロジェクト」に移り、ホームの一覧はプロジェクト単位になりました。
+- **`@import` rule matches the official one** — references inside backticks and code fences are ignored; a bare `@README` outside them is followed, like Claude Code does.
+  **`@import` の規則を公式に合わせた** — バッククォートとコードフェンスの中は無視し、その外の `@README` は Claude Code と同じく参照として扱います。
+
+### Removed
+
+- In-browser editing, AI-suggestion apply, copy, delete, the width toggle, the standalone memory-triage screen and the AI menu. The v0.8 editor's one-generation backups under `~/.cache/skills-viewer/backups/` are deleted on startup (the viewer prints a line when it does).
+  ブラウザ内編集・AI 改善案の適用・コピー・削除・幅切替・独立した memory 棚卸し画面・AI メニュー。v0.8 のエディタが作っていた `~/.cache/skills-viewer/backups/` の一世代バックアップは起動時に削除します(削除したときは 1 行表示)。
+
+### Fixed
+
+- Changes were tracked per current directory only; now CLAUDE.md and memory changes are tracked for every registered project, and the change list keeps its baseline while you switch projects.
+  変化の追跡が cwd だけでした。CLAUDE.md とメモリの変化を登録済みの全プロジェクトで追跡し、プロジェクトを切り替えても既読の基準を保ちます。
+- A description that merely echoes the name, a `~~~` fence, a truncated `@import` scan and a project with no items each had a silent or misleading display; each now says what happened.
+  名前の繰り返しだけの description、`~~~` のフェンス、件数上限で打ち切った `@import` の走査、アイテムの無いプロジェクトが、黙って崩れるか誤解を招く表示でした。それぞれ何が起きたかを言うようにしました。
+
+### Security
+
+- **Reads are limited to the current directory and the project you selected** — `autoMemoryDirectory` and the CLAUDE.md group are resolved for those two only. A registered project you are not looking at cannot widen what the viewer reads, since `autoMemoryDirectory` arrives in a committed `.claude/settings.json` (change tracking still hashes every registered project's CLAUDE.md group, without returning the contents). The project is picked by id from the list the viewer enumerated, never by a path sent from the page.
+  **読み取りは cwd と選んだプロジェクトに限定** — `autoMemoryDirectory` と CLAUDE.md 群はその 2 つだけを解決します。見ていない登録済みプロジェクトが読み取り範囲を広げることはできません(`autoMemoryDirectory` は commit 済みの `.claude/settings.json` に載って clone されてくるため。変化追跡が登録済み全プロジェクトの CLAUDE.md 群を読んで hash するのは従来どおりで、中身は返しません)。プロジェクトは viewer が列挙した一覧の id で選び、ページから送られたパスでは選びません。
+- **`@import` stays inside the project or `~/.claude`** — `@/etc/hosts` is reported as out of scope without being opened, dot-prefixed names and `.git` are out of reach, the boundary is re-checked after symlinks resolve, and there are caps of 4 levels, 4 MiB per file, 200 references per file and 500 per scan. The CLAUDE.md group is displayed but its bodies are never sent to the `claude` CLI (memory triage still sends the headings of the triaged project's `CLAUDE.md`, as before).
+  **`@import` はプロジェクトか `~/.claude` の中だけ** — `@/etc/hosts` は開かずに「範囲外」と報告し、ドット始まりの名前と `.git` は届かず、symlink 解決後に境界を再確認。4 段・1 ファイル 4 MiB・1 ファイル 200 件・1 走査 500 件の上限つき。CLAUDE.md 群は表示のみで、本文を `claude` CLI に送ることはありません(memory 棚卸しが対象プロジェクトの `CLAUDE.md` の見出しを送るのは従来どおり)。
+- Worktrees are enumerated from `.git/worktrees/*` with the back-link verified, so a stray `gitdir` file cannot point the viewer at an arbitrary directory. The mutation endpoints are unchanged (per-run token, non-localhost `Origin` rejected).
+  worktree は `.git/worktrees/*` から逆リンクを確認して列挙するので、細工した `gitdir` で任意のディレクトリを指すことはできません。変更系 API は従来どおり(実行ごとのトークン、非 localhost の `Origin` を拒否)。
+
 ## [0.8.1] - 2026-08-27
 
 Memory triage now refuses to amplify a bad guess — paths and destinations come from the server, not the model.

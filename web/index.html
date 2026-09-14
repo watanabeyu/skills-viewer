@@ -4,6 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Skills Viewer — Claude Code</title>
+    <!-- バンドル読み込み前に data-theme を確定させる(白 → 暗のちらつき防止)。キーと解決規則は src/settings.ts と同じ -->
+    <script>
+      (function () {
+        var t = 'ledger';
+        try {
+          var p = localStorage.getItem('csb-theme');
+          if (p === 'console' || p === 'ledger') t = p;
+          else if (matchMedia('(prefers-color-scheme: dark)').matches) t = 'console';
+        } catch (e) {
+          /* localStorage が使えない環境でも落とさない */
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

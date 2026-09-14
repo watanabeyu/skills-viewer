@@ -1,6 +1,10 @@
 /* server / web 共通の型定義(単一ソース) */
 
-export type ItemKind = 'skill' | 'command' | 'agent' | 'hook' | 'memory';
+/*
+ * 一覧に並ぶアイテムの種類。claude-md は SkillItem としては現れず、差分追跡(ChangeEntry)
+ * だけで使う(CLAUDE.md は「呼び出す」ものではなく、毎セッション注入される文書のため)。
+ */
+export type ItemKind = 'skill' | 'command' | 'agent' | 'hook' | 'memory' | 'claude-md';
 export type Source = 'built-in' | 'user' | 'project' | 'plugin';
 /*
  * 自動メモリ(~/.claude/projects/<encoded>/memory/*.md)の frontmatter type。
@@ -15,7 +19,12 @@ export type AiModel = 'haiku' | 'sonnet' | 'opus';
 export type RelationType = 'invokes' | 'delegates' | 'called-by' | 'references';
 /* description の静的リント警告(言語非依存キー。表示ラベルは web 側の辞書で解決する) */
 export type LintCode =
-  'no-description' | 'short-description' | 'long-description' | 'no-trigger' | 'name-echo';
+  | 'no-description'
+  | 'short-description'
+  | 'long-description'
+  | 'listing-truncated'
+  | 'no-trigger'
+  | 'name-echo';
 
 export interface SkillRelation {
   name: string;
@@ -156,6 +165,9 @@ export interface MemoryTriage {
   demotedBy?: 'orphan' | 'no-signal' | 'shared-env';
   /* AI 出力が採用できなかった件(verdict が不正・指示文欠落・返答なし)。UI は再診断を促す */
   error?: 'invalid-output';
+  /* 生成日時(ISO)とモデル。詳細の診断見出しに「いつ・どのモデルが」を出すためだけの記録(判定には使わない) */
+  generatedAt?: string;
+  model?: AiModel;
 }
 
 /*
@@ -219,6 +231,13 @@ export interface SkillItem {
   lint?: LintCode[];
   /* frontmatter の category(手動グループ指定。AI 分類より優先され、AI 分類の対象外) */
   category?: string;
+  /*
+   * frontmatter の disable-model-invocation: true。モデルからは呼べず、description が
+   * 一覧に載らないので毎セッションのコストに数えない(公式仕様)。
+   */
+  hidden?: boolean;
+  /* frontmatter の allowed-tools(カンマ区切り)。「何に触るか」を AI 無しで出す一次情報 */
+  allowedTools?: string[];
   /* AI 分類による所属グループ(SkillsData.groups の id)。name 単位の割当 */
   aiGroup?: string;
   /* name + description が毎セッション注入される分のトークン概算(hook は対象外) */
@@ -319,6 +338,28 @@ export interface ChangeEntry {
   name: string;
   kind: ItemKind;
   path: string;
+  /* 出所。誰が・いつ(git)を引く対象は project のものだけ */
+  source: Source;
+  /* このファイルを最後に触ったコミットの author 名。project 出所かつ git 管理下のときだけ */
+  author?: string;
+  /* 同コミットの author date(ISO 8601)。author とセットで付く */
+  authoredAt?: string;
+}
+
+/*
+ * GET /api/diff の応答。available: false は「前版を出せない」(非 git / 履歴なし /
+ * user scope)を意味し、web は diff ボタン自体を出さない。エラーではないので 200 で返す。
+ */
+export interface DiffResponse {
+  available: boolean;
+  /* HEAD 時点の内容(available: true のときだけ)。現在の内容は /api/file 側で取る */
+  previous?: string;
+  /*
+   * not-git = git 管理下でない / no-history = HEAD に無い(新規ファイル等)
+   * user-scope = ~/.claude 配下(全プロジェクト共有で git 履歴を持たない)
+   * out-of-scope = 読み取りの境界の外 / too-large = 上限を超えて取得できなかった
+   */
+  reason?: 'not-git' | 'no-history' | 'user-scope' | 'out-of-scope' | 'too-large';
 }
 
 /* 前回起動からの差分。hook(識別子が不安定)と built-in(実ファイル無し)は対象外 */
@@ -326,6 +367,11 @@ export interface SnapshotChanges {
   added: ChangeEntry[];
   updated: ChangeEntry[];
   removed: ChangeEntry[];
+  /*
+   * この差分の起点(前回「既読にする」を押した時刻。ISO 8601)。
+   * ホーム ① の「いつ既読にしてから」に使う。起点を持たない古い基準では省略される。
+   */
+  since?: string;
 }
 
 export interface Section {
@@ -336,22 +382,160 @@ export interface Section {
   isCurrent?: boolean;
   /* セクションの実体パス(built-in は '') */
   note: string;
-  manage?: boolean;
   items: SkillItem[];
 }
 
-export interface CopyTarget {
-  label: string;
-  sub: string;
+/* ---- CLAUDE.md 群(毎セッションの最初に読まれる指示) ---- */
+
+/* 注入順の段。managed は OS が配る管理ポリシー、project-dot は <project>/.claude/CLAUDE.md */
+export type ClaudeMdLayerKind =
+  'managed' | 'user' | 'project' | 'project-dot' | 'local' | 'rules' | 'parent';
+
+/* @import の展開結果。skipped が付いているものは中身を数えていない */
+export interface ClaudeMdImport {
+  /* 記述されていた参照(@ の後ろ) */
+  ref: string;
   path: string;
+  exists: boolean;
+  /* 1 が直接の @import。公式仕様の上限は 4 段 */
+  depth: number;
+  tokens: number;
+  /*
+   * cycle = 展開の経路に自分が居る(本当の循環)
+   * duplicate = 経路は違うが既に数えた(ダイヤモンド参照。二重計上を避けただけ)
+   * depth = 4 段を超えた / too-large = 読み取り上限を超えた
+   * out-of-scope = 読み取りの境界(プロジェクト配下・~/.claude 配下)の外
+   */
+  skipped?: 'cycle' | 'duplicate' | 'depth' | 'too-large' | 'out-of-scope';
+}
+
+export interface ClaudeMdFile {
+  path: string;
+  /* 本文だけの概算 */
+  ownTokens: number;
+  /* 本文 + 展開した @import の合計 */
+  tokens: number;
+  updatedAt: string;
+  headings: { text: string; tokens: number }[];
+  imports: ClaudeMdImport[];
+  /* rules 段で frontmatter に paths: があり、常時ではなく遅延ロードされるもの */
+  lazy?: boolean;
+  /* 本文を返さない段(管理ポリシー)。存在と概算だけ扱う */
+  bodyWithheld?: boolean;
+  /*
+   * 4 MiB を超えるため読まなかった。Claude Code 自身も読み飛ばすので毎回のコストは 0 だが、
+   * 「無い」とは違う。段から消すと差分追跡で「消えた」と誤って出る
+   */
+  tooLarge?: boolean;
+}
+
+export interface ClaudeMdLayer {
+  kind: ClaudeMdLayerKind;
+  /* どこを見たか。ファイルが無い段でも「なし」の行を出せるように残す */
+  label: string;
+  files: ClaudeMdFile[];
+  /* この段が毎セッション持ち込む概算(lazy は除く) */
+  tokens: number;
+}
+
+export interface ClaudeMdScan {
+  /* 注入順。無い段も files: [] で残る */
+  layers: ClaudeMdLayer[];
+  tokens: number;
+  /*
+   * @import の件数の上限(1 ファイル 200 件 / 走査全体 500 件)で展開を止めたときだけ立つ。
+   * 打ち切った先の @import は要素自体を作らないので、tokens が理由不明のまま小さく出る。
+   * 「常時コストを正しく出す」のが売りの画面が黙って数字を削らないよう、印を返して画面に出す。
+   * どちらの上限かは分けない ── 利用者が取る行動(参照を減らす)は同じで、上限の値は README にある。
+   */
+  importsTruncated?: true;
+}
+
+/*
+ * 毎セッションの最初に読まれるものの内訳。viewer から見えないもの
+ * (システムプロンプト・MCP・hook の出力)は含まない。
+ */
+export interface SessionContext {
+  claudeMd: { tok: number };
+  /* MEMORY.md の索引。上限は公式仕様(先頭 200 行 or 25KB の先に達した方) */
+  memoryIndex: { tok: number; lines: number; limitLines: number; limitBytes: number };
+  /* skill / command / agent の name + description。hidden は注入されないので除く */
+  descriptions: { tok: number; count: number; hiddenCount: number; limit: number };
+}
+
+/*
+ * description の一覧の上限の目安。Claude Code の予算は文字数でコンテキスト窓の 2%(CHANGELOG 2.1.32)。
+ * viewer は 200k 窓 × 2% = 4,000 tok の概算で比べる(index.ts の DESCRIPTION_BUDGET)。
+ * settings.json に相当するキーは無い(2026-09-08 確認)ので source は default 固定。
+ */
+export interface DescriptionBudget {
+  used: number;
+  limit: number;
+  source: 'default';
+}
+
+/*
+ * サーバーが「どのプロジェクトの文脈(claudeMd / context / budget / memory の isCurrent)を
+ * 計算したか」。?project=<id> の id はサーバー側で登録済みプロジェクトと照合され、
+ * 未知の id や省略時は cwd に落ちるので、web は要求ではなく結果のこれを見る(計画 16 判断 3)。
+ */
+export interface SelectedProject {
+  /* Section.id と同じ規則(projectSectionId)。0 件で Section が無いプロジェクトでも値は付く */
+  id: string;
+  path: string;
+  /* path の basename(表示用) */
+  name: string;
+  /* 起動ディレクトリそのものか。既定の選択がこれ */
+  isCwd: boolean;
+  /*
+   * 選んだものが linked worktree のとき、その本体(メインワークツリー)のパス。
+   * skill は worktree 自身の .claude、メモリは本体に収束する ── なぜそうなるかを
+   * 画面に 1 行で言うために持つ(計画 16 Phase C)。worktree でなければ付かない。
+   */
+  mainPath?: string;
+  /* mainPath の id(Section.id と同じ規則)。本体へ戻る選択肢を web が組めるように付ける */
+  mainId?: string;
+}
+
+/* 本体から列挙した linked worktree(計画 16 判断 5)。登録の有無に依らず切替の候補になる */
+export interface Worktree {
+  /* Section.id と同じ規則。id は必ずサーバーが作る(web でパスから組み立てない = 判断 2) */
+  id: string;
+  path: string;
+  /* path の basename(表示用) */
+  name: string;
+  /* チェックアウト中のブランチ。detached HEAD では付かない */
+  branch?: string;
+  /* この worktree の本体(メインワークツリー)のパス。切替はこの本体の 1 行に畳む */
+  mainPath: string;
+  /*
+   * mainPath の id(Section.id と同じ規則)。本体は定義 0 件・未登録で Section を持たないことが
+   * あり、そのとき web には本体を指す id が無かった ── 逆引きした本体も候補に入れたので、
+   * 「本体の行 / 本体の選択肢」を選べるように id もサーバーが作る(判断 2)。
+   */
+  mainId: string;
 }
 
 export interface SkillsData {
   generatedAt: string;
   cwd: string;
+  /* HOME。web はここより下のパスを `~/…` に縮めて出す(cwd 配下は相対)。判定は server の os.homedir() */
+  home: string;
+  /* この応答の ② を計算した対象。cwd は既定の選択にすぎない(計画 16) */
+  selected: SelectedProject;
+  /*
+   * 登録済みプロジェクトの本体から列挙した linked worktree。1 件も無ければ省略。
+   * sections は変えない(worktree の Section はそのまま)。切替が path で突き合わせて
+   * 本体の 1 行に畳むので、同じプロジェクトが 2 か所に出ることはない(計画 16 判断 6)。
+   */
+  worktrees?: Worktree[];
   sections: Section[];
-  targets: CopyTarget[];
   aiStale: number;
+  /*
+   * claude CLI が使えるか(サーバー起動時に `claude --version` を 1 回実行した結果)。
+   * false なら web は AI 生成のボタンを無効化する。起動後に CLI を入れても再起動まで変わらない。
+   */
+  aiAvailable: boolean;
   /* トランスクリプトが1件でもあるか。false なら「未使用」表示は無意味なので出さない */
   usageAvailable: boolean;
   /* 前回起動からの差分。初回起動・差分なし・既読済みは null */
@@ -362,6 +546,12 @@ export interface SkillsData {
   groupsStale?: boolean;
   /* 自動メモリ(読み取り専用)。1 件も無ければ省略 */
   memory?: MemorySection[];
+  /* CLAUDE.md 群(注入順。無い段も残る) */
+  claudeMd: ClaudeMdScan;
+  /* description の常時コストと予算 */
+  budget: DescriptionBudget;
+  /* 毎セッションの最初に読まれるものの内訳 */
+  context: SessionContext;
 }
 
 export interface SummaryJob {

@@ -726,7 +726,7 @@ describe('autoMemoryDirOf (autoMemoryDirectory 設定の解決)', () => {
 
   /*
    * 計画 13 Phase D round2: 解決値は正規化し、過大な指定は無効にする。
-   * この値は読み取り許可(manage.ts の前方一致)と usage の許可ルートに使われるので、
+   * この値は読み取り許可(read-access.ts の前方一致)と usage の許可ルートに使われるので、
    * ルートや HOME 自身を指されると許可がホーム配下(実質全体)へ広がってしまう。
    */
   it.each([

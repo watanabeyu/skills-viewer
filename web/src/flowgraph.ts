@@ -14,7 +14,8 @@ import type { SkillFlow, SkillFlowStep } from '../../src/shared/types';
 export type FlowNode =
   | { kind: 'start'; id: string }
   | { kind: 'proc'; id: string; step: SkillFlowStep; index: number }
-  | { kind: 'dec'; id: string; when: string }
+  /* human = 承認を待つ判断(design-system 0.6: dec に人のアイコンを添える) */
+  | { kind: 'dec'; id: string; when: string; human: boolean }
   | { kind: 'end'; id: string; label: string };
 
 /* 右レーンの終端カプセル(中断) */
@@ -44,7 +45,10 @@ export interface FlowGraph {
 export interface FlowLabels {
   yes: string;
   no: string;
+  /* 本線末尾の終端(「終了」) */
   done: string;
+  /* 右レーンの終端(「中断」)。分岐に then が無いときの既定 */
+  abort: string;
 }
 
 /* when を判断ノードの問いに整形(すでに疑問形ならそのまま) */
@@ -58,24 +62,27 @@ export function buildFlowGraph(flow: SkillFlow, labels: FlowLabels): FlowGraph {
     rows.push({ node: { kind: 'proc', id: `p${i}`, step, index: i } });
     step.branches.forEach((b, j) => {
       const decId = `d${i}-${j}`;
-      const row: FlowRow = { node: { kind: 'dec', id: decId, when: question(b.when) } };
+      const row: FlowRow = {
+        node: { kind: 'dec', id: decId, when: question(b.when), human: step.gate === 'human' },
+      };
       if (b.to !== undefined && b.to >= 1 && b.to <= flow.steps.length) {
         edges.push({
           from: decId,
           to: `p${b.to - 1}`,
           type: 'loop',
-          label: '↩ ' + (b.then || labels.yes),
+          // 条件と動作(「はい · 直す」)。動作が無ければ条件だけ
+          label: labels.yes + (b.then ? ' · ' + b.then : ''),
         });
       } else {
         const termId = `t${i}-${j}`;
-        row.term = { id: termId, label: '⛔ ' + (b.then || b.when) };
+        row.term = { id: termId, label: b.then || labels.abort };
         edges.push({ from: decId, to: termId, type: 'exit', label: labels.yes });
       }
       rows.push(row);
     });
   });
 
-  rows.push({ node: { kind: 'end', id: 'end', label: '✓ ' + labels.done } });
+  rows.push({ node: { kind: 'end', id: 'end', label: labels.done } });
 
   // 本線(seq): start → p0 → (判断列) → … → end。判断ノードから下へ抜ける辺は「いいえ」
   for (let k = 0; k + 1 < rows.length; k++) {

@@ -62,6 +62,17 @@ describe('lintItem', () => {
     ).not.toContain('no-trigger');
   });
 
+  it('description + when_to_use が 1,536 文字を超えると listing-truncated(一覧で切られる)', () => {
+    const long = 'use when '.repeat(200); // 1,800 文字
+    expect(lintItem({ description: long }, 'x', 'skill')).toContain('listing-truncated');
+    // 単独では収まっていても when_to_use を足すと超える
+    const desc = 'use when the user asks. '.repeat(40); // 960 文字
+    expect(lintItem({ description: desc }, 'x', 'skill')).not.toContain('listing-truncated');
+    expect(
+      lintItem({ description: desc, when_to_use: 'trigger '.repeat(80) }, 'x', 'skill'),
+    ).toContain('listing-truncated');
+  });
+
   it('name の繰り返しだけの description は name-echo', () => {
     expect(lintItem({ description: 'Pr Create' }, 'pr-create', 'command')).toContain('name-echo');
   });

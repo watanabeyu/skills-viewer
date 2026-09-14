@@ -30,6 +30,12 @@ const TRIGGER_RE =
 
 const SHORT_LIMIT = 30;
 const LONG_LIMIT = 1024;
+/*
+ * Claude Code が skill の一覧に載せる 1 件の上限(description + when_to_use の合計文字数。
+ * CHANGELOG 2.1.105「raised the listing cap from 250 to 1,536 characters」)。
+ * これを超えた分はモデルに見えないので、末尾に置いた発動条件は効かない
+ */
+const LISTING_LIMIT = 1536;
 
 /*
  * meta: frontmatter のパース結果。name はフォールバック解決後の表示名。
@@ -42,6 +48,8 @@ export function lintItem(meta: Record<string, string>, name: string, kind: ItemK
   if (!desc) return ['no-description'];
   if (desc.length < SHORT_LIMIT) warnings.push('short-description');
   if (desc.length > LONG_LIMIT) warnings.push('long-description');
+  if (desc.length + (meta.when_to_use || '').trim().length > LISTING_LIMIT)
+    warnings.push('listing-truncated');
   // 記号を除いて比較し、name をほぼ繰り返しただけの description を検出
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9ぁ-んァ-ン一-龠]/g, '');
   if (norm(desc) === norm(name)) warnings.push('name-echo');

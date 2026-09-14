@@ -27,11 +27,32 @@ export interface MemoryScanOptions {
 }
 
 /*
+ * `.git` 側の管理ファイル(worktree の `.git` ファイル・`.git/worktrees/<name>/{gitdir,HEAD}`)を
+ * 読む上限。中身はパス 1 行 / ref 1 行で数十バイトしかない。ここを無制限に読むと、リポジトリを
+ * clone しただけで巨大なファイルを毎リクエスト読まされる(claude-md.ts の MAX_FILE_BYTES と同じ趣旨)。
+ */
+const MAX_GIT_META_BYTES = 4 * 1024;
+
+/* 管理ファイルを 1 つ読む。無い・大きすぎる・読めないは null(その 1 件だけスキップさせる) */
+function readGitMeta(fp: string): string | null {
+  try {
+    if (fs.statSync(fp).size > MAX_GIT_META_BYTES) return null;
+    return fs.readFileSync(fp, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/*
  * dir が属する git のメインワークツリーのルート。git コマンドは呼ばず .git だけを見る。
  *   - `<dir>/.git` がディレクトリ = 通常のリポジトリなので dir 自身
  *   - `<dir>/.git` がファイル = worktree。中身の `gitdir: <p>` が
  *     `…/.git/worktrees/<name>` ならその 3 つ上がメインワークツリーのルート
  * それ以外(submodule の gitdir、.git が無い、読めない)は null。
+ *
+ * `.git` ファイルの読み取りは readGitMeta に寄せる(レビュー 2 周目): この関数は worktreesOf の
+ * 逆リンク検証から「clone に含まれるファイル」に対して呼ばれる ── 外から届く側なので、
+ * 上限なしの readFileSync だと巨大な `.git` ファイルを毎リクエスト丸ごと読むことになる。
  */
 export function mainWorktreeOf(dir: string): string | null {
   const gitPath = path.join(dir, '.git');
@@ -42,12 +63,8 @@ export function mainWorktreeOf(dir: string): string | null {
     return null; // git 管理下でないディレクトリ
   }
   if (stat.isDirectory()) return path.resolve(dir);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(gitPath, 'utf8');
-  } catch {
-    return null;
-  }
+  const raw = readGitMeta(gitPath);
+  if (raw === null) return null;
   const m = raw.match(/^gitdir:\s*(.+)$/m);
   if (!m) return null;
   const gitdir = m[1].trim();
@@ -55,6 +72,107 @@ export function mainWorktreeOf(dir: string): string | null {
   if (!/(?:^|[/\\])\.git[/\\]worktrees[/\\][^/\\]+[/\\]?$/.test(gitdir)) return null;
   // git は通常フルパスを書くが、相対で書かれていても壊れないよう dir を起点に解決する
   return path.resolve(dir, gitdir, '..', '..', '..');
+}
+
+/* 本体(メインワークツリー)に紐づく linked worktree 1 件。web と共有しないので型はここに置く */
+export interface WorktreeEntry {
+  /* worktree のルート(gitdir に書かれた `.git` の親) */
+  path: string;
+  /* path の basename(表示用) */
+  name: string;
+  /* チェックアウト中のブランチ。detached HEAD では付かない */
+  branch?: string;
+}
+
+/*
+ * mainDir に紐づく linked worktree の一覧。mainWorktreeOf と同じ流儀で git コマンドは呼ばず、
+ * `<mainDir>/.git/worktrees/<name>/` のファイルだけを読む(git が書いた事実そのもの)。
+ *   - gitdir: worktree 側の `.git` のパス。その親ディレクトリが worktree のルート
+ *   - HEAD:   `ref: refs/heads/<branch>`(detached なら sha なので branch は付けない)
+ * 消した worktree の残骸(prune 前は gitdir が残る)は実体が無いので落とす。
+ * 読めない・形が違うものはその 1 件だけスキップする(一覧全体を落とさない)。
+ *
+ * gitdir の中身は検証してから採る(レビュー 1 周目): 中身は「clone したリポジトリに入っていた
+ * ファイル」なので、任意のディレクトリを指す gitdir を書けば、そこが worktree として列挙され
+ * 切替の候補(= 読み取り許可の母集団)に入ってしまう。git が実際に作った worktree なら
+ * 逆リンク(`<root>/.git` がこの mainDir の管理ディレクトリを指す)が必ずあるので、
+ * mainWorktreeOf(root) が mainDir に戻ることを確かめる。
+ * branch も同じ理由で先頭 1 行・128 文字に切る(HEAD は 1 行のファイルで、長い ref 名は無い)。
+ */
+export function worktreesOf(mainDir: string): WorktreeEntry[] {
+  const base = path.join(mainDir, '.git', 'worktrees');
+  let dirs: fs.Dirent[];
+  try {
+    dirs = fs.readdirSync(base, { withFileTypes: true }).filter((d) => d.isDirectory());
+  } catch {
+    return []; // worktree が 1 つも無ければこのディレクトリ自体が無い(通常の状態)
+  }
+  const mainAbs = path.resolve(mainDir);
+  const out: WorktreeEntry[] = [];
+  for (const d of dirs) {
+    const admin = path.join(base, d.name);
+    const gitdir = readGitMeta(path.join(admin, 'gitdir'))?.trim();
+    if (!gitdir) continue; // gitdir が無い / 読めない / 大きすぎる管理ディレクトリ
+    /*
+     * git は通常フルパスを書くが、`git worktree add --relative-paths`(git 2.48+)や
+     * worktree.useRelativePaths=true では相対パスを書く。git はそれを**この管理ディレクトリ**
+     * (`<main>/.git/worktrees/<name>`)を起点に解決するので、こちらも同じ起点で解決する
+     * ── 本体(mainDir)起点だと解決先が存在せず、相対で書かれた worktree が丸ごと落ちる。
+     */
+    const root = path.dirname(path.resolve(admin, gitdir));
+    try {
+      if (!fs.statSync(root).isDirectory()) continue;
+    } catch {
+      continue; // ディレクトリごと消された worktree(git worktree prune 前の残骸)
+    }
+    // 逆リンクの検証。realDir も見るのは /tmp → /private/var のような symlink 経由でも同じ答えにするため
+    const back = mainWorktreeOf(root);
+    if (!back || !(samePath(back, mainAbs) || samePath(realDir(back), realDir(mainAbs)))) continue;
+    let branch: string | undefined;
+    const head = readGitMeta(path.join(admin, 'HEAD'));
+    const m = head
+      ?.split('\n', 1)[0]
+      .trim()
+      .match(/^ref:\s*refs\/heads\/(.+)$/);
+    if (m) branch = m[1].trim().slice(0, 128);
+    out.push({ path: root, name: path.basename(root), ...(branch ? { branch } : {}) });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/*
+ * 登録済みプロジェクト群から辿れる linked worktree(重複なし。計画 16 判断 5)。
+ * 登録簿にはリポジトリのサブディレクトリや worktree 自身も入るので、まず repoRootsOf で本体へ
+ * 畳んでから本体ごとに 1 回だけ列挙する(同じ本体を登録の数だけ readdir しない)。
+ * 列挙の起点は登録簿に閉じており、各 worktree は worktreesOf が逆リンクを検証して採るので、
+ * 「gitdir に書いた任意のパス」がここから増えることはない(レビュー 1 周目で検証を足した。
+ * それまでは gitdir の指す先を無検証で root にしていた)。
+ */
+export function worktreesForProjects(projects: string[]): (WorktreeEntry & { mainPath: string })[] {
+  const out: (WorktreeEntry & { mainPath: string })[] = [];
+  const seen = new Set<string>();
+  for (const main of repoRootsOf(projects)) {
+    for (const wt of worktreesOf(main)) {
+      if (seen.has(wt.path)) continue; // 同じ worktree に 2 つの本体から辿り着くことは無いが念のため
+      seen.add(wt.path);
+      out.push({ ...wt, mainPath: main });
+    }
+  }
+  return out;
+}
+
+/*
+ * 登録済みプロジェクト群を本体(メインワークツリー)へ畳んだ集合(重複なし・昇順)。
+ * worktree 列挙の起点であり、index.ts の候補メモが `<main>/.git/worktrees` の版を見る
+ * 対象でもあるので、「どこを本体と見るか」の規則を 2 か所に書かないためここに置く。
+ */
+export function repoRootsOf(projects: string[]): string[] {
+  const mains = new Set<string>();
+  for (const p of projects) {
+    const main = repoRootOf(p);
+    if (main) mains.add(main);
+  }
+  return [...mains].sort();
 }
 
 /*
@@ -75,6 +193,24 @@ export function repoRootOf(dir: string): string | null {
     if (fs.existsSync(path.join(cur, '.git'))) return cur;
     const parent = path.dirname(cur);
     if (parent === cur) return null; // ファイルシステムのルートまで .git が無かった
+    cur = parent;
+  }
+}
+
+/*
+ * fp を実際に含んでいる git のワークツリーのルート(= `.git` を持つ最も近い祖先)。
+ * repoRootOf との違いは linked worktree の扱いで、こちらは worktree 自身を返す。
+ * `git -C <ここ> log/show` は「そのファイルが今いるワークツリーの HEAD」を見るので、
+ * ファイルの履歴を引く用途(差分追跡の誰が・いつ / GET /api/diff)ではこちらが正しい
+ * (repoRootOf はメインワークツリーへ寄せるため、worktree 内のファイルが root の外に出る)。
+ * 見つからなければ null(git 管理外)。
+ */
+export function worktreeRootOf(dir: string): string | null {
+  let cur = path.resolve(dir);
+  for (;;) {
+    if (fs.existsSync(path.join(cur, '.git'))) return cur;
+    const parent = path.dirname(cur);
+    if (parent === cur) return null;
     cur = parent;
   }
 }
@@ -108,7 +244,7 @@ function readAutoMemoryDirectory(fp: string, home: string): string | null {
   // 相対パスは公式仕様上無効
   const raw = v.startsWith('~/') ? path.join(home, v.slice(2)) : path.isAbsolute(v) ? v : null;
   if (!raw) return null;
-  // `..` や末尾のスラッシュを畳む: この値は読み取り許可(manage.ts の前方一致)と usage の
+  // `..` や末尾のスラッシュを畳む: この値は読み取り許可(read-access.ts の前方一致)と usage の
   // 許可ルートにそのまま使われるので、表記の揺れが判定の揺れになる
   const dir = path.resolve(raw);
   /*
@@ -158,7 +294,7 @@ export function autoMemoryDirOf(cwd: string, home: string = HOME): AutoMemoryDir
 
 /*
  * 解決済みの autoMemoryDirectory。解決関数はこの 1 本に集約する: スキャン(scanMemory)・
- * 読み取り許可(manage.ts)・棚卸し(memory-triage.ts)が別々に解決すると、
+ * 読み取り許可(read-access.ts)・棚卸し(memory-triage.ts)が別々に解決すると、
  * 「一覧には出るが本文は開けない」のような食い違いが生まれるため。
  * settings 3〜5 ファイルの読み取りは cwd ごとに 1 回だけにする(スキャンのたびには読まない)。
  * 起動中に settings を書き換えた場合は再起動が要る。

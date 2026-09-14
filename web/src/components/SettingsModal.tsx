@@ -2,41 +2,61 @@ import { useState } from 'react';
 import {
   AI_MODELS,
   EDITOR_PRESETS,
+  THEME_PREFS,
+  applyTheme,
   loadAiModel,
   loadEditorSetting,
+  loadThemePref,
+  resolveTheme,
   saveAiModel,
   saveEditorSetting,
+  saveThemePref,
   type AiModel,
   type EditorSetting,
+  type ThemePref,
 } from '../settings';
 import { t, type Lang, type MsgKey } from '../i18n';
+import { InlineError } from './Inline';
 
 const LANGS: [Lang, string][] = [
   ['ja', '日本語'],
   ['en', 'English'],
 ];
 
+/* テーマの選択肢のラベルと 1 行説明(キーは i18n の settings.theme* に揃える) */
+const THEME_LABEL: Record<ThemePref, [MsgKey, MsgKey]> = {
+  auto: ['settings.themeAuto', 'settings.themeAutoNote'],
+  console: ['settings.themeConsole', 'settings.themeConsoleNote'],
+  ledger: ['settings.themeLedger', 'settings.themeLedgerNote'],
+};
+
 export function SettingsModal({
-  width,
-  onChangeWidth,
   lang,
   onChangeLang,
   onClose,
 }: {
-  width: string;
-  onChangeWidth: (w: string) => void;
   lang: Lang;
   onChangeLang: (l: Lang) => void;
   onClose: () => void;
 }) {
   const [setting, setSetting] = useState<EditorSetting>(loadEditorSetting);
   const [aiModel, setAiModel] = useState<AiModel>(loadAiModel);
+  const [themePref, setThemePref] = useState<ThemePref>(loadThemePref);
+  /* 入力検証の結果はモーダル内(該当の入力欄の下)に出す。モーダルの上に alert を重ねない */
+  const [error, setError] = useState('');
+  /* 言語と同じく即時反映(保存を待たない)。見た目の切替は選んだ瞬間に確かめたいため */
+  const changeTheme = (p: ThemePref) => {
+    setThemePref(p);
+    saveThemePref(p);
+    applyTheme(resolveTheme(p));
+  };
 
   const save = () => {
     if (setting.mode === 'custom' && !(setting.template || '').includes('{path}')) {
-      alert(t('settings.customNeedsPath'));
+      setError(t('settings.customNeedsPath'));
       return;
     }
+    setError('');
     saveEditorSetting(setting);
     saveAiModel(aiModel);
     onClose();
@@ -67,28 +87,20 @@ export function SettingsModal({
           ))}
         </div>
 
-        <div className="set-label">{t('settings.width')}</div>
+        <div className="set-label">{t('settings.theme')}</div>
         <div className="set-options">
-          <label className="set-option">
-            <input
-              type="radio"
-              name="width"
-              checked={width === 'full'}
-              onChange={() => onChangeWidth('full')}
-            />
-            <span>{t('settings.widthFull')}</span>
-            <span className="set-scheme">{t('settings.widthFullNote')}</span>
-          </label>
-          <label className="set-option">
-            <input
-              type="radio"
-              name="width"
-              checked={width === 'fixed'}
-              onChange={() => onChangeWidth('fixed')}
-            />
-            <span>{t('settings.widthFixed')}</span>
-            <span className="set-scheme">{t('settings.widthFixedNote')}</span>
-          </label>
+          {THEME_PREFS.map((p) => (
+            <label key={p} className="set-option">
+              <input
+                type="radio"
+                name="theme"
+                checked={themePref === p}
+                onChange={() => changeTheme(p)}
+              />
+              <span>{t(THEME_LABEL[p][0])}</span>
+              <span className="set-scheme">{t(THEME_LABEL[p][1])}</span>
+            </label>
+          ))}
         </div>
 
         <div className="set-label">{t('settings.aiModel')}</div>
@@ -132,12 +144,15 @@ export function SettingsModal({
             <span>{t('settings.customScheme')}</span>
           </label>
           {setting.mode === 'custom' && (
-            <input
-              className="set-input"
-              placeholder="myeditor://open?file={path}"
-              value={setting.template || ''}
-              onChange={(e) => setSetting({ mode: 'custom', template: e.target.value })}
-            />
+            <>
+              <input
+                className="set-input"
+                placeholder="myeditor://open?file={path}"
+                value={setting.template || ''}
+                onChange={(e) => setSetting({ mode: 'custom', template: e.target.value })}
+              />
+              <InlineError msg={error} />
+            </>
           )}
           <label className="set-option">
             <input

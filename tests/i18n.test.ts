@@ -10,13 +10,13 @@ afterEach(() => setLang('en'));
 describe('t (辞書引き + 置換)', () => {
   it('言語切替で訳が変わる', () => {
     expect(getLang()).toBe('en');
-    expect(t('detail.delete')).toBe('Delete');
+    expect(t('detail.openEditor')).toBe('Open in editor');
     setLang('ja');
-    expect(t('detail.delete')).toBe('削除');
+    expect(t('detail.openEditor')).toBe('エディタで開く');
   });
 
   it('{name} プレースホルダを置換する', () => {
-    expect(t('app.count', { shown: 3, total: 10 })).toBe('3 / 10 items');
+    expect(t('chg.count', { n: 3 })).toBe('3 changes');
   });
 
   it('params に無いプレースホルダはそのまま残す(設定例文の {path} など)', () => {
@@ -42,8 +42,8 @@ describe('辞書のプレースホルダ整合', () => {
 describe('apiErrorMessage (エラーコード → 表示文言)', () => {
   it('既知コードは detail 付きで翻訳する', () => {
     setLang('ja');
-    expect(apiErrorMessage({ error: 'not-managed-path', detail: '/x' }, 400)).toBe(
-      '管理対象外のパスです: /x',
+    expect(apiErrorMessage({ error: 'not-readable-path', detail: '/x' }, 400)).toBe(
+      '読み取り対象外のパスです: /x',
     );
   });
 
@@ -101,5 +101,71 @@ describe('usageTitle (共有ストアの合算注記)', () => {
   it('共有ストアでなければ base をそのまま / base も無ければ undefined(title="" を吐かない)', () => {
     expect(usageTitle(sec(), 'base')).toBe('base');
     expect(usageTitle(sec())).toBeUndefined();
+  });
+});
+
+/*
+ * 使われなくなったキーの番犬。型(Record<MsgKey, string>)は「不足」を捕まえるが「余り」は捕まえない。
+ * v0.9.0 で画面を組み替えた際に、退役した画面のキーが en / ja 両方に 34 件残っていた
+ * (レビュー 2026-09-09 の指摘)。辞書が 2 倍に膨らむので機械的に落とす。
+ */
+describe('辞書に未使用キーが残っていない', () => {
+  /*
+   * 動的に組み立てるキーの接頭辞。ここに属するキーはコード中にリテラルで現れない。
+   * 免除は接頭辞ごと丸ごとなので、実際にリテラルで書かれている家系(view. / kind.)は
+   * 入れない ── 入れるとその家系の未使用キーを永久に見逃す(レビュー 2 周目の指摘)。
+   */
+  const DYNAMIC_PREFIXES = [
+    'lint.',
+    'apiError.',
+    'invocation.',
+    'rel.',
+    'memory.state.',
+    'memory.word.',
+    'memory.signal.',
+    'memory.type.',
+    'memory.triage.verdict.',
+    'memory.triage.est',
+    'hook.ev.',
+    'cmd.kind.',
+    'settings.aiModelNote.',
+  ];
+
+  const webSources = async (): Promise<string> => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const root = path.join(import.meta.dirname, '..', 'web', 'src');
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fp = path.join(dir, e.name);
+        if (e.isDirectory()) walk(fp);
+        else if (/\.tsx?$/.test(e.name) && e.name !== 'i18n.ts') files.push(fp);
+      }
+    };
+    walk(root);
+    return files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  };
+
+  it('en のキーはすべてコード中で参照されている', async () => {
+    const blob = await webSources();
+    // 引用符 3 種で見る(t("x") や t(`x`) で書かれた参照を「未使用」と誤判定しないため)
+    const referenced = (k: string) =>
+      blob.includes(`'${k}'`) || blob.includes(`"${k}"`) || blob.includes(`\`${k}\``);
+    const unused = (Object.keys(DICTS.en) as MsgKey[]).filter(
+      (k) => !referenced(k) && !DYNAMIC_PREFIXES.some((p) => k.startsWith(p)),
+    );
+    expect(unused).toEqual([]);
+  });
+
+  /*
+   * 「余り」だけでなく「不足」も見る。動的に組み立てるキーは参照が文字列として現れないので、
+   * 辞書から落ちても番犬は鳴かず、画面にキー名がそのまま出る
+   * (`cmd.skipped.*` を足すつもりで免除だけ書き、文言を落としていた実例がある)。
+   */
+  it('動的接頭辞にはキーが 1 件以上ある(免除だけが残っていない)', () => {
+    const keys = Object.keys(DICTS.en);
+    const dead = DYNAMIC_PREFIXES.filter((p) => !keys.some((k) => k.startsWith(p)));
+    expect(dead).toEqual([]);
   });
 });

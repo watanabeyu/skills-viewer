@@ -1,0 +1,413 @@
+/*
+ * ホーム(計画 15 Phase D / README 6.2)。利用者の 3 つの問いに上から順に答える 3 ブロック:
+ *   ① 増えた・変わった(ChangesBlock)
+ *   ② セッションの文脈: 合計 + 3 内訳(CLAUDE.md 群 / MEMORY.md 索引 / skill の description)
+ *   ③ 使えるもの: このプロジェクト + user + plugin + built-in。このプロジェクトだけ開く
+ * 寸法は docs/design/0.9.0/{Ledger,Console}Home.dc.html の実測(style.css のトークン)。
+ *
+ * 3 ブロックの対象は「選んだプロジェクト」(SkillsData.selected)。② もサーバーがその起点で
+ * 計算した値なので、cwd 以外を選んでいても出す(計画 16 判断 1)。cwd は「現在」の印で区別する。
+ * 内訳を持たないのは「すべてのプロジェクト」だけで、そのときは App が GridView を出す。
+ */
+
+import { useState } from 'react';
+import type { Section, SkillsData, Source } from '../api';
+import {
+  changeMarkOf,
+  claudeMdCounts,
+  contextRows,
+  contextTotal,
+  emptyReasonKey,
+  fileName,
+  flatten,
+  KIND_FILTERS,
+  kindMatches,
+  matches,
+  scopeLabelOf,
+  sectionTokens,
+  sessionSections,
+  sortItems,
+  usageMatches,
+  worktreeOptions,
+  type KindFilter,
+  type SortKey,
+  type UseFilter,
+} from '../util';
+import { t } from '../i18n';
+import { ChangesBlock } from './ChangesBlock';
+import { InlineError, InlineNote } from './Inline';
+import { SearchBox, Seg, SortSelect, UseSelect } from './ListTools';
+import { Bar, GroupHead, ItemRow, TableHead, useNarrow } from './Rows';
+
+/*
+ * 全件要約(summarize-all)の操作。v0.8 のヘッダー「✦ AI」メニューにあったものを ③ の見出し行へ移した
+ * (計画 15 Phase F)。ジョブの状態(ラベル・実行中・失敗)は App が持ち、ここは表示と起動だけ。
+ */
+export interface SummaryAction {
+  label: string;
+  busy: boolean;
+  error: string;
+  onRun: () => void;
+}
+
+/* ---- ② セッションの文脈 ---- */
+
+function ContextBlock({
+  data,
+  project,
+  onOpenMemoryList,
+  onOpenClaudeMd,
+}: {
+  data: SkillsData;
+  project: Section | null;
+  onOpenMemoryList: () => void;
+  onOpenClaudeMd: (path?: string) => void;
+}) {
+  const narrow = useNarrow();
+  const rows = contextRows(data, project);
+  const total = contextTotal(rows);
+  const c = data.context;
+  const md = claudeMdCounts(data.claudeMd);
+  const layer = (k: string, n: number) =>
+    n ? t('ctx.layer', { k, n }) : t('ctx.layerNone', { k });
+  const label: Record<string, { name: string; note: string; limit: string; title?: string }> = {
+    claudeMd: {
+      name: t('ctx.claudeMd'),
+      note: [layer('user', md.user), layer('project', md.project), layer('rules', md.rules)].join(
+        ' · ',
+      ),
+      limit: t('ctx.noLimit'),
+      title: t('ctx.claudeMdTitle'),
+    },
+    memory: {
+      name: t('ctx.memory'),
+      note: t('ctx.memoryNote', { n: c.memoryIndex.lines }),
+      limit: t(narrow ? 'ctx.memoryLimitShort' : 'ctx.memoryLimit', {
+        lines: c.memoryIndex.limitLines,
+        kb: Math.round(c.memoryIndex.limitBytes / 1024),
+      }),
+      title: t('ctx.memoryTitle'),
+    },
+    descriptions: {
+      name: t('ctx.desc'),
+      note: c.descriptions.hiddenCount
+        ? t('ctx.descNote', { n: c.descriptions.count, h: c.descriptions.hiddenCount })
+        : t('ctx.descNoteNoHidden', { n: c.descriptions.count }),
+      limit: t('ctx.descLimit', { n: c.descriptions.limit.toLocaleString() }),
+    },
+  };
+  return (
+    <section className="blk">
+      <div className="blk-hd">
+        <h2>{t('ctx.title')}</h2>
+        <span className="meta">{t('ctx.sub')}</span>
+        <span className="meta hd-r">{t('ctx.excl')}</span>
+      </div>
+      <div className="blk-body ctx">
+        <div className="ctx-total">
+          <span className="k">{t('ctx.total')}</span>
+          <span className="v num">{total.toLocaleString()}</span>
+          <span className="u meta num">{t('ctx.unit')}</span>
+        </div>
+        <div className="ctx-table">
+          <div className="ctx-row thead">
+            <span>{t('ctx.colSource')}</span>
+            <span className="num">{t('ctx.colTok')}</span>
+            <span className="num">{t('ctx.colLimit')}</span>
+            <span />
+          </div>
+          {rows.map((r) => {
+            const l = label[r.key];
+            // memory は一覧、CLAUDE.md は階層と本文の画面(E2)へ。description の未使用・lint 一覧は F 以降
+            const open =
+              r.key === 'memory'
+                ? onOpenMemoryList
+                : r.key === 'claudeMd'
+                  ? () => onOpenClaudeMd()
+                  : undefined;
+            const Tag = open ? 'button' : 'div';
+            return (
+              <Tag
+                key={r.key}
+                className={'ctx-row' + (r.over ? ' over' : '')}
+                onClick={open}
+                title={l.title}
+              >
+                <span className="cell">
+                  <span className="nm">
+                    {l.name}
+                    {r.over && <span className="warn-inline">{t('ctx.over')}</span>}
+                    {/*
+                     * @import を件数の上限で打ち切った回は、この行の tok と上の合計がその分だけ
+                     * 小さい。理由は CLAUDE.md 画面の帯に 1 行で出るので、ここは印だけ置く
+                     */}
+                    {r.key === 'claudeMd' && data.claudeMd.importsTruncated && (
+                      <span className="warn-inline">{t('ctx.claudeMdTruncated')}</span>
+                    )}
+                  </span>
+                  <span className="meta">
+                    {l.note}
+                    {/* 上限は目安(文字数予算をトークンに直したもの)。本当に切られたかは Claude Code 側でしか分からない */}
+                    {r.key === 'descriptions' && r.over && ' · ' + t('ctx.descDoctor')}
+                  </span>
+                </span>
+                <span className={'num' + (r.over ? ' warn' : '')}>{r.tok.toLocaleString()}</span>
+                <span className="num meta">{l.limit}</span>
+                <span className="c-bar">
+                  {r.ratio !== null && <Bar ratio={r.ratio} over={r.over} />}
+                </span>
+              </Tag>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ---- ③ 使えるもの ---- */
+
+export function ActiveBlock({
+  data,
+  project,
+  q,
+  sort,
+  kind,
+  use,
+  summary,
+  onOpen,
+  setParam,
+}: {
+  data: SkillsData;
+  project: Section | null;
+  q: string;
+  sort: SortKey;
+  kind: KindFilter;
+  use: UseFilter;
+  summary: SummaryAction;
+  onOpen: (key: string) => void;
+  setParam: (key: string, value: string | null) => void;
+}) {
+  const narrow = useNarrow();
+  const usage = data.usageAvailable;
+  const sections = sessionSections(data.sections, project);
+  const total = sections.reduce((n, s) => n + s.items.length, 0);
+  // このプロジェクトだけ開き、user / plugin / built-in は畳んだ見出し(件数・tok)だけ(1.2)
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const isOpen = (id: string) => open[id] ?? (project ? id === project.id : false);
+  const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !isOpen(id) }));
+  const pass = (it: Section['items'][number]) =>
+    kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, usage);
+  const groupName = (s: Section) => (s.source === 'project' ? t('act.thisProject') : s.source);
+  const groupMeta = (s: Section) => {
+    const n = t('act.count', { n: s.items.length });
+    if (s.source === 'project') return `${s.projectName} · ${n}`;
+    if (s.source === 'user') return `~/.claude · ${n} · ${t('act.everyProject')}`;
+    return n;
+  };
+  return (
+    <section className="blk">
+      <div className="blk-hd">
+        <h2>{t('act.title')}</h2>
+        <span className="pill">{t('act.count', { n: total })}</span>
+        <span className="meta">{t(narrow ? 'act.subShort' : 'act.sub')}</span>
+        {!usage && <span className="meta">· {t('act.noUsage')}</span>}
+        {/*
+         * 選んでいるものが worktree なら、その組み合わせ(skill は worktree 自身の .claude、
+         * メモリは本体と共有)の理由をここで 1 行言う(計画 16 Phase C)
+         */}
+        {data.selected.mainPath && (
+          <span className="meta">
+            · {t('proj.worktreeOf', { name: fileName(data.selected.mainPath) })}
+          </span>
+        )}
+        <span className="hd-r">
+          {/* 全件要約(claude CLI)。不在なら押せない理由を脇に出す。失敗も alert でなくここに 1 行 */}
+          <InlineError msg={summary.error} />
+          {!data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
+          <button
+            className="btn quiet"
+            disabled={summary.busy || !data.aiAvailable}
+            onClick={summary.onRun}
+            title={t('ai.buttonTitle')}
+          >
+            ✦ {summary.label}
+          </button>
+          <UseSelect use={use} usage={usage} setParam={setParam} />
+          <SortSelect sort={sort} setParam={setParam} />
+        </span>
+      </div>
+      <div className="blk-tools">
+        <SearchBox q={q} setParam={setParam} />
+        {/* 種類はここでは押し分けの見えるセグメントで出す(絞り込みが 1 つしか無いので select に畳まない) */}
+        <Seg
+          options={KIND_FILTERS.map((k): [KindFilter, string] => [
+            k,
+            k === 'all' ? t('kind.all') : k,
+          ])}
+          value={kind}
+          onPick={(k) => setParam('kind', k === 'all' ? null : k)}
+        />
+      </div>
+      <div className="blk-body list">
+        {/* 選んだプロジェクトにアイテムが無いときも「このプロジェクト · 0 件」の見出しは残す */}
+        {!project && (
+          <div className="grp">
+            {/*
+             * 0 件の理由は見出しの 2 行目(note)に出す。切替で別プロジェクトを選んだときも
+             * 「なぜ空か」がその場で分かるように。worktree は理由が違う(.claude/ が git 未追跡なら
+             * 本体にあってもここには無い)ので言い分ける(計画 16 Phase C)。
+             * 表の行にすると長文が 1 本ぶら下がって見えるので行にはしない。フルパスは切替のラベルと
+             * meta に既にあるので名前だけ
+             */}
+            <GroupHead
+              open={false}
+              onToggle={() => {}}
+              source="project"
+              name={t('act.thisProject')}
+              meta={`${data.selected.name} · ${t('act.count', { n: 0 })} · ${t('proj.empty')}`}
+              tok={0}
+              note={t(emptyReasonKey(data.selected), { name: data.selected.name })}
+            />
+          </div>
+        )}
+        {sections.map((s) => {
+          const items = isOpen(s.id) ? sortItems(flatten([s]).filter(pass), sort) : [];
+          return (
+            <div key={s.id} className="grp">
+              <GroupHead
+                open={isOpen(s.id)}
+                onToggle={() => toggle(s.id)}
+                source={s.source}
+                name={groupName(s)}
+                meta={groupMeta(s)}
+                tok={sectionTokens(s)}
+              />
+              {isOpen(s.id) &&
+                (items.length ? (
+                  <>
+                    <TableHead usage={usage} />
+                    {items.map((it) => (
+                      <ItemRow
+                        key={it.key}
+                        it={it}
+                        source={s.source as Source}
+                        scopeLabel={scopeLabelOf(s)}
+                        mark={changeMarkOf(it, data.changes)}
+                        usage={usage}
+                        onOpen={onOpen}
+                      />
+                    ))}
+                  </>
+                ) : (
+                  <div className="trow-empty meta">{t('act.empty')}</div>
+                ))}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ---- worktree の切替(ホーム上部の 1 行) ---- */
+
+/*
+ * 選んでいる本体に linked worktree があるときだけ出す 1 行(計画 16 Phase C の改訂)。
+ * ヘッダーの切替は本体だけを並べるので、「本体 / どの worktree」はここで選ぶ ──
+ * 実データでは 1 つの本体に 40 本近くぶら下がり、切替に混ぜると一覧として機能しないため。
+ * 選択の経路はヘッダーと同じ ?project=(App の onSelectProject)。
+ */
+function WorktreeSelect({
+  data,
+  onSelectProject,
+}: {
+  data: SkillsData;
+  onSelectProject: (id: string | null) => void;
+}) {
+  const options = worktreeOptions(data);
+  if (options.length === 0) return null;
+  /* いま選んでいるもの。cwd は URL に書かないので id は null で表す(選択肢の id と同じ規則) */
+  const cur = data.selected.isCwd ? null : data.selected.id;
+  // value は id そのものでなく並びの位置(null = cwd を空文字と区別せずに扱えるため)
+  const at = options.findIndex((o) => o.id === cur);
+  return (
+    <div className="home-wt">
+      <select
+        className="sel"
+        value={String(at)}
+        onChange={(e) => onSelectProject(options[Number(e.target.value)].id)}
+      >
+        {options.map((o, i) => (
+          <option key={String(o.id)} value={String(i)}>
+            {t('proj.worktreeSelect', { v: o.label })}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+export function Home({
+  data,
+  project,
+  q,
+  sort,
+  kind,
+  use,
+  onOpen,
+  onOpenMemory,
+  onOpenMemoryList,
+  onOpenClaudeMd,
+  onSelectProject,
+  summary,
+  setParam,
+  reload,
+}: {
+  data: SkillsData;
+  project: Section | null;
+  q: string;
+  sort: SortKey;
+  kind: KindFilter;
+  use: UseFilter;
+  onOpen: (key: string) => void;
+  onOpenMemory: (path: string) => void;
+  onOpenMemoryList: () => void;
+  onOpenClaudeMd: (path?: string) => void;
+  /* ?project= の切替(ヘッダーの切替と同じ経路)。null = cwd */
+  onSelectProject: (id: string | null) => void;
+  summary: SummaryAction;
+  setParam: (key: string, value: string | null) => void;
+  reload: () => Promise<void>;
+}) {
+  return (
+    <div className="home">
+      <WorktreeSelect data={data} onSelectProject={onSelectProject} />
+      <ChangesBlock
+        data={data}
+        project={project}
+        onOpen={onOpen}
+        onOpenMemory={onOpenMemory}
+        onOpenClaudeMd={onOpenClaudeMd}
+        reload={reload}
+      />
+      <ContextBlock
+        data={data}
+        project={project}
+        onOpenMemoryList={onOpenMemoryList}
+        onOpenClaudeMd={onOpenClaudeMd}
+      />
+      <ActiveBlock
+        data={data}
+        project={project}
+        q={q}
+        sort={sort}
+        kind={kind}
+        use={use}
+        summary={summary}
+        onOpen={onOpen}
+        setParam={setParam}
+      />
+    </div>
+  );
+}

@@ -1,7 +1,7 @@
 {
   "name": "skills-viewer",
-  "version": "0.8.1",
-  "description": "Browse, search and manage your Claude Code skills, commands, agents and hooks in the browser",
+  "version": "0.9.0",
+  "description": "Read, search and diagnose your Claude Code skills, commands, agents, hooks, auto memory and CLAUDE.md in the browser",
   "license": "MIT",
   "author": "watanabeyu",
   "repository": {
@@ -52,6 +52,7 @@
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "markdown-it": "^15.0.1",
     "prettier": "^3.9.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

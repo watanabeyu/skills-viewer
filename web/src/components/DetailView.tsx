@@ -1,822 +1,178 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import {
-  applyDescription,
-  copySkill,
-  deleteSkill,
-  diagnoseSkill,
-  fetchFile,
-  fetchFileFull,
-  fromId,
-  openSkill,
-  saveFile,
-  summarizeSkill,
-  toId,
-  type Section,
-  type SkillsData,
-} from '../api';
-import {
-  flatten,
-  fmtDate,
-  groupByPurpose,
-  isUnused,
-  kindMatches,
-  matches,
-  sameNameOthers,
-  sortItems,
-  usageLine,
-  usageMatches,
-  SRC_COLOR,
-  SRC_TINT,
-  type FlatItem,
-  type KindFilter,
-  type PurposeGroup,
-  type SortKey,
-  type UseFilter,
-  type ViewMode,
-} from '../util';
-import { editorUrl, loadEditorSetting } from '../settings';
-import { diffLines, type DiffLine } from '../diff';
-import { mdRender, splitFrontmatter } from '../md';
-import { lintLabel, relTypeLabel, t } from '../i18n';
-import {
-  GroupHeading,
-  InvocationBadge,
-  KindBadge,
-  SectionHeading,
-  UnusedBadge,
-  WarnBadge,
-} from './GridView';
-import { CopyMenu } from './CopyMenu';
-import { DeleteModal } from './DeleteModal';
-import { FlowSection } from './FlowDiagram';
+/*
+ * 理解画面(/skills/:id。計画 15 Phase E1 / README 6.2)。受け取る人の主ジョブ「これは何をどう動かすか」に
+ * 1 列で上から答える: 要約 → 事実の帯 → 発動(診断を畳む)→ 触るもの → 流れ → 全文。
+ * 右カラム・タブ(tab=md|flow)・独立した診断セクションは持たない。書き込み系のボタンは無く、
+ * 残るのは「エディタで開く」と指示文のコピー、AI 生成(要約 / 診断 / 抽出)だけ。
+ * hook(kind === 'hook')は簡易版(HookView)。
+ *
+ * 分割: TitleBlock(ここ)/ FactsBand / InvokeBlock / TouchesBlock / FlowDiagram(FlowBlock)/ FullText。
+ * 寸法は docs/design/0.9.0/{Ledger,Console}Understand.dc.html の実測(style.css の --dv-* / --dblk-* トークン)。
+ */
+
+import { useState } from 'react';
+import { Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { fromId, summarizeSkill, type SkillsData } from '../api';
+import { makeResolve } from '../detail';
+import { isUnused, type FlatItem } from '../util';
+import { t } from '../i18n';
+import { InlineError, InlineNote } from './Inline';
+import { EditorButton, useOpenEditor } from './EditorButton';
+import { InvPill, KindPill, SourcePill, WarnBadge } from './Rows';
+import { FactsBand } from './FactsBand';
+import { InvokeBlock } from './InvokeBlock';
+import { TouchesBlock } from './TouchesBlock';
+import { FlowBlock } from './FlowDiagram';
+import { FullTextBlock, useMdText } from './FullText';
+import { HookView } from './HookView';
+
+export { clearMdCache } from './FullText';
 
 export function DetailView({
   data,
   all,
-  q,
-  sort,
-  view,
-  kind,
-  use,
   onOpen,
   reload,
 }: {
   data: SkillsData;
   all: FlatItem[];
-  q: string;
-  sort: SortKey;
-  view: ViewMode;
-  kind: KindFilter;
-  use: UseFilter;
   onOpen: (key: string) => void;
   reload: () => Promise<void>;
 }) {
   const { id } = useParams();
   const [params] = useSearchParams();
-  const navigate = useNavigate();
-  const key = fromId(id || '');
-  const it = all.find((x) => x.key === key);
-
-  const tabParam = params.get('tab');
-  const tab = (tabParam === 'md' || tabParam === 'flow') && it?.hasMd ? tabParam : 'overview';
-  const [copyOpen, setCopyOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [summarizing, setSummarizing] = useState(false);
-
+  const it = all.find((x) => x.key === fromId(id || ''));
   if (!it) return <Navigate to={{ pathname: '/', search: params.toString() }} replace />;
+  return (
+    <div className="dv">
+      <TitleBlock it={it} data={data} reload={reload} />
+      {it.kind === 'hook' ? (
+        <HookView it={it} data={data} all={all} onOpen={onOpen} />
+      ) : (
+        <SkillBody it={it} data={data} all={all} onOpen={onOpen} reload={reload} />
+      )}
+    </div>
+  );
+}
 
-  // 所属する用途グループ(手動 category が最優先、無ければ AI 割当を解決)
-  const aiGroupDef = it.aiGroup ? data.groups?.find((g) => g.id === it.aiGroup) : undefined;
+/* skill / command / agent の本体(要約の下)。built-in は path が無いので流れと全文を持たない */
+function SkillBody({
+  it,
+  data,
+  all,
+  onOpen,
+  reload,
+}: {
+  it: FlatItem;
+  data: SkillsData;
+  all: FlatItem[];
+  onOpen: (key: string) => void;
+  reload: () => Promise<void>;
+}) {
+  /* 本文・前版・AI 生成はどれも読み取り許可(cwd + 選んだプロジェクト)に乗るので起点を渡す */
+  const selected = data.selected.id;
+  const { raw, error } = useMdText(it.hasMd ? it.path : '', selected);
+  const dir = data.sections.find((s) => s.id === it.secId)?.note || '';
+  return (
+    <>
+      <FactsBand it={it} data={data} all={all} onOpen={onOpen} />
+      <InvokeBlock it={it} dir={dir} data={data} reload={reload} />
+      <TouchesBlock it={it} all={all} onOpen={onOpen} />
+      {it.hasMd && (
+        <FlowBlock
+          it={it}
+          raw={raw}
+          resolve={makeResolve(it, all)}
+          aiAvailable={data.aiAvailable}
+          selected={selected}
+          onOpen={onOpen}
+          reload={reload}
+        />
+      )}
+      {it.hasMd && (
+        <FullTextBlock
+          it={it}
+          raw={raw}
+          error={error}
+          cwd={data.cwd}
+          home={data.home}
+          selected={selected}
+        />
+      )}
+    </>
+  );
+}
 
-  const setTab = (tabName: string) => {
-    const next = new URLSearchParams(params);
-    if (tabName === 'md' || tabName === 'flow') next.set('tab', tabName);
-    else next.delete('tab');
-    navigate({ pathname: '/skills/' + toId(it.key), search: next.toString() }, { replace: true });
-  };
-  const backToGrid = () => {
-    const next = new URLSearchParams(params);
-    next.delete('tab');
-    navigate({ pathname: '/', search: next.toString() });
-  };
+/*
+ * 名前とチップ、右端に「エディタで開く」。その下に ✦ 一言要約と description 全文。
+ * hook は description がコマンドそのもの(コマンドのブロックで出す)なので本文行を出さない
+ */
+function TitleBlock({
+  it,
+  data,
+  reload,
+}: {
+  it: FlatItem;
+  data: SkillsData;
+  reload: () => Promise<void>;
+}) {
+  const [summarizing, setSummarizing] = useState(false);
+  // 操作起点の失敗はボタンの脇に 1 行で出す(alert は使わない)
+  const [summaryError, setSummaryError] = useState('');
+  const { openError, onOpenEditor } = useOpenEditor(it.path, data.selected.id);
 
-  const onCopy = async (target: string) => {
-    setCopyOpen(false);
-    try {
-      const r = await copySkill(it.path, target);
-      await reload();
-      onOpen(r.destMd + '#' + r.destName); // コピー先の詳細を表示(design 仕様)
-    } catch (e) {
-      alert(t('alert.copyFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
-  const onDelete = async () => {
-    try {
-      const r = await deleteSkill(it.path);
-      setConfirmDelete(false);
-      await reload();
-      backToGrid();
-      alert(t('alert.trashed', { path: r.trashedTo }));
-    } catch (e) {
-      alert(t('alert.deleteFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
-  const onOpenEditor = async () => {
-    // 設定(⚙)の URL スキームで開く。OS デフォルト設定時のみサーバー側で開く
-    const url = editorUrl(loadEditorSetting(), it.path);
-    if (url) {
-      window.location.href = url;
-      return;
-    }
-    try {
-      await openSkill(it.path);
-    } catch (e) {
-      alert(t('alert.openFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
   const onSummarize = async () => {
     setSummarizing(true);
+    setSummaryError('');
     try {
-      await summarizeSkill(it.path, it.name);
+      await summarizeSkill(it.path, it.name, data.selected.id);
       await reload();
     } catch (e) {
-      alert(t('alert.summarizeFailed', { msg: e instanceof Error ? e.message : String(e) }));
+      setSummaryError(
+        t('alert.summarizeFailed', { msg: e instanceof Error ? e.message : String(e) }),
+      );
     } finally {
       setSummarizing(false);
     }
   };
 
   return (
-    <div className="md-wrap">
-      <LeftColumn
-        data={data}
-        q={q}
-        sort={sort}
-        view={view}
-        kind={kind}
-        use={use}
-        selected={it.key}
-        onOpen={onOpen}
-      />
-      <div className="pane">
-        <button className="back" onClick={backToGrid}>
-          {t('detail.back')}
-        </button>
-        <div className="meta-row">
-          <span
-            className="badge"
-            style={{ color: SRC_COLOR[it.source], background: SRC_TINT[it.source] }}
-          >
-            {it.source}
+    <div className="dv-title">
+      <div className="dv-title-row">
+        <h1>{it.name}</h1>
+        <KindPill kind={it.kind} />
+        <SourcePill source={it.source} label={it.scopeLabel} />
+        <InvPill it={it} />
+        {it.version && <span className="meta mono">v{it.version}</span>}
+        {isUnused(it, data.usageAvailable) && (
+          <span className="warn-inline" title={t('badge.unusedTitle')}>
+            ⚠ {t('badge.unusedShort')}
           </span>
-          <InvocationBadge it={it} />
-          {(it.category || aiGroupDef) && (
-            <span
-              className="badge grp-badge"
-              title={it.category ? t('group.manualTitle') : t('view.group')}
-            >
-              {it.category
-                ? `📌 ${it.category} · ${t('group.manual')}`
-                : `${aiGroupDef!.emoji || '📁'} ${aiGroupDef!.label}`}
-            </span>
-          )}
-          <UnusedBadge show={isUnused(it, data.usageAvailable)} />
-          <WarnBadge it={it} />
-          {it.version && <span className="m-ver">v{it.version}</span>}
-          <span className="m-upd">
-            {it.updatedAt ? t('detail.lastUpdated', { date: fmtDate(it.updatedAt) }) : ''}
-          </span>
-          {!!it.path && (
-            <button className="pbtn" onClick={onOpenEditor}>
-              {t('detail.openEditor')}
-            </button>
-          )}
-          {it.manage && (
-            <>
-              <span style={{ position: 'relative' }}>
-                <button className="pbtn" onClick={() => setCopyOpen((v) => !v)}>
-                  {t('detail.copy')}
-                </button>
-                {copyOpen && (
-                  <CopyMenu
-                    targets={data.targets}
-                    onPick={onCopy}
-                    onClose={() => setCopyOpen(false)}
-                  />
-                )}
-              </span>
-              <button className="pbtn" disabled={summarizing} onClick={onSummarize}>
-                {summarizing ? t('detail.summarizing') : t('detail.resummarize')}
-              </button>
-              <button className="pbtn danger" onClick={() => setConfirmDelete(true)}>
-                {t('detail.delete')}
-              </button>
-            </>
-          )}
-        </div>
-        <h2 className="d-name">
-          {it.name}
-          <KindBadge it={it} />
-        </h2>
-        <div className="tabs">
-          <button
-            className={'tab' + (tab === 'overview' ? ' on' : '')}
-            onClick={() => setTab('overview')}
-          >
-            {t('tab.overview')}
-          </button>
-          {it.hasMd && (
-            <button
-              className={'tab' + (tab === 'flow' ? ' on' : '')}
-              onClick={() => setTab('flow')}
-            >
-              {/* 生成済みなら ✦ で「図がある」ことを示す */}
-              {(it.aiFlow ? '✦ ' : '') + t('detail.flow')}
-            </button>
-          )}
-          {it.hasMd && (
-            <button className={'tab' + (tab === 'md' ? ' on' : '')} onClick={() => setTab('md')}>
-              SKILL.md
-            </button>
-          )}
-        </div>
-        {tab === 'overview' ? (
-          <OverviewTab it={it} all={all} onOpen={onOpen} reload={reload} />
-        ) : tab === 'flow' ? (
-          <FlowTab it={it} all={all} onOpen={onOpen} reload={reload} />
-        ) : (
-          <MdTab it={it} reload={reload} />
         )}
-      </div>
-      {confirmDelete && (
-        <DeleteModal name={it.name} onCancel={() => setConfirmDelete(false)} onDelete={onDelete} />
-      )}
-    </div>
-  );
-}
-
-function LeftColumn({
-  data,
-  q,
-  sort,
-  view,
-  kind,
-  use,
-  selected,
-  onOpen,
-}: {
-  data: SkillsData;
-  q: string;
-  sort: SortKey;
-  view: ViewMode;
-  kind: KindFilter;
-  use: UseFilter;
-  selected: string;
-  onOpen: (key: string) => void;
-}) {
-  interface ColGroup {
-    key: string;
-    /* この塊の先頭に出すソース見出し(用途別ではセクションの最初の塊のみ) */
-    section: Section | null;
-    /* section 見出しに出す件数(用途別ではセクション全体の件数) */
-    sectionCount?: number;
-    purpose: PurposeGroup | null;
-    /* true ならカードに source ドット、false なら所属ラベル(フラット時) */
-    dotted: boolean;
-    items: FlatItem[];
-  }
-
-  const groups = useMemo<ColGroup[]>(() => {
-    const pass = (it: FlatItem) =>
-      kindMatches(it, kind) && matches(it, q) && usageMatches(it, use, data.usageAvailable);
-    if (view === 'source') {
-      return data.sections
-        .map((s) => ({
-          key: s.id,
-          section: s,
-          purpose: null,
-          dotted: true,
-          items: sortItems(flatten([s]).filter(pass), sort),
-        }))
-        .filter((g) => g.items.length > 0);
-    }
-    // 用途別: リポジトリ(セクション)→ 用途グループの入れ子(グループ未生成ならフラットに縮退)
-    if (view === 'group' && data.groups?.length) {
-      return data.sections.flatMap((s) => {
-        const pgs = groupByPurpose(sortItems(flatten([s]).filter(pass), sort), data.groups);
-        const total = pgs.reduce((n, g) => n + g.items.length, 0);
-        return pgs.map((g, i) => ({
-          key: s.id + ':' + g.id,
-          section: i === 0 ? s : null,
-          sectionCount: total,
-          purpose: g,
-          dotted: true,
-          items: g.items,
-        }));
-      });
-    }
-    return [
-      {
-        key: 'flat',
-        section: null,
-        purpose: null,
-        dotted: false,
-        items: sortItems(flatten(data.sections).filter(pass), sort),
-      },
-    ];
-  }, [data, q, sort, view, kind, use]);
-
-  return (
-    <div className="left-col">
-      {groups.map((g) => (
-        <div key={g.key}>
-          {g.section && (
-            <SectionHeading section={g.section} count={g.sectionCount ?? g.items.length} small />
-          )}
-          {g.purpose ? (
-            <GroupHeading g={g.purpose} count={g.items.length} small sub />
-          ) : (
-            !g.section && <div style={{ height: 18 }} />
-          )}
-          {g.items.map((it) => (
+        <WarnBadge it={it} />
+        <span className="dv-title-r">
+          <InlineError msg={openError} />
+          <InlineError msg={summaryError} />
+          {it.hasMd && !data.aiAvailable && <InlineNote msg={t('ai.unavailable')} />}
+          {it.hasMd && (
             <button
-              key={it.key}
-              className={'ccard' + (it.key === selected ? ' sel' : '')}
-              onClick={() => onOpen(it.key)}
+              className="btn quiet"
+              disabled={summarizing || !data.aiAvailable}
+              onClick={onSummarize}
+              title={t('ai.buttonTitle')}
             >
-              {/* フラット時は所属が見えないので所属ラベルを出す(グリッドのカードと同じ体裁) */}
-              {!g.dotted && (
-                <span className="scope-mini">
-                  <span className="dot5" style={{ background: SRC_COLOR[it.source] }} />
-                  {it.scopeLabel}
-                </span>
-              )}
-              <div className="r1">
-                {g.dotted && <span className="dot7" style={{ background: SRC_COLOR[it.source] }} />}
-                <span className="nm">{it.name}</span>
-                {it.version && <span className="ver">v{it.version}</span>}
-              </div>
-              <div className="d1">{it.aiSummary || it.description}</div>
+              {summarizing ? t('detail.summarizing') : '✦ ' + t('detail.resummarize')}
             </button>
-          ))}
-        </div>
-      ))}
-      {!groups.length && <div className="empty">{t('list.empty')}</div>}
-    </div>
-  );
-}
-
-/* skill 名を既知アイテムに解決: 同一プロジェクト → user/plugin/built-in の順(他プロジェクトの同名は対象外) */
-function makeResolve(it: FlatItem, all: FlatItem[]): (name: string) => FlatItem | undefined {
-  return (name: string) => {
-    const hit = (pred: (x: FlatItem) => boolean) =>
-      all.find((x) => pred(x) && (x.name === name || x.name.split(':').pop() === name));
-    return hit((x) => x.secId === it.secId) || hit((x) => x.source !== 'project');
-  };
-}
-
-/* フロータブ: AI 抽出した処理フローの図解(生成ボタン込み。FlowSection に委譲) */
-function FlowTab({
-  it,
-  all,
-  onOpen,
-  reload,
-}: {
-  it: FlatItem;
-  all: FlatItem[];
-  onOpen: (key: string) => void;
-  reload: () => Promise<void>;
-}) {
-  return <FlowSection it={it} resolve={makeResolve(it, all)} onOpen={onOpen} reload={reload} />;
-}
-
-function OverviewTab({
-  it,
-  all,
-  onOpen,
-  reload,
-}: {
-  it: FlatItem;
-  all: FlatItem[];
-  onOpen: (key: string) => void;
-  reload: () => Promise<void>;
-}) {
-  // AI 分類(関係タイプ付き)があればそれを、無ければ静的解析の参照候補を表示
-  const relations = it.aiRelations?.length
-    ? it.aiRelations
-    : (it.refs || []).map((name) => ({ name, type: 'references' as const, note: '' }));
-  const resolve = makeResolve(it, all);
-
-  return (
-    <div>
-      {it.aiSummary && (
-        <>
-          <div className="sec-t">{t('detail.aiSummary')}</div>
-          <p className="full-desc">
-            <span className="ai-mark">✦ </span>
-            {it.aiSummary}
-          </p>
-        </>
-      )}
-      <div className="sec-t">{t('detail.description')}</div>
-      <p className="full-desc">{it.description}</p>
-      {usageLine(it) && (
-        <>
-          <div className="sec-t">{t('detail.usage')}</div>
-          <div className="ex-block">{usageLine(it)}</div>
-        </>
-      )}
-      {(!!it.tokens || !!it.lint?.length || it.hasMd) && (
-        <>
-          <div className="sec-t">{t('detail.diagnostics')}</div>
-          {!!it.tokens && (
-            <p className="full-desc">{t('detail.tokenCost', { n: it.tokens.toLocaleString() })}</p>
           )}
-          {(it.lint || []).map((code) => (
-            <div className="lint-row" key={code}>
-              <span className="lint-mark">⚠</span>
-              <span>{lintLabel(code)}</span>
-            </div>
-          ))}
-          {it.hasMd && <DiagnosisBlock it={it} reload={reload} />}
-        </>
-      )}
-      <SameNameSection it={it} all={all} onOpen={onOpen} />
-      {it.typedCount || it.autoCount ? (
-        <>
-          <div className="sec-t">{t('detail.usageStats')}</div>
-          <p className="full-desc">
-            {t('detail.usageDetail', { typed: it.typedCount || 0, auto: it.autoCount || 0 })}
-            {it.lastUsed ? t('detail.usageLast', { date: fmtDate(it.lastUsed) }) : ''}
-          </p>
-          {it.dailyUse && <Sparkline daily={it.dailyUse} />}
-        </>
-      ) : null}
-      {relations.length > 0 && (
-        <>
-          <div className="sec-t">{t('detail.relations')}</div>
-          <div className="rel-chips">
-            {relations.map((rel) => {
-              const target = resolve(rel.name);
-              return target ? (
-                <button
-                  key={rel.name}
-                  className="rel-chip"
-                  title={rel.note}
-                  onClick={() => onOpen(target.key)}
-                >
-                  <span className="rt">{relTypeLabel(rel.type)}</span>
-                  <span className="rn">/{rel.name}</span>
-                </button>
-              ) : (
-                <span key={rel.name} className="rel-chip missing" title={rel.note}>
-                  <span className="rt">{relTypeLabel(rel.type)}</span>
-                  <span className="rn">/{rel.name}</span>
-                  <span className="rm">{t('detail.notInstalled')}</span>
-                </span>
-              );
-            })}
-          </div>
-        </>
-      )}
-      {it.files.length > 0 && (
-        <>
-          <div className="sec-t">{t('detail.files')}</div>
-          {it.files.map((f) => (
-            <div className="f-row" key={f}>
-              <span className="sq6" />
-              <span className="p">{f}</span>
-            </div>
-          ))}
-        </>
-      )}
-      <div className="sec-t">{it.hasMd ? t('detail.path') : t('detail.location')}</div>
-      <div className="f-row">
-        <span className="sq6" />
-        <span className="p">{it.path || t('detail.builtinLocation')}</span>
-      </div>
-    </div>
-  );
-}
-
-/*
- * AI 発動診断ブロック。キャッシュ済み診断があれば表示し、改善案は manage 可能な
- * アイテムに限りワンクリック適用できる(適用すると内容が変わるため診断キャッシュは無効化される)。
- */
-function DiagnosisBlock({ it, reload }: { it: FlatItem; reload: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const d = it.aiDiagnosis;
-
-  const run = async () => {
-    setBusy(true);
-    try {
-      await diagnoseSkill(it.path, it.name);
-      await reload();
-    } catch (e) {
-      alert(t('alert.diagnoseFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const apply = async () => {
-    if (!d) return;
-    setApplying(true);
-    try {
-      await applyDescription(it.path, d.improved);
-      await reload();
-    } catch (e) {
-      alert(t('alert.applyFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setApplying(false);
-    }
-  };
-
-  return (
-    <div className="diag-block">
-      {d && (
-        <div className="diag-box">
-          <div className={'diag-verdict ' + d.verdict}>
-            {t(d.verdict === 'good' ? 'diag.verdict.good' : 'diag.verdict.weak')}
-          </div>
-          {d.issues.map((issue) => (
-            <div className="lint-row" key={issue}>
-              <span className="lint-mark">·</span>
-              <span>{issue}</span>
-            </div>
-          ))}
-          {d.improved && d.improved !== it.description && (
-            <>
-              <div className="diag-imp-t">{t('diag.improved')}</div>
-              <p className="diag-improved">
-                <span className="ai-mark">✦ </span>
-                {d.improved}
-              </p>
-              {it.manage && (
-                <button className="pbtn sm" disabled={applying} onClick={apply}>
-                  {applying ? t('diag.applying') : t('diag.apply')}
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      )}
-      <button className="pbtn sm" disabled={busy} onClick={run} title={t('diag.runTitle')}>
-        {busy ? t('diag.running') : d ? t('diag.rerun') : '✦ ' + t('diag.run')}
-      </button>
-    </div>
-  );
-}
-
-/*
- * 直近30日の日別使用回数を inline SVG の棒グラフで表示。
- * 日付キーはサーバー(usage.ts の dayKey)と同じローカルタイムゾーンの YYYY-MM-DD。
- */
-function Sparkline({ daily }: { daily: Record<string, number> }) {
-  const DAYS = 30;
-  const BAR = 7;
-  const GAP = 2;
-  const H = 32;
-  const now = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  const days: { key: string; n: number }[] = [];
-  for (let i = DAYS - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-    const key = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-    days.push({ key, n: daily[key] || 0 });
-  }
-  const max = Math.max(...days.map((d) => d.n), 1);
-  return (
-    <div className="spark-wrap">
-      <svg
-        className="spark"
-        width={DAYS * (BAR + GAP)}
-        height={H}
-        role="img"
-        aria-label={t('detail.spark')}
-      >
-        {days.map((d, i) => {
-          const h = d.n ? Math.max(3, Math.round((d.n / max) * (H - 4))) : 2;
-          return (
-            <rect
-              key={d.key}
-              className={d.n ? 'on' : ''}
-              x={i * (BAR + GAP)}
-              y={H - h}
-              width={BAR}
-              height={h}
-              rx={1.5}
-            >
-              <title>{`${d.key}: ${d.n}`}</title>
-            </rect>
-          );
-        })}
-      </svg>
-      <span className="spark-label">{t('detail.spark')}</span>
-    </div>
-  );
-}
-
-/*
- * 同名の別定義。scope 間の重複(例: code-review が user と複数プロジェクトに存在)を
- * 見つけて、開く / SKILL.md の diff 比較ができるようにする。
- */
-function SameNameSection({
-  it,
-  all,
-  onOpen,
-}: {
-  it: FlatItem;
-  all: FlatItem[];
-  onOpen: (key: string) => void;
-}) {
-  const [diffWith, setDiffWith] = useState<FlatItem | null>(null);
-  const others = sameNameOthers(it, all);
-  if (!others.length) return null;
-  return (
-    <>
-      <div className="sec-t">{t('detail.sameName', { n: others.length })}</div>
-      {others.map((o) => (
-        <div className="f-row" key={o.key}>
-          <span className="dot5" style={{ background: SRC_COLOR[o.source] }} />
-          <span className="p">{o.scopeLabel}</span>
-          <span className="same-actions">
-            <button className="pbtn sm" onClick={() => onOpen(o.key)}>
-              {t('detail.open')}
-            </button>
-            {it.hasMd && o.hasMd && (
-              <button
-                className={'pbtn sm' + (diffWith?.key === o.key ? ' on' : '')}
-                onClick={() => setDiffWith(diffWith?.key === o.key ? null : o)}
-              >
-                {diffWith?.key === o.key ? t('detail.diffClose') : t('detail.diff')}
-              </button>
-            )}
-          </span>
-        </div>
-      ))}
-      {diffWith && <DiffBlock a={it} b={diffWith} />}
-    </>
-  );
-}
-
-function DiffBlock({ a, b }: { a: FlatItem; b: FlatItem }) {
-  const [lines, setLines] = useState<DiffLine[] | null>(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let alive = true;
-    setLines(null);
-    setError('');
-    Promise.all([fetchFile(a.path), fetchFile(b.path)])
-      .then(([ta, tb]) => {
-        if (alive) setLines(diffLines(ta, tb));
-      })
-      .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [a.path, b.path]);
-
-  if (error) return <div className="empty">{t('diff.failed', { msg: error })}</div>;
-  if (!lines) return <div className="empty">{t('common.loading')}</div>;
-  const changed = lines.filter((l) => l.type === 'add' || l.type === 'del').length;
-  return (
-    <div className="diff-wrap">
-      <div className="diff-legend">
-        <span className="d-del-mark">{t('diff.thisDef', { label: a.scopeLabel })}</span>
-        <span className="d-add-mark">+ {b.scopeLabel}</span>
-        <span className="d-count">
-          {changed === 0 ? t('diff.identical') : t('diff.changed', { n: changed })}
+          {!!it.path && <EditorButton onClick={onOpenEditor} />}
         </span>
       </div>
-      {changed > 0 && (
-        <div className="diff">
-          {lines.map((l, i) =>
-            l.type === 'skip' ? (
-              <div className="d-skip" key={i}>
-                {t('diff.skip', { n: l.count })}
-              </div>
-            ) : (
-              <div className={'d-line d-' + l.type} key={i}>
-                {(l.type === 'add' ? '+ ' : l.type === 'del' ? '− ' : '  ') + l.text}
-              </div>
-            ),
-          )}
-        </div>
+      {it.aiSummary && (
+        <p className="dv-summary">
+          <span className="ai-mark">✦ </span>
+          {it.aiSummary}
+        </p>
       )}
-    </div>
-  );
-}
-
-const mdCache = new Map<string, string>();
-
-/* 「エディタで開く」で編集 → 再スキャン後に古い SKILL.md が残らないよう reload 時に呼ぶ */
-export function clearMdCache(): void {
-  mdCache.clear();
-}
-
-function MdTab({ it, reload }: { it: FlatItem; reload: () => Promise<void> }) {
-  const path = it.path;
-  const [raw, setRaw] = useState<string | null>(mdCache.get(path) ?? null);
-  const [error, setError] = useState('');
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [baseMtime, setBaseMtime] = useState(0);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    setEditing(false); // 別アイテムに移ったら編集は破棄
-    if (mdCache.has(path)) {
-      setRaw(mdCache.get(path)!);
-      return;
-    }
-    setRaw(null);
-    setError('');
-    fetchFile(path)
-      .then((content) => {
-        mdCache.set(path, content);
-        if (alive) setRaw(content);
-      })
-      .catch((e) => {
-        if (alive) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [path]);
-
-  /* 編集開始時に mtime 付きで取り直す(表示キャッシュが古い可能性があるため) */
-  const startEdit = async () => {
-    try {
-      const { content, mtime } = await fetchFileFull(path);
-      mdCache.set(path, content);
-      setRaw(content);
-      setDraft(content);
-      setBaseMtime(mtime);
-      setEditing(true);
-    } catch (e) {
-      alert(t('app.loadFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    }
-  };
-
-  const onSave = async () => {
-    if (!/^---\r?\n/.test(draft) && !confirm(t('edit.noFrontmatter'))) return;
-    setSaving(true);
-    try {
-      await saveFile(path, draft, baseMtime);
-      mdCache.set(path, draft);
-      setRaw(draft);
-      setEditing(false);
-      await reload(); // lint・トークン・description 表示を更新(mdCache は reload でクリアされる)
-    } catch (e) {
-      alert(t('alert.saveFailed', { msg: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (error) return <div className="empty">{t('app.loadFailed', { msg: error })}</div>;
-  if (raw === null) return <div className="empty">{t('common.loading')}</div>;
-
-  if (editing) {
-    return (
-      <div>
-        <div className="edit-bar">
-          <button className="pbtn sm primary" disabled={saving} onClick={onSave}>
-            {saving ? t('edit.saving') : t('edit.save')}
-          </button>
-          <button className="pbtn sm" disabled={saving} onClick={() => setEditing(false)}>
-            {t('common.cancel')}
-          </button>
-        </div>
-        <textarea
-          className="md-editor"
-          value={draft}
-          spellCheck={false}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-      </div>
-    );
-  }
-
-  const { frontmatter, body } = splitFrontmatter(raw);
-  return (
-    <div>
-      {it.manage && (
-        <div className="edit-bar">
-          <button className="pbtn sm" onClick={startEdit}>
-            {t('edit.button')}
-          </button>
-        </div>
-      )}
-      {frontmatter && <div className="fm-box">{frontmatter}</div>}
-      {/* 自前レンダラ内で全テキストを HTML エスケープ済み */}
-      <div className="md-body" dangerouslySetInnerHTML={{ __html: mdRender(body) }} />
+      {it.kind !== 'hook' && it.description && <p className="dv-desc">{it.description}</p>}
     </div>
   );
 }

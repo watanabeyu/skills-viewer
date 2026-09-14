@@ -1,4 +1,21 @@
-/* SKILL.md 用の最小 markdown レンダラ(依存ゼロ・HTML エスケープ込み) */
+/*
+ * SKILL.md / CLAUDE.md / memory 本文の markdown レンダラ(web だけで使う。server は import しない)。
+ *
+ * v0.9.0 までは自前の最小レンダラだったが、CLAUDE.md は SKILL.md より長く構造も多い
+ * (5 段目以降の見出し・入れ子のリスト・表・強調)ので、取りこぼしが「読みづらい」に直結した。
+ * markdown-it(devDependency。Vite がバンドルするので公開パッケージの dependencies は空のまま)に
+ * 置き換え、規則は CommonMark に任せる。
+ *
+ * 出力は表示専用なので、読み込む側に有利なものは全部切る:
+ * - html: false — 本文の生 HTML はタグごとエスケープ(clone したリポジトリの CLAUDE.md が script を仕込めない)
+ * - 画像は描かない — 外部画像の読み込み = 表示しただけで外へ出る通信。`![alt](src)` は文字どおり出す
+ * - リンクは http(s) だけ <a>(target=_blank / rel=noopener)。相対パスや `javascript:` は文字のまま
+ *   (相対パスを <a> にすると SPA のルータが拾って壊れたページへ飛ぶ)
+ * - linkify は fuzzyLink を切る — 既定では `apps/e2e/README.md` の `.md` を TLD と見なして
+ *   http://README.md へのリンクにしてしまう。`https://` で始まるものだけ拾う
+ */
+
+import MarkdownIt from 'markdown-it';
 
 export const esc = (s: string) =>
   s.replace(
@@ -6,122 +23,49 @@ export const esc = (s: string) =>
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string,
   );
 
-/*
- * URL の文字クラスから \uE000 を除く。renderMemoryBody が [[x]] をこの私用領域文字に退避して
- * レンダリング後に HTML へ差し戻すため、取り込まれると href 属性値の中や <a> の中に <a> が入って壊れる。
- */
-function mdInlines(s: string): string {
-  return esc(s)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(
-      /\[([^\]\uE000]+)\]\((https?:[^)\uE000]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener">$1</a>',
-    )
-    .replace(
-      /(^|\s)(https?:\/\/[^\s<)\uE000]+)/g,
-      '$1<a href="$2" target="_blank" rel="noopener">$2</a>',
-    );
-}
+const isHttp = (href: string) => /^https?:\/\//i.test(href);
 
-export function mdRender(src: string): string {
-  const lines = src.split(/\r?\n/);
-  let html = '';
-  let i = 0;
-  let para: string[] = [];
-  const flush = () => {
-    if (para.length) {
-      html += '<p>' + mdInlines(para.join(' ')) + '</p>';
-      para = [];
-    }
-  };
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^```/.test(line)) {
-      flush();
-      const buf: string[] = [];
-      i++;
-      while (i < lines.length && !/^```/.test(lines[i])) {
-        buf.push(lines[i]);
-        i++;
-      }
-      i++;
-      html += '<pre><code>' + esc(buf.join('\n')) + '</code></pre>';
-      continue;
-    }
-    const h = line.match(/^(#{1,4})\s+(.*)/);
-    if (h) {
-      flush();
-      html += `<h${h[1].length}>` + mdInlines(h[2]) + `</h${h[1].length}>`;
-      i++;
-      continue;
-    }
-    if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
-      flush();
-      const items: { nested: boolean; text: string }[] = [];
-      const ordered = /^\s*\d+\./.test(line);
-      while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) {
-        const nested = /^\s{2,}/.test(lines[i]);
-        items.push({ nested, text: lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, '') });
-        i++;
-        // 継続行(次のリスト項目でも空行・見出し・フェンスでもない行)は直前項目に連結
-        while (
-          i < lines.length &&
-          lines[i].trim() &&
-          !/^\s*([-*+]|\d+\.)\s+/.test(lines[i]) &&
-          !/^#{1,4}\s|^```/.test(lines[i])
-        ) {
-          items[items.length - 1].text += ' ' + lines[i].trim();
-          i++;
-        }
-      }
-      const tag = ordered ? 'ol' : 'ul';
-      let out = `<${tag}>`;
-      let sub: string[] = [];
-      const flushSub = () => {
-        if (sub.length) {
-          out += '<ul>' + sub.map((t) => '<li>' + mdInlines(t) + '</li>').join('') + '</ul>';
-          sub = [];
-        }
-      };
-      for (const it of items) {
-        if (it.nested) {
-          sub.push(it.text);
-          continue;
-        }
-        flushSub();
-        out += '<li>' + mdInlines(it.text) + '</li>';
-      }
-      flushSub();
-      html += out + `</${tag}>`;
-      continue;
-    }
-    if (/^>\s?/.test(line)) {
-      flush();
-      const buf: string[] = [];
-      while (i < lines.length && /^>\s?/.test(lines[i])) {
-        buf.push(lines[i].replace(/^>\s?/, ''));
-        i++;
-      }
-      html += '<blockquote>' + mdInlines(buf.join(' ')) + '</blockquote>';
-      continue;
-    }
-    if (/^(---+|\*\*\*+)\s*$/.test(line)) {
-      flush();
-      html += '<hr>';
-      i++;
-      continue;
-    }
-    if (!line.trim()) {
-      flush();
-      i++;
-      continue;
-    }
-    para.push(line.trim());
-    i++;
+const md = new MarkdownIt({ html: false, linkify: true });
+md.linkify.set({ fuzzyLink: false, fuzzyEmail: false });
+
+/* memory の [[x]] を退避した印(renderMemoryBody)。リンクの中に入ると <a> の中に <a> ができる */
+const HOLE = '\uE000';
+
+/* 画像は `![alt](src)` の字面をそのまま出す(image のルールを外すと `!` + リンクに化けるので描画側で潰す) */
+md.renderer.rules.image = (tokens, idx) => {
+  const tok = tokens[idx];
+  return '![' + esc(tok.content) + '](' + esc(String(tok.attrGet('src') ?? '')) + ')';
+};
+
+/*
+ * link_open / link_close の描画。<a> にするのは http(s) で、リンク文字列にも href にも
+ * 退避文字が無いものだけ。それ以外は <span> にする(閉じタグも同じトークン配列にあるので、
+ * 開きで見つけた閉じの tag を先に書き換えておく。リンクは入れ子にならない)
+ */
+md.renderer.rules.link_open = (tokens, idx, options, _env, self) => {
+  const tok = tokens[idx];
+  const href = String(tok.attrGet('href') ?? '');
+  const closeAt = tokens.findIndex((t, i) => i > idx && t.type === 'link_close');
+  const inner = closeAt < 0 ? [] : tokens.slice(idx + 1, closeAt);
+  const hole = href.includes(HOLE) || inner.some((t) => t.content.includes(HOLE));
+  if (isHttp(href) && !hole) {
+    tok.attrSet('target', '_blank');
+    tok.attrSet('rel', 'noopener');
+  } else {
+    tok.tag = 'span';
+    tok.attrs = null;
+    if (closeAt >= 0) tokens[closeAt].tag = 'span';
   }
-  flush();
-  return html;
+  return self.renderToken(tokens, idx, options);
+};
+
+/*
+ * 本文 → HTML。全テキストは markdown-it がエスケープする(html: false)。
+ * memory の [[x]] は呼び出し側が私用領域の文字(\uE000)に退避してから渡し、描画後に差し戻す。
+ * その文字はエスケープの対象でも記法でもないので、そのまま通り抜ける
+ */
+export function mdRender(src: string): string {
+  return md.render(src);
 }
 
 /* frontmatter を分離して返す */
@@ -129,4 +73,63 @@ export function splitFrontmatter(raw: string): { frontmatter: string | null; bod
   const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (!fm) return { frontmatter: null, body: raw };
   return { frontmatter: fm[1], body: raw.slice(fm[0].length) };
+}
+
+/*
+ * 見出しの一覧(フロー図未生成時の代替表示。design-system 0.6「構造そのもの」)。
+ * レンダラと同じ規則でコードフェンス内の # は見出しに数えない。text はインラインの
+ * 装飾(`code` / **強調**)を剥がした素の文字列。
+ */
+export interface MdHeading {
+  level: number;
+  text: string;
+}
+
+export function mdHeadings(src: string): MdHeading[] {
+  const out: MdHeading[] = [];
+  let inFence = false;
+  for (const line of src.split(/\r?\n/)) {
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const h = line.match(/^(#{1,6})\s+(.*)/);
+    if (!h) continue;
+    const text = h[2]
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\s+#+\s*$/, '')
+      .trim();
+    if (text) out.push({ level: h[1].length, text });
+  }
+  return out;
+}
+
+/*
+ * 全文の先頭だけを見せて残りを「続きを表示(残り n 行)」に畳むための分割。
+ * minLines 以降の最初の空行(コードフェンスの外)で切る。切れる場所が無い、または残りが
+ * 短い(minRest 行未満)ときは畳まず全文を返す(rest が空)。
+ */
+export function splitPreview(
+  body: string,
+  minLines = 12,
+  minRest = 8,
+): { head: string; rest: string; restLines: number } {
+  const lines = body.split(/\r?\n/);
+  let inFence = false;
+  let cut = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^```/.test(lines[i])) inFence = !inFence;
+    if (i >= minLines && !inFence && !lines[i].trim()) {
+      cut = i;
+      break;
+    }
+  }
+  if (cut < 0 || lines.length - cut < minRest) return { head: body, rest: '', restLines: 0 };
+  return {
+    head: lines.slice(0, cut).join('\n'),
+    rest: lines.slice(cut).join('\n'),
+    restLines: lines.length - cut,
+  };
 }

@@ -57,15 +57,47 @@ export function dayKey(ts: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-/* キャッシュ鍵は実パス + 許可ルート(ルートが変われば拾う memHits も変わるため、mtime だけでは足りない) */
-const usageCache = new Map<string, { mtimeMs: number; rootsKey: string } & ScanResult>();
+/*
+ * 走査結果のキャッシュ。許可ルート(rootsKey)ごとに「実パス → 結果」の Map を持つ
+ * (ルートが変われば拾う memHits も変わるので、1 つの Map を使い回すと鍵の衝突になる)。
+ *
+ * 鍵ごとに**保持する**のが要点(レビュー 1 周目): 計画 16 で許可ルートが「選んだプロジェクト」に
+ * 追随するようになり、1 つの値を上書きする方式だと切替のたびに全エントリが無効化されて
+ * transcript(実測 456MB)を丸ごと読み直すことになる。選択の往復で使う鍵は数個なので、
+ * 上限を数エントリに置いて古い鍵から捨てれば足りる。
+ *
+ * 捨てる順は LRU(レビュー 2 周目): ヒット時に順序を更新しない FIFO だと、5 つ目の鍵を作った
+ * 時点で「いちばん古く挿入された鍵」= 通常は既定(空)の鍵が落ち、そこへ戻ったときに
+ * 全 transcript を読み直す(実測 705ms)。使ったばかりの鍵を末尾へ動かせば、
+ * 往復している鍵は常に生き残る。
+ */
+const MAX_ROOTS_CACHES = 4;
+const usageCaches = new Map<string, Map<string, { mtimeMs: number } & ScanResult>>();
+
+function cacheFor(rootsKey: string): Map<string, { mtimeMs: number } & ScanResult> {
+  const hit = usageCaches.get(rootsKey);
+  if (hit) {
+    // 最近使ったものを末尾へ(Map の反復順 = 挿入順なので、消して入れ直すと順序が更新される)
+    usageCaches.delete(rootsKey);
+    usageCaches.set(rootsKey, hit);
+    return hit;
+  }
+  const cache = new Map<string, { mtimeMs: number } & ScanResult>();
+  usageCaches.set(rootsKey, cache);
+  // 反復順のいちばん前 = 最後に使ったのがいちばん古い鍵から捨てる
+  if (usageCaches.size > MAX_ROOTS_CACHES) {
+    const oldest = usageCaches.keys().next().value;
+    if (oldest !== undefined) usageCaches.delete(oldest);
+  }
+  return cache;
+}
 
 /*
  * 自動メモリの置き場として追加で許可するルート(settings の autoMemoryDirectory)。
  * 既定の ~/.claude/projects/<slug>/memory/ と違い任意のパスなので、形(/memory/)では拾えない。
- * skill 集計と memory 集計は同じ 1 パス(cachedScan)を共有するため、走査の途中で許可ルートが
- * 変わるとキャッシュが無効化されて transcript を二度読みすることになる。よって値は
- * リクエストの入口で 1 回だけ設定し、以降は同じ値で走査する。
+ * skill 集計と memory 集計は同じ 1 パス(cachedScan)を共有するので、1 回の走査の途中で
+ * 値を変えない(リクエストの入口で 1 回だけ設定する)。走査結果は鍵(この値)ごとに
+ * 保持するので、プロジェクトを切り替えて値が戻れば前の結果がそのまま効く。
  * 未設定なら空配列 = 従来どおりのコストで、既定環境の走査量は増えない。
  */
 let memoryRoots: string[] = [];
@@ -180,12 +212,12 @@ function cachedScan(fp: string): ScanResult | null {
   } catch {
     return null;
   }
-  // 許可ルートが変わると拾う memHits も変わるので、mtime と一緒に鍵にする
-  const rootsKey = memoryRoots.join('\0');
-  let entry = usageCache.get(fp);
-  if (!entry || entry.mtimeMs !== st.mtimeMs || entry.rootsKey !== rootsKey) {
-    entry = { mtimeMs: st.mtimeMs, rootsKey, ...scanTranscript(fp, undefined, memoryRoots) };
-    usageCache.set(fp, entry);
+  // 許可ルートが変わると拾う memHits も変わるので、ルートごとに別のキャッシュを引く
+  const cache = cacheFor(memoryRoots.join('\0'));
+  let entry = cache.get(fp);
+  if (!entry || entry.mtimeMs !== st.mtimeMs) {
+    entry = { mtimeMs: st.mtimeMs, ...scanTranscript(fp, undefined, memoryRoots) };
+    cache.set(fp, entry);
   }
   return entry;
 }

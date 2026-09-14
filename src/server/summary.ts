@@ -38,6 +38,26 @@ for (const legacy of ['claude-code-my-skills', 'claude-skills-browser']) {
   }
 }
 
+/*
+ * v0.8 までのインライン編集が作った 1 世代バックアップの掃除。v0.9.0 で書き込みを廃止したので
+ * 誰も参照せず、README にも説明が無いまま利用者のファイルのコピーがディスクに残る
+ * (README は「viewer は自分の状態しか書かない」と約束している)。一度だけ消す。
+ *
+ * import 時の副作用にはしない: このモジュールは contentHash 経由で snapshot.ts からも読まれるので、
+ * トップレベルに置くと `pnpm test` を回しただけで実行者の HOME の控えが消える。
+ * 起動経路(index.ts の start)から 1 回だけ呼び、消したことは起動時に 1 行出す。
+ */
+export function cleanupLegacyBackups(cacheDir: string = CACHE_DIR): boolean {
+  const backups = path.join(cacheDir, 'backups');
+  try {
+    if (!fs.existsSync(backups)) return false;
+    fs.rmSync(backups, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false; // 消せなくても本体機能には影響させない
+  }
+}
+
 interface CacheEntry extends Partial<SkillAnalysis> {
   hash: string | null;
   name: string;
@@ -81,8 +101,27 @@ function saveSummaries(s: SummaryStore): void {
   // 保存のついでに死にエントリを掃除する(GET では書き込まないので掃除もしない)
   fs.writeFileSync(SUMMARY_FILE, JSON.stringify(pruneMissing(s), null, 1));
 }
+/*
+ * hash のために全文を読む上限。claude-md.ts の MAX_FILE_BYTES と同じ 4 MiB
+ * (Claude Code 自身がファイルを飛ばす大きさ)に合わせる。
+ * 計画 16 Phase D で差分追跡の対象が登録簿の全プロジェクトに広がり、この関数は
+ * 1 リクエストで数百ファイルに掛かるようになった ── 巨大な .md が 1 つ混ざるだけで
+ * 毎リクエストその全文を読むことになるので、上限を超えたら中身は読まない。
+ */
+const MAX_HASH_BYTES = 4 * 1024 * 1024;
+
+/*
+ * 内容ハッシュ(AI 結果のキャッシュ鍵 / 差分追跡の同一性判定)。
+ * 上限超えは `size:mtime` のメタで代用する: 中身は見ないので「同じ大きさ・同じ更新時刻なら
+ * 変わっていない」という弱い判定になるが、変更されれば mtime が動くので追跡は成立する。
+ * 逆に、内容が同じでも mtime が動けば(touch・チェックアウトし直し)「更新された」に出る
+ * ── 4 MiB 超のファイルに限った既知の粗さで、AI キャッシュなら 1 回作り直すだけで済む。
+ * 形が hex 16 桁と違う(`:` を含む)ので、古いキャッシュ値と取り違えることもない。
+ */
 export function contentHash(fp: string): string | null {
   try {
+    const st = fs.statSync(fp);
+    if (st.size > MAX_HASH_BYTES) return `${st.size}:${Math.round(st.mtimeMs)}`;
     return crypto.createHash('sha256').update(fs.readFileSync(fp)).digest('hex').slice(0, 16);
   } catch {
     return null;

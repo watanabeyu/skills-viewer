@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Lang, Section, SkillItem } from '../shared/types';
 import { estimateTokens, lintItem } from './lint';
+import { encodeProjectPath } from './usage';
 
 export const HOME = os.homedir();
 
@@ -106,6 +107,36 @@ function listFiles(dir: string, prefix = '', depth = 0, acc: string[] = []): str
 
 /* ---------- scanners ---------- */
 
+/*
+ * frontmatter の真偽値。parseFrontmatter は値を正規化せず生文字列を返すので、
+ * YAML 的に真である True / TRUE / yes も拾う(取りこぼすと「モデルから呼べない」表示が
+ * 誤るうえ、description が予算に計上されてしまう)。
+ */
+const isTruthy = (v: string | undefined) => /^(true|yes)$/i.test((v || '').trim());
+
+/* hidden / allowedTools の組み立て。readSkillDir と scanMdRoot で同じ規則を使う */
+function metaFlags(meta: Record<string, string>): { hidden?: true; allowedTools?: string[] } {
+  const tools = allowedToolsOf(meta);
+  return {
+    ...(isTruthy(meta['disable-model-invocation']) ? { hidden: true as const } : {}),
+    ...(tools ? { allowedTools: tools } : {}),
+  };
+}
+
+/*
+ * frontmatter の allowed-tools。実データは `Read, Write, Bash(git *), ...` の
+ * カンマ区切り 1 行(YAML リストではない)。空なら undefined を返す。
+ */
+export function allowedToolsOf(meta: Record<string, string>): string[] | undefined {
+  const raw = meta['allowed-tools'];
+  if (!raw) return undefined;
+  const list = raw
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  return list.length ? list : undefined;
+}
+
 function readSkillDir(dir: string, nameHint: string): ScanItem | null {
   const skillMd = path.join(dir, 'SKILL.md');
   if (!fs.existsSync(skillMd)) return null;
@@ -128,6 +159,7 @@ function readSkillDir(dir: string, nameHint: string): ScanItem | null {
     updatedAt: fileMtime(skillMd),
     files: listFiles(dir).sort(),
     ...(meta.category ? { category: meta.category } : {}),
+    ...metaFlags(meta),
     ...(lint.length ? { lint } : {}),
     _body: body, // 参照抽出用(scanSections で refs 化して破棄)
   };
@@ -170,6 +202,7 @@ function scanMdRoot(root: string, kind: 'command' | 'agent'): ScanItem[] {
       updatedAt: fileMtime(fp),
       files: [entry.name],
       ...(meta.category ? { category: meta.category } : {}),
+      ...metaFlags(meta),
       ...(lint.length ? { lint } : {}),
       _body: body,
     });
@@ -260,11 +293,17 @@ function scanPlugins(): ScanItem[] {
   return items.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/*
+ * 登録簿の場所。index.ts の候補メモ(projectSets)が版を見るのにも要るので、
+ * パスの組み立てはここ 1 か所に置く ── 片方だけ書き換えるとメモが永久に stale になる。
+ */
+export const REGISTRY_FILE = path.join(HOME, '.claude.json');
+
 /* projects Claude Code has been used in (registry: ~/.claude.json) + cwd */
 export function listProjects(cwd: string): string[] {
   let registered: string[] = [];
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(HOME, '.claude.json'), 'utf8'));
+    const cfg = JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8'));
     registered = Object.keys(cfg.projects || {});
   } catch {
     /* no registry — fall back to cwd only */
@@ -394,10 +433,40 @@ function attachRefs(sections: Section[]): void {
   }
 }
 
-/* 並び順: current プロジェクト → 他プロジェクト → user → plugin → built-in */
-export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
+/*
+ * project セクションの id。URL(?project=<id>)に載せて共有・リロードをまたぐので、
+ * 配列の位置ではなくパスから決める(設計判断 13)。listProjects は毎リクエスト
+ * ~/.claude.json を読み直し、アイテム 0 件のプロジェクトを除いて並べ替えるため、
+ * 位置ベース('proj-' + index)だとプロジェクトの増減で指す先がずれる。
+ * エンコードは transcript のディレクトリ名・MemorySection.id と同じ規則。
+ */
+export const projectSectionId = (projectPath: string): string =>
+  'proj-' + encodeProjectPath(path.resolve(projectPath));
+
+/*
+ * 並び順: current プロジェクト → 他プロジェクト → user → plugin → built-in
+ *
+ * 走査するのは登録簿(listProjects)∪ 選んだプロジェクト(selectedPath)。選択を足すのは
+ * レビュー 2 周目の指摘: worktree は「claude を起動して登録された」ものしか ~/.claude.json に
+ * 出ないので、`?project=` の候補(登録簿 ∪ 列挙した worktree)には入るのに走査されない
+ * ── `.claude/` を git 追跡している新しい worktree を選ぶと、中身があるのに ③ が 0 件になり、
+ * 「定義が無い」という嘘の理由まで出ていた。読み取り許可の母集団は元から {cwd, 選択} なので
+ * ここで広がるものは無い。isCurrent の意味(= cwd)も変えない。
+ *
+ * 選択を足すときも listProjects と同じく HOME は外す(レビュー 3 周目): user 段は独立した
+ * Section なので、cwd がホームだと(無選択時の selectedPath = cwd で)HOME が走査根に復活し、
+ * proj-…-home の Section が user 段と同じ skill を二重計上していた。
+ */
+export function scanSections(cwd: string, lang: Lang = 'en', selectedPath?: string): Section[] {
   const cwdResolved = path.resolve(cwd);
-  const projects = listProjects(cwd)
+  const selectedRoot = selectedPath ? path.resolve(selectedPath) : '';
+  const roots = [
+    ...new Set([
+      ...listProjects(cwd),
+      ...(selectedRoot && selectedRoot !== path.resolve(HOME) ? [selectedRoot] : []),
+    ]),
+  ];
+  const projects = roots
     .map((p) => ({ path: p, items: scanClaudeDir(p), current: p === cwdResolved }))
     .filter((p) => p.items.length > 0)
     .sort(
@@ -407,19 +476,17 @@ export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
     );
 
   const sections: Section[] = [
-    ...projects.map((p, i) => ({
-      id: 'proj-' + i,
+    ...projects.map((p) => ({
+      id: projectSectionId(p.path),
       source: 'project' as const,
       projectName: path.basename(p.path),
       isCurrent: p.current,
       note: p.path,
-      manage: true,
       items: p.items,
     })),
     {
       id: 'user',
       source: 'user',
-      manage: true,
       note: path.join(HOME, '.claude'),
       items: scanClaudeDir(HOME),
     },
@@ -438,10 +505,11 @@ export function scanSections(cwd: string, lang: Lang = 'en'): Section[] {
   ];
   attachRefs(sections);
   // name + description は毎セッション注入されるため、その分のトークンを概算しておく。
-  // hook は設定エントリ(description 注入なし)なので対象外
+  // hook は設定エントリ(description 注入なし)、hidden はモデルの一覧に載らないので対象外
   for (const s of sections) {
     for (const it of s.items) {
-      if (it.kind !== 'hook') it.tokens = estimateTokens(it.name + ': ' + it.description);
+      if (it.kind !== 'hook' && !it.hidden)
+        it.tokens = estimateTokens(it.name + ': ' + it.description);
     }
   }
   return sections;

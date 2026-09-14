@@ -53,6 +53,51 @@ export function saveAiModel(m: AiModel): void {
   }
 }
 
+/* ---- テーマ(design-system 3 節)。auto は OS の配色設定に従う(dark → console / light → ledger) ---- */
+
+export type ThemePref = 'auto' | 'console' | 'ledger';
+export type Theme = 'console' | 'ledger';
+export const THEME_PREFS: ThemePref[] = ['auto', 'console', 'ledger'];
+
+const THEME_KEY = 'csb-theme';
+
+export function loadThemePref(): ThemePref {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (v === 'auto' || v === 'console' || v === 'ledger') return v;
+  } catch {
+    /* ブラウザ外(テスト等)は既定 */
+  }
+  return 'auto';
+}
+
+export function saveThemePref(p: ThemePref): void {
+  try {
+    localStorage.setItem(THEME_KEY, p);
+  } catch {
+    /* ブラウザ外では何もしない */
+  }
+}
+
+/* auto を OS の配色設定で解決する。matchMedia が無い環境(テスト等)は ledger */
+export function resolveTheme(pref: ThemePref): Theme {
+  if (pref !== 'auto') return pref;
+  try {
+    return matchMedia('(prefers-color-scheme: dark)').matches ? 'console' : 'ledger';
+  } catch {
+    return 'ledger';
+  }
+}
+
+/* CSS は prefers-color-scheme を見ない設計なので、data-theme は必ずどちらかに確定させる */
+export function applyTheme(theme: Theme): void {
+  try {
+    document.documentElement.dataset.theme = theme;
+  } catch {
+    /* ブラウザ外では何もしない */
+  }
+}
+
 /* URL スキームを組み立てる。system(OS デフォルト)は null → サーバー側 /api/open に委譲 */
 export function editorUrl(s: EditorSetting, path: string): string | null {
   if (s.mode === 'system') return null;

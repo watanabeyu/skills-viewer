@@ -1,42 +1,278 @@
 import type {
+  ChangeEntry,
+  ClaudeMdScan,
   FeedbackBodyPlan,
+  ItemKind,
   MemorySection,
   MemoryVerdict,
   Section,
+  SelectedProject,
   SkillGroup,
   SkillItem,
+  SkillsData,
+  SnapshotChanges,
   Source,
 } from './api';
 import { itemKey } from './api';
-import { t } from './i18n';
+import { t, type MsgKey } from './i18n';
 
+/* 出所の色(design-system 0.1)。値は style.css のトークンに委ね、テーマに追随させる。
+ * project は無彩色(「ここ」は既定なので色を持たない)。有彩色は外から来る 3 つだけ */
 export const SRC_COLOR: Record<Source, string> = {
-  'built-in': '#2a6fdb',
-  user: '#1f8a5b',
-  project: '#c07a1f',
-  plugin: '#7b5bd6',
+  'built-in': 'var(--src-builtin)',
+  user: 'var(--src-user)',
+  project: 'var(--text)',
+  plugin: 'var(--src-plugin)',
 };
 export const SRC_TINT: Record<Source, string> = {
-  'built-in': 'rgba(42,111,219,.10)',
-  user: 'rgba(31,138,91,.10)',
-  project: 'rgba(192,122,31,.13)',
-  plugin: 'rgba(123,91,214,.10)',
+  'built-in': 'var(--src-builtin-tint)',
+  user: 'var(--src-user-tint)',
+  project: 'var(--raised)',
+  plugin: 'var(--src-plugin-tint)',
 };
+
+/*
+ * 一覧のフィルタと並び順。ホーム ③ と「すべてのプロジェクト」が同じ値を使うので 1 か所に置く。
+ * 未知の値(他軸の並び順が混ざった共有 URL 等)は select が空欄になるのを避けて既定に落とす。
+ */
+export const KIND_FILTERS: KindFilter[] = ['all', 'skill', 'command', 'agent', 'hook'];
+export const USE_FILTERS: UseFilter[] = ['all', 'used', 'unused'];
+
+export const asKindFilter = (v: string | null): KindFilter =>
+  KIND_FILTERS.includes(v as KindFilter) ? (v as KindFilter) : 'all';
+export const asUseFilter = (v: string | null): UseFilter =>
+  USE_FILTERS.includes(v as UseFilter) ? (v as UseFilter) : 'all';
+
+/*
+ * 使用実績フィルタの選択肢のラベル(ホーム ③ と「すべてのプロジェクト」で同じ並びを出す)。
+ * use… で始めない: React の hooks 規則の lint が「フックの呼び出し」と誤認する
+ */
+export const labelOfUseFilter = (v: UseFilter): string =>
+  v === 'all' ? t('kind.all') : v === 'used' ? t('filter.used') : t('filter.unused');
 
 export type SortKey = 'name' | 'uses' | 'recent' | 'updated' | 'tokens';
 
-/* 一覧の表示軸: ソース別(置き場所)/ 用途別(AI グルーピング)/ メモリ(自動メモリのみ)/ フラット */
-export type ViewMode = 'source' | 'group' | 'memory' | 'flat';
+/*
+ * 「すべてのプロジェクト」の並び: 出所別 / 用途別(AI グルーピング)/ 1 列。
+ * v0.8 までの表示軸(source / group / memory / flat)はホームの 3 ブロック化で廃止し、
+ * 全プロジェクトビューの並びに格下げした(README 6.4)。memory は /memory の別画面。
+ */
+export type ViewMode = 'source' | 'group' | 'flat';
+export const VIEW_MODES: ViewMode[] = ['source', 'group', 'flat'];
+export const asViewMode = (v: string | null): ViewMode =>
+  v === 'group' || v === 'flat' ? v : 'source';
 
-/* memory セクションのアクセント色(skill の SRC_COLOR に相当。AI マークと同系色) */
-export const MEM_COLOR = '#b0836a';
+/*
+ * ?project= の解決結果。'all' は全プロジェクト、Section は選ばれた project セクション、
+ * null は「選んだプロジェクトにアイテムが無い」(セクション自体が無い。名前とパスは
+ * SkillsData.selected にあるので、0 件でも何を選んでいるかは描ける)。
+ */
+export type ProjectSel = 'all' | Section | null;
+
+/* cwd のプロジェクトのセクション(アイテム 0 件なら無い) */
+export const currentSection = (sections: Section[]): Section | null =>
+  sections.find((s) => s.source === 'project' && s.isCurrent) || null;
+
+/*
+ * 選択の解決。サーバーが「何を計算したか」(SkillsData.selected)を正として Section を引く
+ * (計画 16 判断 3)。?project= を web で再解釈しないので、未知の id・生のパス・'user' を
+ * サーバーが cwd に落としたときも、画面はサーバーが計算した対象と必ず一致する。
+ * 'all' だけは URL 側の軸(サーバーは 1 プロジェクトしか計算しない)なので param で見る。
+ * 選んだプロジェクトの定義が 0 件なら Section 自体が無いので null。
+ */
+export function resolveProject(param: string | null, data: SkillsData): ProjectSel {
+  if (param === 'all') return 'all';
+  return selectedSection(data);
+}
+
+/* 選んだプロジェクトの Section(0 件なら無い)。'all' に依らない単位が要る画面(hook)はこちら */
+export const selectedSection = (data: SkillsData): Section | null =>
+  data.sections.find((s) => s.source === 'project' && s.id === data.selected.id) || null;
+
+/*
+ * 0 件の理由の文言キー。worktree だけ理由が違う(.claude/ が git 未追跡なら本体にあってもここには無い)。
+ * サーバーは .claude の有無そのものを確かめていないので、文言は「skill / command / agent が無い」
+ * という走査の事実に留める(.claude/settings.local.json だけあるプロジェクトは普通にある)。
+ */
+export const emptyReasonKey = (selected: SelectedProject): MsgKey =>
+  selected.mainPath ? 'proj.emptyReasonWorktree' : 'proj.emptyReason';
+
+/*
+ * 「最後に始めた 1 本だけが結果を書き込む」ための世代番号(取得と要約ポーリングで共用)。
+ * gate() で 1 本開始し、返る述語が「自分がまだ最新か」を答える。切替を連続で押したときの
+ * 応答の前後、ジョブ実行中の切替で古いチェーンが後から setState するのを止める。
+ * App の中に if (mine !== gen.current) と書くとテストで固定できないので、純関数に切り出す。
+ */
+export function latestGate(): () => () => boolean {
+  let n = 0;
+  return () => {
+    const mine = ++n;
+    return () => mine === n;
+  };
+}
+
+/* 起動ディレクトリのパス(Section があればその note。切替と worktree の select で同じ値を見る) */
+const cwdPathOf = (data: SkillsData): string => currentSection(data.sections)?.note || data.cwd;
+
+/*
+ * 切替に出す 1 行 = 本体のチェックアウトだけ(計画 16 判断 6 の改訂)。worktree は行にせず、
+ * 本体の行に件数を添えるだけにする ── 実データでは 1 つの本体に 40 本近くぶら下がり、
+ * 字下げして並べると切替が一覧として機能しなかったため。worktree の選択はホームの select が持つ。
+ * id は ?project= に渡す値で、null = cwd(既定の選択なので URL に書かない)。
+ */
+export interface ProjectRow {
+  /* 一致する Section。定義が 0 件のプロジェクトと、worktree から逆引きした本体では null */
+  section: Section | null;
+  /*
+   * 走査の対象だったか。false = worktree から逆引きしただけの本体(登録簿に無いので
+   * 走査していない)。section が null でも「0 件」とは言えないので、切替は
+   * 「アイテムがありません」を出さない ── 0 件だと確かめたわけではないため。
+   */
+  scanned: boolean;
+  name: string;
+  path: string;
+  id: string | null;
+  /* 起動ディレクトリを含む行(「現在」の印)。cwd が worktree なら、その本体の行に付く */
+  cwd: boolean;
+  /* この本体から辿れる linked worktree の数(0 なら添えない)。行としては出さない */
+  worktrees: number;
+}
+
+/*
+ * 切替の行の組み立て(計画 16 Phase C)。sections はサーバーの形のままなので、
+ * worktrees の path と一致する Section をトップレベルから外して本体の行に畳む
+ * ── .claude/ を git で追跡しているリポジトリでは同じスキル群が何十行も並んでしまうため。
+ * 畳む先が sections に無い本体(登録簿に無い / 定義 0 件)でも行は作る: サーバーが
+ * worktree から逆引きした本体を候補に入れ、id(worktrees[].mainId)も返すようになったので、
+ * その行から本体を選べる ── 行を落とすと、その本体にぶら下がる worktree ごと辿れなくなる。
+ * 先頭は cwd を含む行(cwd が worktree ならその本体)で、残りは「他のプロジェクト」。
+ */
+export function projectRows(data: SkillsData): {
+  current: ProjectRow | null;
+  others: ProjectRow[];
+} {
+  const worktrees = data.worktrees || [];
+  const wtPaths = new Set(worktrees.map((w) => w.path));
+  const projects = data.sections.filter((s) => s.source === 'project');
+  const cwdSection = currentSection(data.sections);
+  const cwdPath = cwdPathOf(data);
+  const tops: ProjectRow[] = [];
+  // cwd の行。cwd 自身が worktree のときはここでは作らない(本体の行に畳む)
+  if (!wtPaths.has(cwdPath))
+    tops.push({
+      section: cwdSection,
+      scanned: true,
+      name: cwdSection?.projectName || fileName(data.cwd),
+      path: cwdPath,
+      id: null,
+      cwd: true,
+      worktrees: 0,
+    });
+  for (const s of projects) {
+    if (s === cwdSection || wtPaths.has(s.note)) continue;
+    tops.push({
+      section: s,
+      scanned: true,
+      name: s.projectName || '',
+      path: s.note,
+      id: s.id,
+      cwd: false,
+      worktrees: 0,
+    });
+  }
+  for (const w of worktrees) {
+    let main = tops.find((t) => t.path === w.mainPath);
+    if (!main) {
+      // 走査していない本体(登録簿に無い / 定義 0 件)。id はサーバーが付けた mainId を使う
+      main = {
+        section: null,
+        scanned: false,
+        name: fileName(w.mainPath),
+        path: w.mainPath,
+        id: w.mainPath === cwdPath ? null : w.mainId,
+        cwd: w.mainPath === cwdPath,
+        worktrees: 0,
+      };
+      tops.push(main);
+    }
+    main.worktrees++;
+    // cwd が worktree なら「現在」はその本体の行に付く(worktree 自身の行は無い)
+    if (w.path === cwdPath) main.cwd = true;
+  }
+  const idx = tops.findIndex((t) => t.cwd);
+  const current = idx < 0 ? null : tops[idx];
+  return { current, others: tops.filter((t) => t !== current) };
+}
+
+/*
+ * ホーム上部の worktree の select の選択肢(計画 16 Phase C の改訂)。
+ * 選んでいるものの本体(worktree を選んでいれば selected.mainPath)に紐づく worktree を、
+ * 常に「本体」を先頭にして並べる。worktree が 1 本も無ければ空 = select ごと出さない。
+ * 表示はディレクトリ名よりブランチで覚えているのでブランチ名を優先する(無ければディレクトリ名)。
+ * id は ?project= に渡す値(null = cwd)で、サーバーが返した id 以外は組み立てない(判断 2)。
+ */
+export interface WorktreeOption {
+  id: string | null;
+  label: string;
+}
+
+export function worktreeOptions(data: SkillsData): WorktreeOption[] {
+  const mainPath = data.selected.mainPath ?? data.selected.path;
+  const wts = (data.worktrees || []).filter((w) => w.mainPath === mainPath);
+  if (wts.length === 0) return [];
+  const cwdPath = cwdPathOf(data);
+  /*
+   * 本体の id はサーバーが作ったものだけを使う(判断 2)。worktree を選んでいるときは
+   * selected.mainId(無い応答なら列挙した worktree の mainId。どちらもサーバー製で同じ値)、
+   * 本体を選んでいるときは selected.id そのもの。Section を持たない本体でも必ず選べる。
+   */
+  const mainId = data.selected.mainPath
+    ? (data.selected.mainId ?? wts[0].mainId)
+    : data.selected.id;
+  const out: WorktreeOption[] = [
+    { id: mainPath === cwdPath ? null : mainId, label: t('proj.mainCheckout') },
+  ];
+  for (const w of wts)
+    // cwd の worktree は既定の選択なので、他と同じく URL に書かない
+    out.push({ id: w.path === cwdPath ? null : w.id, label: w.branch || w.name });
+  return out;
+}
+
+/*
+ * v0.8 までの共有 URL の互換。旧キーは読んで新キーへ写し、旧キーは消す(書き戻さない)。
+ *   view=group / flat, grouped=0 → project=all&by=…(全プロジェクトの並びに格下げ)
+ *   view=source                  → 既定なので消すだけ
+ *   view=memory                  → memory 一覧は /memory の別画面(呼び出し側が遷移する)
+ *   unused=1                     → use=unused
+ * 旧キーが 1 つも無ければ null(何もしない)。
+ */
+export function migrateLegacyParams(
+  params: URLSearchParams,
+): { params: URLSearchParams; memory: boolean } | null {
+  const view = params.get('view');
+  const grouped = params.get('grouped');
+  const unused = params.get('unused');
+  if (view === null && grouped === null && unused === null) return null;
+  const next = new URLSearchParams(params);
+  next.delete('view');
+  next.delete('grouped');
+  next.delete('unused');
+  if (view === 'group' || view === 'flat') {
+    next.set('project', 'all');
+    next.set('by', view);
+  } else if (grouped === '0' && view !== 'source') {
+    next.set('project', 'all');
+    next.set('by', 'flat');
+  }
+  if (unused === '1' && !next.get('use')) next.set('use', 'unused');
+  return { params: next, memory: view === 'memory' };
+}
 
 export interface FlatItem extends SkillItem {
   key: string;
   secId: string;
   source: Source;
   scopeLabel: string;
-  manage: boolean;
   hasMd: boolean;
 }
 
@@ -60,7 +296,8 @@ export function flatten(sections: Section[]): FlatItem[] {
       secId: s.id,
       source: s.source,
       scopeLabel: scopeLabelOf(s),
-      manage: !!s.manage && it.kind !== 'hook', // hook は設定エントリなのでコピー/削除不可
+      // hook の除外(コピー/削除の対象外)は v0.9.0 で書き込みごと廃止した。
+      // hook の path は settings.json なので、エディタで開く導線としてはむしろ有効
       hasMd: it.path.endsWith('.md'),
     })),
   );
@@ -160,22 +397,6 @@ export const fmtDate = (ms?: number) => {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
-
-/*
- * 経過日ラベル(memory の「どれだけ更新されていないか」用)。日付そのものより鮮度が重要なので相対表記。
- */
-export function relDaysLabel(ms?: number): string {
-  if (!ms) return '';
-  const days = Math.floor((Date.now() - ms) / 86400000);
-  return days <= 0 ? t('memory.today') : t('memory.stale', { n: days });
-}
-
-/* M/D 表記(カードの「最終 8/14」用。年は鮮度判断に不要なので省く) */
-export const fmtMD = (ms?: number) => {
-  if (!ms) return '';
-  const d = new Date(ms);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
 };
 
 /* memory 軸の並び順。既定は索引トークン(常時コスト)が多い順 = 減らす価値が高い順 */
@@ -365,20 +586,22 @@ export function estimateLabel(it: SkillItem): string {
   return t('memory.triage.estApply', { n: signed(est.index) });
 }
 
-/* 提案(指示文)のある memory だけ。サマリ・まとめコピーが同じ母集団を見るよう 1 箇所に置く */
+/* 提案(指示文)のある memory だけ。サマリと一覧が同じ母集団を見るよう 1 箇所に置く */
 export const instructionsOf = (items: SkillItem[]) =>
   items.filter((it) => effectiveInstruction(it));
 
 /*
- * コピーする指示文には「まず確認してから実行」の前置きを付ける。貼り先の Claude Code に
- * dry run(読み取り → 作業内容の提示 → 承認)を求めるためで、毎回手で書き足さなくて済むようにする。
+ * 指示文の構成(design-system 1.3): 事実ヘッダ(機械生成)+ 本文 + 末尾の確認手順。
+ * 確認手順は貼り先の Claude Code に dry run(作業ディレクトリの照合 → 読み取りで確認 →
+ * 判断が要る点は AskUserQuestion → 承認後に実行)を求める段落で、v0.8 で本文と分けて
+ * 見せていた「前置き」を末尾へ移したもの(独立して見せない)。文面は memory 棚卸しと
+ * skill の発動診断で共用する。
  */
-export const withPreamble = (body: string) => t('memory.triage.copyPreamble') + '\n\n' + body;
+export const withVerifySteps = (body: string) => body + '\n\n' + t('memory.triage.copyPreamble');
 
 /*
- * コピー本文の事実ヘッダ。どの memory ディレクトリ・どのプロジェクトの・どのファイルの話かは
- * スキャン結果から機械生成する(AI に書かせない)。貼り先が対象を取り違えないための土台なので、
- * まとめコピーにも単件コピーにも同じ形で付ける。
+ * memory の指示文の事実ヘッダ。どの memory ディレクトリ・どのプロジェクトの・どのファイルの話かは
+ * スキャン結果から機械生成する(AI に書かせない)。貼り先が対象を取り違えないための土台。
  */
 export const factHeader = (sec: MemorySection, files: string[]) =>
   t('memory.triage.hdr.dir', {
@@ -388,22 +611,32 @@ export const factHeader = (sec: MemorySection, files: string[]) =>
   '\n' +
   t('memory.triage.hdr.files', { files: files.join(', ') });
 
-/* 提案のある行だけを `## name` 見出し付きで連結(まとめてコピー用)。前置き + 事実ヘッダは先頭に 1 回だけ */
-export const joinInstructions = (sec: MemorySection) => {
-  const items = instructionsOf(sec.items);
-  return withPreamble(
-    factHeader(
-      sec,
-      items.map((it) => fileName(it.path)),
-    ) +
-      '\n\n' +
-      items.map((it) => '## ' + it.name + '\n\n' + effectiveInstruction(it)).join('\n\n'),
-  );
-};
-
-/* 単件コピーの本文(前置き + 事実ヘッダ + その 1 件の指示文) */
+/* memory 1 件分の指示文(事実ヘッダ + 本文 + 確認手順)。まとめコピーは持たない(単件ずつ貼る) */
 export const copyInstruction = (sec: MemorySection, it: SkillItem) =>
-  withPreamble(factHeader(sec, [fileName(it.path)]) + '\n\n' + effectiveInstruction(it));
+  withVerifySteps(factHeader(sec, [fileName(it.path)]) + '\n\n' + effectiveInstruction(it));
+
+/*
+ * skill の発動診断の指示文。memory 棚卸しと同じ形(事実ヘッダ + 本文 + 確認手順)で、
+ * 本文は診断結果(improved / issues)からテンプレートで組む(AI の散文をそのまま貼らない)。
+ * 改善案があるときは「description を次に変える」、無いときは「変える場合に残すもの」を書く。
+ * dir はその置き場の実体パス(Section.note)。
+ */
+export function diagnosisInstruction(it: FlatItem, dir: string): string {
+  const d = it.aiDiagnosis;
+  if (!d) return '';
+  const header =
+    t('diag.instr.hdr', { dir, scope: it.scopeLabel }) +
+    '\n' +
+    t('diag.instr.file', { path: it.path });
+  const improved = d.improved && d.improved !== it.description ? d.improved : '';
+  const lines = improved
+    ? [t('diag.instr.replace', { file: fileName(it.path), text: improved })]
+    : [t('diag.instr.noChange'), t('diag.instr.keepWhat', { desc: it.description })];
+  if (d.issues.length) lines.push(t('diag.instr.issues', { list: d.issues.join(' / ') }));
+  // description 以外(name・ファイルの場所)を触ると呼び出し側の参照が壊れるので必ず添える
+  lines.push(t('diag.instr.scope', { name: it.name }));
+  return withVerifySteps(header + '\n\n' + lines.join('\n'));
+}
 
 /*
  * 提案が 1 種類に偏っているか(非 keep が 5 件以上で、その 8 割以上が同じ行き先)。
@@ -426,10 +659,9 @@ export function skewedVerdict(items: SkillItem[]): MemoryVerdict | null {
   return top[1] / verdicts.length >= 0.8 ? top[0] : null;
 }
 
-/* memory 一覧(view=memory)へ戻る URL。詳細のタブ状態は持ち越さない(次のカードが本文タブで開くのを防ぐ) */
+/* memory 一覧(/memory)へ戻る URL の query。詳細のタブ状態は持ち越さない(次のカードが本文タブで開くのを防ぐ) */
 export function memoryListSearch(params: URLSearchParams): string {
   const next = new URLSearchParams(params);
-  next.set('view', 'memory');
   next.delete('tab');
   return next.toString();
 }
@@ -487,4 +719,211 @@ export function sortItems<T extends SkillItem>(items: T[], sort: SortKey): T[] {
   else if (sort === 'tokens') arr.sort((a, b) => (b.tokens || 0) - (a.tokens || 0) || byName(a, b));
   else arr.sort(byName);
   return arr;
+}
+
+/* ---- ホーム(計画 15 Phase D): 変化の行・セッションの文脈 ---- */
+
+/* 変化の記号(design-system 0.3)。add = +、mod = ~、del = − */
+export type ChangeMark = 'add' | 'mod' | 'del';
+export const MARK_CHAR: Record<ChangeMark, string> = { add: '+', mod: '~', del: '−' };
+
+/*
+ * 一覧の行に添える変化の記号。差分の識別子は kind + path(snapshot と同じ)。
+ * 消えたものは一覧に存在しないので add / mod だけが返る。
+ */
+export function changeMarkOf(
+  it: { kind: ItemKind; path: string },
+  changes: SnapshotChanges | null,
+): 'add' | 'mod' | null {
+  if (!changes || !it.path) return null;
+  const same = (e: ChangeEntry) => e.kind === it.kind && e.path === it.path;
+  if (changes.added.some(same)) return 'add';
+  if (changes.updated.some(same)) return 'mod';
+  return null;
+}
+
+/* ホーム ① の 1 行。ChangeEntry に、一覧側から引ける事実(説明・発動・更新日・出所の名前)を添える */
+export interface ChangeRow {
+  mark: ChangeMark;
+  entry: ChangeEntry;
+  /* 対応する現在のアイテム(消えたものと CLAUDE.md には無い) */
+  item?: SkillItem;
+  /* 出所チップの文言(project はプロジェクト名) */
+  scopeLabel: string;
+  /* project 出所のとき、その項目が属するプロジェクトのセクション(逆引きできなければ undefined) */
+  section?: Section;
+  /* 表示用の日時(git の author date。無ければファイルの更新日) */
+  when?: number;
+}
+
+const isUnder = (p: string, dir: string) =>
+  !!dir && (p === dir || p.startsWith(dir.endsWith('/') ? dir : dir + '/'));
+
+/*
+ * 変化 1 件がどのプロジェクトのものかを逆引きする。skill / CLAUDE.md はパスがプロジェクト配下、
+ * memory は ~/.claude/projects/<slug>/memory 配下なので MemorySection.projectPath 経由で引く。
+ */
+function projectOfChange(e: ChangeEntry, data: SkillsData): Section | undefined {
+  const projects = data.sections.filter((s) => s.source === 'project');
+  if (e.kind === 'memory') {
+    const sec = (data.memory || []).find((m) => m.items.some((it) => it.path === e.path));
+    return sec?.projectPath ? projects.find((p) => p.note === sec.projectPath) : undefined;
+  }
+  // 入れ子のプロジェクト(親と子が両方登録)は最長一致で子に寄せる
+  return projects
+    .filter((p) => isUnder(e.path, p.note))
+    .sort((a, b) => b.note.length - a.note.length)[0];
+}
+
+function itemOfChange(e: ChangeEntry, data: SkillsData): SkillItem | undefined {
+  if (e.kind === 'claude-md') return undefined;
+  if (e.kind === 'memory')
+    return (data.memory || []).flatMap((m) => m.items).find((it) => it.path === e.path);
+  return data.sections
+    .flatMap((s) => s.items)
+    .find((it) => it.path === e.path && it.kind === e.kind);
+}
+
+/*
+ * ① の行を組む。順は 増えた → 変わった → 消えた(記号の強さの順。0.3)。
+ * project は、指定があればそのプロジェクトのものだけに絞る(user / plugin はどのプロジェクトの
+ * セッションにも効くので常に残す)。'all' は絞らない。
+ * CLAUDE.md だけは Section 経由の逆引きに載せない ── skill / command / agent が 1 件も無い
+ * プロジェクトには Section が無く、逆引きが必ず失敗して変化そのものが消えるため(計画 16 Phase D)。
+ * ② が読んでいる段そのもの(data.claudeMd)か、選んだプロジェクト(worktree なら本体も)の
+ * 配下かどうかで判定する。
+ */
+export function changeRows(data: SkillsData, project: ProjectSel): ChangeRow[] {
+  const ch = data.changes;
+  if (!ch) return [];
+  const build = (mark: ChangeMark, entries: ChangeEntry[]): ChangeRow[] =>
+    entries.map((entry) => {
+      const item = itemOfChange(entry, data);
+      const section = entry.source === 'project' ? projectOfChange(entry, data) : undefined;
+      const authored = entry.authoredAt ? Date.parse(entry.authoredAt) : NaN;
+      return {
+        mark,
+        entry,
+        item,
+        section,
+        scopeLabel: entry.source === 'project' ? section?.projectName || 'project' : entry.source,
+        when: Number.isFinite(authored) ? authored : item?.updatedAt || undefined,
+      };
+    });
+  const rows = [
+    ...build('add', ch.added),
+    ...build('mod', ch.updated),
+    ...build('del', ch.removed),
+  ];
+  if (project === 'all') return rows;
+  const sel = data.selected;
+  /*
+   * ② が数えている段の実ファイル集合。サブディレクトリを登録したプロジェクトでは、親ディレクトリの
+   * CLAUDE.md も段として読まれる(サーバーは claudeMdLayers({ root: selectedPath }) で組む)ので、
+   * selected.path の前方一致だけだと ② にコストが出ている段が ① から落ちる。
+   * 消えた段は claudeMd に載らない(= 集合に無い)ため、前方一致の判定も残す。
+   */
+  const loaded = new Set(data.claudeMd.layers.flatMap((l) => l.files.map((f) => f.path)));
+  const underSelected = (p: string) =>
+    loaded.has(p) || isUnder(p, sel.path) || (!!sel.mainPath && isUnder(p, sel.mainPath));
+  return rows.filter((r) => {
+    if (r.entry.source !== 'project') return true;
+    if (r.entry.kind === 'claude-md') return underSelected(r.entry.path);
+    return project !== null && r.section?.id === project.id;
+  });
+}
+
+/* 変化のあるプロジェクトの数(全プロジェクトの見出し「n 件 · m プロジェクト」用) */
+export const changedProjectCount = (rows: ChangeRow[]) =>
+  new Set(rows.filter((r) => r.section).map((r) => r.section!.id)).size;
+
+/* 相対日(誰が・いつ)。当日 / 昨日 / n 日前。日付そのものより新しさが要る場面用 */
+export function relTimeLabel(ms?: number): string {
+  if (!ms) return '';
+  const days = Math.floor((Date.now() - ms) / 86400000);
+  if (days <= 0) return t('time.today');
+  if (days === 1) return t('time.yesterday');
+  return t('time.daysAgo', { n: days });
+}
+
+/* ホーム ② の 1 行。limit が null の行(CLAUDE.md 群)にはバーを出さない(0.5) */
+export interface ContextRow {
+  key: 'claudeMd' | 'memory' | 'descriptions';
+  tok: number;
+  /* 0..1 の比(上限のある行だけ)。1 超は超過 */
+  ratio: number | null;
+  over: boolean;
+}
+
+/*
+ * ② の内訳。memory が無い(索引の行が 0)なら MEMORY.md の行を出さない(README 6.3)。
+ * 合計は 3 内訳の和で、viewer から見えないもの(システムプロンプト・MCP・hook の出力)は含まない。
+ * data.context は選んだプロジェクトの値(計画 16 判断 1)なので、どのプロジェクトを選んでいても
+ * 出す。「すべてのプロジェクト」だけは 1 つのセッションの文脈ではないので内訳を持たない。
+ */
+export function contextRows(data: SkillsData, project: ProjectSel): ContextRow[] {
+  if (project === 'all') return [];
+  const c = data.context;
+  const rows: ContextRow[] = [{ key: 'claudeMd', tok: c.claudeMd.tok, ratio: null, over: false }];
+  if (c.memoryIndex.lines > 0) {
+    rows.push({
+      key: 'memory',
+      tok: c.memoryIndex.tok,
+      ratio: c.memoryIndex.lines / c.memoryIndex.limitLines,
+      over: c.memoryIndex.lines > c.memoryIndex.limitLines,
+    });
+  }
+  rows.push({
+    key: 'descriptions',
+    tok: c.descriptions.tok,
+    ratio: c.descriptions.limit > 0 ? c.descriptions.tok / c.descriptions.limit : null,
+    over: c.descriptions.tok > c.descriptions.limit,
+  });
+  return rows;
+}
+
+export const contextTotal = (rows: ContextRow[]) => rows.reduce((n, r) => n + r.tok, 0);
+
+/* CLAUDE.md 群の注記(user 1 件 · project なし · rules なし)に使う段ごとの件数 */
+export function claudeMdCounts(scan: ClaudeMdScan): {
+  user: number;
+  project: number;
+  rules: number;
+} {
+  const n = (kinds: string[]) =>
+    scan.layers.filter((l) => kinds.includes(l.kind)).reduce((s, l) => s + l.files.length, 0);
+  return {
+    user: n(['user']),
+    project: n(['project', 'project-dot', 'local']),
+    rules: n(['rules']),
+  };
+}
+
+/*
+ * ③「使えるもの」の並び: 選んだプロジェクト → user → plugin → built-in。
+ * 他プロジェクトのセクションはこのセッションには効かないので含めない。
+ */
+export function sessionSections(sections: Section[], project: Section | null): Section[] {
+  return [...(project ? [project] : []), ...sections.filter((s) => s.source !== 'project')];
+}
+
+/* セクション(フィルタ前)の毎セッション注入トークン合計 */
+export const sectionTokens = (s: Section) => s.items.reduce((n, it) => n + (it.tokens || 0), 0);
+
+/*
+ * 同名の別定義の組(全プロジェクトの見出し脇「同名 1 組(code-review: user / almoha-roadmap)」用)。
+ * short name で突き合わせ、hook は対象外(sameNameOthers と同じ規則)。
+ */
+export function duplicateNames(all: FlatItem[]): { name: string; scopes: string[] }[] {
+  const by = new Map<string, FlatItem[]>();
+  for (const it of all) {
+    if (it.kind === 'hook') continue;
+    const short = it.name.split(':').pop() || it.name;
+    if (!by.has(short)) by.set(short, []);
+    by.get(short)!.push(it);
+  }
+  return [...by]
+    .filter(([, items]) => items.length > 1)
+    .map(([name, items]) => ({ name, scopes: items.map((it) => it.scopeLabel) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
